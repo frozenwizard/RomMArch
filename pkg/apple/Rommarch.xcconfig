@@ -1,0 +1,23 @@
+//
+//  Rommarch.xcconfig
+//
+//  Build with:
+//  xcodebuild -workspace pkg/apple/RetroArch.xcworkspace -scheme RetroArch
+//     -xcconfig pkg/apple/Rommarch.xcconfig PRODUCT_MODULE_NAME=RetroArch
+//
+
+#include "GitHubCI.xcconfig"
+
+PRODUCT_NAME = Rommarch
+PRODUCT_BUNDLE_IDENTIFIER = io.github.frozenwizard.rommarch
+
+// The code imports "RetroArch-Swift.h". The Swift step ignores this
+// setting from an xcconfig, hence also passing it on the command line.
+PRODUCT_MODULE_NAME = RetroArch
+
+// Xcode 27's oldest deployment target.
+MACOSX_DEPLOYMENT_TARGET = 12.0
+ARCHS = arm64
+ONLY_ACTIVE_ARCH = YES
+
+OTHER_CFLAGS[sdk=macosx*] = $(inherited) -DHAVE_ROMM
