@@ -415,12 +415,12 @@ static void frontend_darwin_get_env(int *argc, char *argv[],
    {
       CFSearchPathForDirectoriesInDomains(documents_dir_buf, sizeof(documents_dir_buf));
       path_resolve_realpath(documents_dir_buf, sizeof(documents_dir_buf), true);
-      strlcat(documents_dir_buf, "/RetroArch", sizeof(documents_dir_buf));
+      strlcat(documents_dir_buf, "/" FILE_PATH_APP_DIR_NAME, sizeof(documents_dir_buf));
    }
 #else
    CFSearchPathForDirectoriesInDomains(documents_dir_buf, sizeof(documents_dir_buf));
    path_resolve_realpath(documents_dir_buf, sizeof(documents_dir_buf), true);
-   strlcat(documents_dir_buf, "/RetroArch", sizeof(documents_dir_buf));
+   strlcat(documents_dir_buf, "/" FILE_PATH_APP_DIR_NAME, sizeof(documents_dir_buf));
    /* iOS and tvOS are going to put everything in the documents dir */
    strlcpy(application_data, documents_dir_buf, sizeof(application_data));
 #endif

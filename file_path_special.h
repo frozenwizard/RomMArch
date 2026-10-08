@@ -65,6 +65,7 @@ RETRO_BEGIN_DECLS
 #define FILE_PATH_CONTENT_MUSIC_HISTORY "content_music_history.lpl"
 #define FILE_PATH_CONTENT_VIDEO_HISTORY "content_video_history.lpl"
 #define FILE_PATH_CORE_OPTIONS_CONFIG "retroarch-core-options.cfg"
+#define FILE_PATH_APP_DIR_NAME "RetroArch"
 #ifdef DJGPP
 #define FILE_PATH_MAIN_CONFIG "retrodos.cfg"
 #define FILE_PATH_SALAMANDER_CONFIG "retrosal.cfg"

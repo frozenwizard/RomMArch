@@ -144,7 +144,7 @@ bool fill_pathname_application_data(char *s, size_t len)
    if (appdata)
    {
       fill_pathname_join(s, appdata,
-            "Library/Application Support/RetroArch", len);
+            "Library/Application Support/" FILE_PATH_APP_DIR_NAME, len);
       return true;
    }
 #endif
