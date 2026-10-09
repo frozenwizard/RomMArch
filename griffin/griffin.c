@@ -1891,6 +1891,7 @@ ROMM
 ============================================================ */
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
 #include "../network/romm/romm_client.c"
+#include "../network/romm/romm_library.c"
 #include "../network/romm/romm.c"
 #endif
 
