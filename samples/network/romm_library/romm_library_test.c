@@ -3,7 +3,9 @@
  * for a platform, read back as JSON, and the manifest's round trip.
  * Then a sync, with the test playing RomM through the client harness's
  * request stubs: the requests made, paging, the playlists and manifest
- * written, and how a failed request or a cancel ends it.
+ * written, and how a failed request or a cancel ends it; playlists of
+ * platforms gone from RomM removed, others' left alone, and the
+ * manifest after a sync that stopped part way.
  *
  * Includes the library's translation unit so its statics are tested
  * as shipped. Files are written to the current directory and removed.
@@ -588,6 +590,101 @@ static void test_sync(void)
    filestream_delete(TEST_DIR);
 }
 
+static void test_sync_reconcile(void)
+{
+   sync_result_t r;
+   romm_library_t lib;
+   romm_library_platform_t p;
+   char manifest[256];
+   char *page;
+   int64_t synced_at;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+
+   /* The last sync wrote Sega CD and a platform since gone; the user
+    * has a playlist of their own. */
+   memset(&lib, 0, sizeof(lib));
+   strlcpy(lib.server, "http://romm.local:8090", sizeof(lib.server));
+   lib.synced_at = 1000;
+   p = lib_platform(15, "segacd", "Sega - Mega-CD - Sega CD",
+         "Sega - Mega-CD - Sega CD.lpl");
+   RBUF_PUSH(lib.platforms, p);
+   p = lib_platform(99, "gone", "", "RomM - Gone.lpl");
+   RBUF_PUSH(lib.platforms, p);
+   CHECK(romm_library_save(&lib, manifest), "seed manifest not saved");
+   romm_library_free(&lib);
+   filestream_write_file(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl", "{}", 2);
+   filestream_write_file(TEST_DIR "/RomM - Gone.lpl", "{}", 2);
+   filestream_write_file(TEST_DIR "/Mine.lpl", "{}", 2);
+
+   memset(&r, 0, sizeof(r));
+   CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR, NULL,
+         on_sync, &r), "sync not started");
+   sync_answer(200, "[{\"id\": 15, \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
+         " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
+         " \"libretro_slug\": \"Nintendo - SNES\"}]");
+   page = roms_page(15, 1, 2);
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(16, 5, 1);
+   sync_answer(200, page);
+   free(page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 2,
+         "sync: status %d platforms %u", r.status, (unsigned)r.platforms);
+   CHECK(!path_is_valid(TEST_DIR "/RomM - Gone.lpl"),
+         "playlist of a platform gone from RomM kept");
+   CHECK(path_is_valid(TEST_DIR "/Mine.lpl"), "user's playlist removed");
+   CHECK(count_entries(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl") == 2
+         && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
+         "playlists not written");
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 2
+         && lib.platforms[1].platform.id == 16, "manifest after removal");
+   synced_at = lib.synced_at;
+   romm_library_free(&lib);
+
+   /* Stopped after rewriting Sega CD: SNES stays as the last sync left
+    * it, and the sync time doesn't move, so a refresh is still due. */
+   memset(&r, 0, sizeof(r));
+   CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR, NULL,
+         on_sync, &r), "second sync not started");
+   sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
+         " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
+         " \"libretro_slug\": \"Nintendo - SNES\"},"
+         " {\"id\": 17, \"rom_count\": 1, \"name\": \"New\"}]");
+   page = roms_page(15, 1, 3);
+   sync_answer(200, page);
+   free(page);
+   sync_answer(500, "{\"detail\": \"Internal Server Error\"}");
+   CHECK(sync_run_out() && r.status == ROMM_ERR_HTTP && r.platforms == 2
+         && r.games == 4, "partial: status %d platforms %u games %u",
+         r.status, (unsigned)r.platforms, (unsigned)r.games);
+   CHECK(count_entries(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl") == 3
+         && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
+         "playlists after a partial sync");
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 2
+         && lib.synced_at == synced_at, "partial manifest: %u platforms"
+         " synced at %lld", (unsigned)RBUF_LEN(lib.platforms),
+         (long long)lib.synced_at);
+   if (RBUF_LEN(lib.platforms) == 2)
+      CHECK(RBUF_LEN(lib.platforms[0].roms) == 3
+            && lib.platforms[1].platform.id == 16
+            && RBUF_LEN(lib.platforms[1].roms) == 1,
+            "partial manifest games: %u %u",
+            (unsigned)RBUF_LEN(lib.platforms[0].roms),
+            (unsigned)RBUF_LEN(lib.platforms[1].roms));
+   romm_library_free(&lib);
+
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(TEST_DIR "/Nintendo - SNES.lpl");
+   filestream_delete(TEST_DIR "/Mine.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -595,6 +692,7 @@ int main(void)
    test_write_playlist();
    test_manifest();
    test_sync();
+   test_sync_reconcile();
 
    if (failures)
    {

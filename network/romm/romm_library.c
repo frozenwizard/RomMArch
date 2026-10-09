@@ -50,6 +50,8 @@ typedef struct
    romm_library_sync_cb_t cb;
    void *user_data;
    retro_task_t *task;
+   /* The manifest as the last sync left it, and the one being built */
+   romm_library_t old;
    romm_library_t lib;
    /* RomM's platforms, and the games of the one being fetched */
    romm_platform_t *remote;
@@ -491,6 +493,54 @@ static bool romm_lib_write_named_playlist(const romm_library_t *lib,
    return ok;
 }
 
+static bool romm_lib_has_playlist(const romm_library_t *lib,
+      const char *name)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (string_is_equal(lib->platforms[i].playlist, name))
+         return true;
+   return false;
+}
+
+/* Deletes the playlists the last sync wrote that this one didn't. */
+static void romm_lib_sync_remove_stale(romm_lib_sync_t *sync)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+   {
+      const char *name = sync->old.platforms[i].playlist;
+      char path[PATH_MAX_LENGTH];
+
+      if (romm_lib_has_playlist(&sync->lib, name))
+         continue;
+      fill_pathname_join(path, sync->playlist_dir, name, sizeof(path));
+      if (path_is_valid(path) && !filestream_delete(path))
+         RARCH_LOG(ROMM_LIB_PFX "Removed %s, gone from RomM.\n", name);
+   }
+}
+
+/* A sync that stopped part way has rewritten some playlists; the
+ * manifest records those and keeps the rest from the last sync, so
+ * the playlists stay accounted for. */
+static void romm_lib_sync_save_partial(romm_lib_sync_t *sync)
+{
+   size_t i;
+
+   if (!RBUF_LEN(sync->lib.platforms))
+      return;
+   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+   {
+      if (romm_lib_has_playlist(&sync->lib, sync->old.platforms[i].playlist))
+         continue;
+      RBUF_PUSH(sync->lib.platforms, sync->old.platforms[i]);
+      sync->old.platforms[i].roms = NULL;
+   }
+   strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
+   sync->lib.synced_at = sync->old.synced_at;
+   romm_library_save(&sync->lib, sync->manifest);
+}
+
 static void romm_lib_sync_finish(romm_lib_sync_t *sync,
       enum romm_status status)
 {
@@ -588,6 +638,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
    switch (sync->state)
    {
       case ROMM_LIB_SYNC_PLATFORMS:
+         romm_library_load(&sync->old, sync->manifest);
          if (romm_client_platforms(sync->server, sync->token,
                romm_lib_sync_platforms_cb, sync))
             sync->pending = true;
@@ -624,6 +675,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
          sync->state  = ROMM_LIB_SYNC_ROMS;
          break;
       case ROMM_LIB_SYNC_SAVE:
+         romm_lib_sync_remove_stale(sync);
          strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
          sync->lib.synced_at = (int64_t)time(NULL);
          romm_lib_sync_finish(sync,
@@ -640,6 +692,8 @@ static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
    size_t games          = 0;
    size_t i;
 
+   if (sync->status != ROMM_OK)
+      romm_lib_sync_save_partial(sync);
    for (i = 0; i < RBUF_LEN(sync->lib.platforms); i++)
       games += RBUF_LEN(sync->lib.platforms[i].roms);
    if (sync->status == ROMM_OK)
@@ -661,6 +715,7 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
 
    if (sync)
    {
+      romm_library_free(&sync->old);
       romm_library_free(&sync->lib);
       RBUF_FREE(sync->remote);
       RBUF_FREE(sync->roms);
