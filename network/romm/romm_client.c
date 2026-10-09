@@ -30,7 +30,6 @@
 #include "../../verbosity.h"
 
 #define ROMM_PFX "[RomM] "
-#define ROMM_JSON_MAX_KEYS 4
 #define ROMM_HEADERS_JSON "Accept: application/json\r\n"
 #define ROMM_CLIENT_NAME "Rommarch"
 
@@ -94,77 +93,6 @@ typedef struct
    romm_roms_cb_t cb;
    void *user_data;
 } romm_roms_ctx_t;
-
-/* Copies the string or number at @path, object keys joined by '.'
- * such as "SYSTEM.VERSION". */
-static bool romm_json_get(const char *data, size_t len, const char *path,
-      char *s, size_t s_len)
-{
-   const char *keys[ROMM_JSON_MAX_KEYS];
-   size_t key_lens[ROMM_JSON_MAX_KEYS];
-   unsigned num_keys = 0;
-   /* How many of @keys the object being parsed is nested under. */
-   unsigned matched  = 0;
-   bool at_key       = false;
-   bool found        = false;
-   const char *p     = path;
-   rjson_t *json;
-   enum rjson_type type;
-
-   for (;;)
-   {
-      const char *dot = strchr(p, '.');
-      if (num_keys == ROMM_JSON_MAX_KEYS)
-         return false;
-      keys[num_keys]     = p;
-      key_lens[num_keys] = dot ? (size_t)(dot - p) : strlen(p);
-      num_keys++;
-      if (!dot)
-         break;
-      p = dot + 1;
-   }
-
-   if (!data || !len || !(json = rjson_open_buffer(data, len)))
-      return false;
-
-   while (!found
-         && (type = rjson_next(json)) != RJSON_DONE
-         && type != RJSON_ERROR)
-   {
-      unsigned depth = rjson_get_context_depth(json);
-
-      if (at_key)
-      {
-         at_key = false;
-         if (type == RJSON_OBJECT && matched + 1 < num_keys)
-            matched++;
-         else if ((type == RJSON_STRING || type == RJSON_NUMBER)
-               && matched + 1 == num_keys)
-         {
-            size_t _len;
-            const char *str = rjson_get_string(json, &_len);
-            strlcpy(s, str, s_len);
-            found = true;
-         }
-      }
-      else if (type == RJSON_STRING
-            && depth == matched + 1
-            && rjson_get_context_type(json) == RJSON_OBJECT
-            && (rjson_get_context_count(json) & 1))
-      {
-         size_t _len;
-         const char *str = rjson_get_string(json, &_len);
-         at_key = _len == key_lens[matched]
-               && !memcmp(str, keys[matched], _len);
-      }
-      else if ((type == RJSON_OBJECT_END || type == RJSON_ARRAY_END)
-            && depth < matched + 1)
-         matched = depth ? depth - 1 : 0;
-   }
-
-   rjson_free(json);
-   return found;
-}
 
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)

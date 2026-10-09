@@ -1,6 +1,6 @@
 /* Harness for the RomM library (network/romm/romm_library.c): the
- * romm:// paths games get, playlist file names, and the playlists
- * written for a platform, read back as JSON.
+ * romm:// paths games get, playlist file names, the playlists written
+ * for a platform, read back as JSON, and the manifest's round trip.
  *
  * Includes the library's translation unit so its statics are tested
  * as shipped. Files are written to the current directory and removed.
@@ -191,11 +191,139 @@ static void test_write_playlist(void)
          NULL, roms, 1), "write into a missing folder reported done");
 }
 
+static romm_library_platform_t lib_platform(unsigned id, const char *slug,
+      const char *libretro_slug, const char *playlist)
+{
+   romm_library_platform_t p;
+   memset(&p, 0, sizeof(p));
+   p.platform.id        = id;
+   p.platform.rom_count = 2;
+   strlcpy(p.platform.slug, slug, sizeof(p.platform.slug));
+   strlcpy(p.platform.name, "Name of \"it\"", sizeof(p.platform.name));
+   strlcpy(p.platform.libretro_slug, libretro_slug,
+         sizeof(p.platform.libretro_slug));
+   strlcpy(p.playlist, playlist, sizeof(p.playlist));
+   return p;
+}
+
+static void test_manifest(void)
+{
+   const char *dir  = "romm_library_test_dir";
+   char path[256];
+   romm_library_t lib, back;
+   romm_library_platform_t p;
+   romm_rom_t r;
+
+   CHECK(romm_library_manifest_path(path, sizeof(path), dir)
+         && !strcmp(path, "romm_library_test_dir/romm/library.json"),
+         "manifest path %s", path);
+   CHECK(!romm_library_load(&back, path) && !back.platforms,
+         "loaded a manifest that isn't there");
+
+   memset(&lib, 0, sizeof(lib));
+   strlcpy(lib.server, "http://192.168.68.46:8090", sizeof(lib.server));
+   lib.synced_at = 1791500000LL;
+   p = lib_platform(15, "segacd", "Sega - Mega-CD - Sega CD",
+         "Sega - Mega-CD - Sega CD.lpl");
+   r = rom(3335, true, "Final Fight CD (USA).zip", "Final Fight CD",
+         "0beca6fd");
+   r.platform_id = 15;
+   strlcpy(r.fs_name_no_ext, "Final Fight CD (USA)", sizeof(r.fs_name_no_ext));
+   strlcpy(r.cover, "/assets/romm/resources/roms/15/3335/cover/big.png"
+         "?ts=2026-10-03 00:23:20", sizeof(r.cover));
+   strlcpy(r.updated_at, "2026-10-03T00:23:20+00:00", sizeof(r.updated_at));
+   RBUF_PUSH(p.roms, r);
+   r = rom(2810, false, "Lunar \"Silver\" (USA)", "Lunar: Silver Star", "");
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+   p = lib_platform(26, "switch", "", "RomM - Nintendo Switch.lpl");
+   RBUF_PUSH(lib.platforms, p);
+   p = lib_platform(13, "nes", "Nintendo - Nintendo Entertainment System",
+         "Nintendo - Nintendo Entertainment System.lpl");
+   r = rom(2621, true, "Addams Family, The.zip",
+         "\xe8\xb1\xaa\xe8\xa1\x80 \\ tab\there", "1234abcd");
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+
+   CHECK(romm_library_save(&lib, path), "manifest not saved");
+   CHECK(romm_library_load(&back, path), "manifest not loaded");
+   CHECK(!strcmp(back.server, lib.server) && back.synced_at == lib.synced_at,
+         "header: %s %lld", back.server, (long long)back.synced_at);
+   CHECK(RBUF_LEN(back.platforms) == 3, "%u platforms",
+         (unsigned)RBUF_LEN(back.platforms));
+   if (RBUF_LEN(back.platforms) == 3)
+   {
+      size_t i, j;
+      for (i = 0; i < 3; i++)
+      {
+         const romm_library_platform_t *a = &lib.platforms[i];
+         const romm_library_platform_t *b = &back.platforms[i];
+         CHECK(a->platform.id == b->platform.id
+               && a->platform.rom_count == b->platform.rom_count
+               && !strcmp(a->platform.slug, b->platform.slug)
+               && !strcmp(a->platform.name, b->platform.name)
+               && !strcmp(a->platform.libretro_slug, b->platform.libretro_slug)
+               && !strcmp(a->playlist, b->playlist),
+               "platform %u: %u %s [%s] [%s] %s", (unsigned)i,
+               b->platform.id, b->platform.slug, b->platform.name,
+               b->platform.libretro_slug, b->playlist);
+         CHECK(RBUF_LEN(a->roms) == RBUF_LEN(b->roms), "platform %u: %u games",
+               (unsigned)i, (unsigned)RBUF_LEN(b->roms));
+         for (j = 0; j < RBUF_LEN(a->roms) && j < RBUF_LEN(b->roms); j++)
+         {
+            const romm_rom_t *x = &a->roms[j];
+            const romm_rom_t *y = &b->roms[j];
+            CHECK(x->id == y->id && y->platform_id == a->platform.id
+                  && x->single_file == y->single_file
+                  && !strcmp(x->crc, y->crc)
+                  && !strcmp(x->fs_name, y->fs_name)
+                  && !strcmp(x->fs_name_no_ext, y->fs_name_no_ext)
+                  && !strcmp(x->name, y->name)
+                  && !strcmp(x->cover, y->cover)
+                  && !strcmp(x->updated_at, y->updated_at),
+                  "game %u: %u %u %d %s [%s] [%s] [%s] [%s] %s", y->id,
+                  x->id, y->platform_id, y->single_file, y->crc, y->fs_name,
+                  y->fs_name_no_ext, y->name, y->cover, y->updated_at);
+         }
+      }
+   }
+   romm_library_free(&back);
+   CHECK(!back.platforms && !*back.server, "freed library not empty");
+
+   /* A newer format, or a damaged file, reads as no library. */
+   {
+      char *doc   = NULL;
+      int64_t len = 0;
+      if (filestream_read_file(path, (void**)&doc, &len) && doc)
+      {
+         char *v = strstr(doc, "\"version\": 1");
+         if (v)
+         {
+            v[11] = '2';
+            filestream_write_file(path, doc, len);
+            CHECK(!romm_library_load(&back, path) && !back.platforms,
+                  "loaded a newer manifest format");
+            v[11] = '1';
+         }
+         filestream_write_file(path, doc, len / 2);
+         CHECK(!romm_library_load(&back, path) && !back.platforms,
+               "loaded a truncated manifest");
+         free(doc);
+      }
+   }
+
+   filestream_delete(path);
+   filestream_delete("romm_library_test_dir/romm");
+   filestream_delete(dir);
+   romm_library_free(&lib);
+}
+
 int main(void)
 {
    test_content_path();
    test_playlist_name();
    test_write_playlist();
+   test_manifest();
 
    if (failures)
    {

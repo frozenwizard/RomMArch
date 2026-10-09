@@ -16,6 +16,7 @@
 #define __ROMM_LIBRARY_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <boolean.h>
 #include <retro_common_api.h>
 
@@ -24,6 +25,26 @@
 RETRO_BEGIN_DECLS
 
 #define ROMM_SCHEME "romm://"
+
+/* A platform as the last sync left it. */
+typedef struct
+{
+   romm_platform_t platform;
+   /* Its playlist's file name in the playlist folder. */
+   char playlist[256];
+   /* Its games in RomM's order (an RBUF). */
+   romm_rom_t *roms;
+} romm_library_platform_t;
+
+/* What the last sync wrote. Kept with the playlists so the next sync
+ * knows which playlists are RomM's and what has changed. */
+typedef struct
+{
+   char server[256];
+   /* When that sync finished, in seconds since the epoch. */
+   int64_t synced_at;
+   romm_library_platform_t *platforms; /* an RBUF */
+} romm_library_t;
 
 /* The playlist path of @rom: romm://<id>/<RomM file name>. A folder
  * game launches through a generated playlist of its discs, so its path
@@ -43,6 +64,19 @@ size_t romm_library_playlist_name(char *s, size_t len,
 bool romm_library_write_playlist(const char *path, const char *db_name,
       const char *default_core_path, const char *default_core_name,
       const romm_rom_t *roms, size_t count);
+
+/* <@playlist_dir>/romm/library.json */
+size_t romm_library_manifest_path(char *s, size_t len,
+      const char *playlist_dir);
+
+/* Reads the manifest at @path into @lib, which starts empty. False,
+ * with @lib empty, when there is none or it can't be read. */
+bool romm_library_load(romm_library_t *lib, const char *path);
+
+/* Writes @lib to @path, replacing it, creating its folder if needed. */
+bool romm_library_save(const romm_library_t *lib, const char *path);
+
+void romm_library_free(romm_library_t *lib);
 
 RETRO_END_DECLS
 
