@@ -94,6 +94,12 @@ typedef struct
    void *user_data;
 } romm_roms_ctx_t;
 
+typedef struct
+{
+   romm_download_cb_t cb;
+   void *user_data;
+} romm_download_ctx_t;
+
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)
 {
@@ -141,9 +147,9 @@ bool romm_client_url(char *s, size_t len, const char *server,
    return true;
 }
 
-/* Starts GET @path on @server with @token's Bearer authorization. */
-static bool romm_get(const char *server, const char *token,
-      const char *path, retro_task_callback_t cb, void *ctx)
+static bool romm_get_with_headers(const char *server, const char *token,
+      const char *path, const char *extra_headers,
+      retro_task_callback_t cb, void *ctx)
 {
    char url[1024];
    char headers[512];
@@ -152,11 +158,20 @@ static bool romm_get(const char *server, const char *token,
          || !romm_client_url(url, sizeof(url), server, path))
       return false;
    if ((size_t)snprintf(headers, sizeof(headers),
-         "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
+         "Authorization: Bearer %s\r\n%s", token, extra_headers)
          >= sizeof(headers))
       return false;
    return task_push_http_transfer_with_headers(url, true, NULL,
          headers, cb, ctx) != NULL;
+}
+
+/* Starts GET @path on @server with @token's Bearer authorization,
+ * asking for JSON. */
+static bool romm_get(const char *server, const char *token,
+      const char *path, retro_task_callback_t cb, void *ctx)
+{
+   return romm_get_with_headers(server, token, path, ROMM_HEADERS_JSON,
+         cb, ctx);
 }
 
 static void romm_heartbeat_cb(retro_task_t *task, void *task_data,
@@ -783,6 +798,45 @@ bool romm_client_roms(const char *server, const char *token,
    ctx->user_data = user_data;
 
    if (!romm_get(server, token, path, romm_roms_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+static void romm_download_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_download_ctx_t *ctx   = (romm_download_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+
+   if (status == ROMM_OK && (!data->data || !data->len))
+      status = ROMM_ERR_RESPONSE;
+   if (status != ROMM_OK)
+      RARCH_DBG(ROMM_PFX "Download failed (status %d, HTTP %d).\n",
+            status, http_status);
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? data->data : NULL,
+         status == ROMM_OK ? data->len : 0);
+   free(ctx);
+}
+
+bool romm_client_download(const char *server, const char *token,
+      const char *path, romm_download_cb_t cb, void *user_data)
+{
+   romm_download_ctx_t *ctx;
+
+   if (!(ctx = (romm_download_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!romm_get_with_headers(server, token, path, "", romm_download_cb,
+         ctx))
    {
       free(ctx);
       return false;

@@ -8,7 +8,7 @@
  * of device pairing: the request RomM gets, and the code and approval
  * link read from its reply. The token check (whose user a token acts
  * for, and a token RomM turns down). The platform and game lists, read
- * from trimmed RomM replies. Then the wait for approval, with the
+ * from trimmed RomM replies, and file downloads. Then the wait for approval, with the
  * stubs' clock standing in for time: the poll schedule, slowing down
  * when told, and how approval, denial, expiry and cancellation end it.
  *
@@ -589,6 +589,78 @@ static void test_roms(void)
          "request or callback for a list never started");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   size_t len;
+   unsigned char data[16];
+} download_result_t;
+
+static void on_download(void *user_data, enum romm_status status,
+      int http_status, const void *data, size_t len)
+{
+   download_result_t *r = (download_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->len         = len;
+   if (data)
+      memcpy(r->data, data, len < 16 ? len : 16);
+}
+
+static void test_download(void)
+{
+   static const unsigned char png[] = { 0x89, 'P', 'N', 'G', 0, 0, 0, 13 };
+   http_transfer_data_t resp;
+   download_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_download("http://romm.local:8090", "rmm_0123abcd",
+         "/assets/romm/resources/roms/15/3335/cover/big.png", on_download, &r),
+         "download not started");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/assets/romm/"
+         "resources/roms/15/3335/cover/big.png"), "URL %s", stub_req.url);
+   CHECK(strstr(stub_req.headers, "Authorization: Bearer rmm_0123abcd\r\n")
+         && !strstr(stub_req.headers, "application/json"),
+         "headers %s", stub_req.headers);
+
+   /* Binary, NULs included. */
+   memset(&resp, 0, sizeof(resp));
+   resp.status = 200;
+   resp.data   = (char*)png;
+   resp.len    = sizeof(png);
+   stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.len == sizeof(png)
+         && !memcmp(r.data, png, sizeof(png)), "PNG: status %d len %u",
+         r.status, (unsigned)r.len);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_download("http://h", "t", "/x.png", on_download, &r);
+   answer(404, "{\"detail\": \"Not Found\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 404 && !r.len,
+         "404: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_download("http://h", "t", "/x.png", on_download, &r);
+   answer(200, "");
+   CHECK(r.status == ROMM_ERR_RESPONSE, "empty: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_download("http://h", "t", "/x.png", on_download, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE, "no response: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_download("http://h", "", "/x.png", on_download, &r)
+         && stub_req.count == 0 && r.calls == 0,
+         "download started without a token");
+}
+
 static void pair_start(pair_start_result_t *r, const char *web)
 {
    memset(r, 0, sizeof(*r));
@@ -873,6 +945,7 @@ int main(void)
    test_whoami();
    test_platforms();
    test_roms();
+   test_download();
    test_pair_start();
    test_pair_wait();
 

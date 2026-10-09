@@ -118,6 +118,12 @@ typedef void (*romm_roms_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_rom_t *roms, size_t count);
 
+/* @data holds @len bytes, valid only during the call; NULL unless
+ * @status is ROMM_OK. */
+typedef void (*romm_download_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const void *data, size_t len);
+
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
       const char *path);
@@ -163,6 +169,11 @@ bool romm_client_roms(const char *server, const char *token,
       unsigned platform_id, const char *updated_after,
       unsigned offset, unsigned limit,
       romm_roms_cb_t cb, void *user_data);
+
+/* Fetches the file at @path on @server, such as a cover, into memory.
+ * @path goes into the URL as is. @cb runs on the main thread. */
+bool romm_client_download(const char *server, const char *token,
+      const char *path, romm_download_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 
