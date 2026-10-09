@@ -480,7 +480,7 @@ static void romm_pair_wait_cleanup(retro_task_t *task)
 }
 
 bool romm_client_pair_wait(const char *server,
-      const romm_pairing_t *pairing,
+      const romm_pairing_t *pairing, const char *title,
       romm_pair_wait_cb_t cb, void *user_data)
 {
    romm_pair_wait_ctx_t *ctx;
@@ -540,10 +540,18 @@ bool romm_client_pair_wait(const char *server,
    task->state     = ctx;
    task->user_data = ctx;
    task->when      = now + (retro_time_t)ctx->interval * 1000000;
-   task->flags    |= RETRO_TASK_FLG_MAIN_THREAD | RETRO_TASK_FLG_MUTE;
+   task->flags    |= RETRO_TASK_FLG_MAIN_THREAD;
+   if (title)
+   {
+      task->title    = strdup(title);
+      task->progress = -1;
+   }
+   else
+      task->flags   |= RETRO_TASK_FLG_MUTE;
 
    if (!task_queue_push(task))
    {
+      free(task->title);
       free(task);
       free(ctx);
       return false;

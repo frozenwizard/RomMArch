@@ -82,9 +82,11 @@ bool romm_client_pair_start(const char *server, const char *web,
       romm_pair_start_cb_t cb, void *user_data);
 
 /* Polls @server until the user approves or denies @pairing, or it
- * expires; @cb runs on the main thread with the device's token. */
+ * expires; @cb runs on the main thread with the device's token. A
+ * @title is shown in the task notification for as long as it waits;
+ * NULL waits silently. */
 bool romm_client_pair_wait(const char *server,
-      const romm_pairing_t *pairing,
+      const romm_pairing_t *pairing, const char *title,
       romm_pair_wait_cb_t cb, void *user_data);
 
 RETRO_END_DECLS

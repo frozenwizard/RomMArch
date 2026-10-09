@@ -331,6 +331,7 @@ static bool run_task(void)
       return false;
    task->callback(task, NULL, task->user_data, NULL);
    task->cleanup(task);
+   free(task->title);
    free(task);
    stub_task = NULL;
    return true;
@@ -350,10 +351,12 @@ static void pair_wait(pair_wait_result_t *r, unsigned expires_in)
    stub_task = NULL;
    stub_now  = 1000 * SEC;
    CHECK(romm_client_pair_wait("http://192.168.1.2:8090/", &pairing,
-         on_pair_wait, r), "wait not started");
+         NULL, on_pair_wait, r), "wait not started");
    CHECK(stub_task != NULL, "no task pushed");
    CHECK(stub_task->flags & RETRO_TASK_FLG_MAIN_THREAD,
          "task doesn't run on the main thread");
+   CHECK((stub_task->flags & RETRO_TASK_FLG_MUTE) && !stub_task->title,
+         "untitled wait isn't silent");
    CHECK(stub_req.count == 0, "polled before the first interval");
 }
 
@@ -452,6 +455,30 @@ static void test_pair_wait(void)
    CHECK(run_task() && stub_req.count == 1 && r.status == ROMM_ERR_CANCELLED,
          "cancelled: status %d after %u polls", r.status, stub_req.count);
 
+   /* A title stays in the task notification while it waits. */
+   {
+      romm_pairing_t pairing;
+      memset(&pairing, 0, sizeof(pairing));
+      strlcpy(pairing.device_code, "9c2e6b", sizeof(pairing.device_code));
+      pairing.expires_in = 5;
+      memset(&r, 0, sizeof(r));
+      stub_reset();
+      stub_now = t0;
+      CHECK(romm_client_pair_wait("http://h", &pairing,
+            "Approve this device in RomM with code QERK5C2H",
+            on_pair_wait, &r), "titled wait not started");
+      CHECK(stub_task->title && !strcmp(stub_task->title,
+               "Approve this device in RomM with code QERK5C2H")
+            && !(stub_task->flags & RETRO_TASK_FLG_MUTE)
+            && stub_task->progress == -1,
+            "titled wait: title %s flags %d progress %d",
+            stub_task->title ? stub_task->title : "(none)",
+            (int)stub_task->flags, (int)stub_task->progress);
+      stub_now = stub_task->when;
+      CHECK(run_task() && r.status == ROMM_ERR_EXPIRED,
+            "titled wait: status %d", r.status);
+   }
+
    memset(&r, 0, sizeof(r));
    stub_refuse_task = true;
    {
@@ -459,11 +486,11 @@ static void test_pair_wait(void)
       memset(&pairing, 0, sizeof(pairing));
       strlcpy(pairing.device_code, "9c2e6b", sizeof(pairing.device_code));
       pairing.expires_in = 600;
-      CHECK(!romm_client_pair_wait("http://h", &pairing, on_pair_wait, &r),
+      CHECK(!romm_client_pair_wait("http://h", &pairing, NULL, on_pair_wait, &r),
             "reported waiting when the task wasn't pushed");
       pairing.device_code[0] = '\0';
       stub_refuse_task = false;
-      CHECK(!romm_client_pair_wait("http://h", &pairing, on_pair_wait, &r),
+      CHECK(!romm_client_pair_wait("http://h", &pairing, NULL, on_pair_wait, &r),
             "waiting without a device code");
    }
    CHECK(r.calls == 0, "callback ran for a wait never started");
