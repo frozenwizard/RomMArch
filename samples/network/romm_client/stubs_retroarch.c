@@ -64,3 +64,29 @@ void *task_push_http_transfer_with_headers(const char *url, bool mute,
    /* Any non-NULL handle: callers only test it for NULL. */
    return &stub_req;
 }
+
+void *task_push_http_transfer_with_content(const char *url,
+      const char *method, const void *content, size_t content_len,
+      const char *content_type, bool mute, bool headers_accept_err,
+      const char *headers, retro_task_callback_t cb, void *user_data)
+{
+   (void)mute; (void)headers_accept_err;
+   if (stub_req.refuse)
+      return NULL;
+   stub_req.count++;
+   strlcpy(stub_req.method, method, sizeof(stub_req.method));
+   strlcpy(stub_req.url, url, sizeof(stub_req.url));
+   strlcpy(stub_req.headers, headers ? headers : "",
+         sizeof(stub_req.headers));
+   strlcpy(stub_req.content_type, content_type ? content_type : "",
+         sizeof(stub_req.content_type));
+   stub_req.body[0] = '\0';
+   if (content_len < sizeof(stub_req.body))
+   {
+      memcpy(stub_req.body, content, content_len);
+      stub_req.body[content_len] = '\0';
+   }
+   stub_req.cb        = cb;
+   stub_req.user_data = user_data;
+   return &stub_req;
+}

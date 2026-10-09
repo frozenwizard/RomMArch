@@ -17,6 +17,7 @@
 
 #include <compat/strl.h>
 #include <formats/rjson.h>
+#include <retro_miscellaneous.h>
 #include <string/stdstring.h>
 
 #include "romm_client.h"
@@ -26,12 +27,34 @@
 #define ROMM_PFX "[RomM] "
 #define ROMM_JSON_MAX_KEYS 4
 #define ROMM_HEADERS_JSON "Accept: application/json\r\n"
+#define ROMM_CLIENT_NAME "Rommarch"
+
+/* What pairing asks for; the user can narrow it when approving. */
+static const char *const romm_scopes[] = {
+   "me.read",
+   "roms.read",
+   "roms.user.read",
+   "roms.user.write",
+   "platforms.read",
+   "assets.read",
+   "assets.write",
+   "firmware.read",
+   "collections.read",
+   "collections.write"
+};
 
 typedef struct
 {
    romm_heartbeat_cb_t cb;
    void *user_data;
 } romm_heartbeat_ctx_t;
+
+typedef struct
+{
+   romm_pair_start_cb_t cb;
+   void *user_data;
+   char web[1024];
+} romm_pair_start_ctx_t;
 
 /* Copies the string or number at @path, object keys joined by '.'
  * such as "SYSTEM.VERSION". */
@@ -102,6 +125,19 @@ static bool romm_json_get(const char *data, size_t len, const char *path,
 
    rjson_free(json);
    return found;
+}
+
+static unsigned romm_json_get_uint(const char *data, size_t len,
+      const char *path, unsigned fallback)
+{
+   char num[24];
+   if (romm_json_get(data, len, path, num, sizeof(num)))
+   {
+      unsigned long n = strtoul(num, NULL, 10);
+      if (n)
+         return (unsigned)n;
+   }
+   return fallback;
 }
 
 static enum romm_status romm_response_status(
@@ -177,4 +213,117 @@ bool romm_client_heartbeat(const char *server,
       return false;
    }
    return true;
+}
+
+static void romm_pair_start_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_pair_start_ctx_t *ctx = (romm_pair_start_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 201);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_pairing_t pairing;
+   char path[256];
+
+   memset(&pairing, 0, sizeof(pairing));
+   if (     status == ROMM_OK
+         && (  !romm_json_get(data->data, data->len, "device_code",
+                  pairing.device_code, sizeof(pairing.device_code))
+            || !romm_json_get(data->data, data->len, "user_code",
+                  pairing.user_code, sizeof(pairing.user_code))
+            || !romm_json_get(data->data, data->len,
+                  "verification_path_complete", path, sizeof(path))
+            || !romm_client_url(pairing.approve_url,
+                  sizeof(pairing.approve_url), ctx->web, path)))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status == ROMM_OK)
+   {
+      pairing.interval   = romm_json_get_uint(data->data, data->len,
+            "interval", 5);
+      pairing.expires_in = romm_json_get_uint(data->data, data->len,
+            "expires_in", 600);
+      RARCH_LOG(ROMM_PFX "Pairing started; approve at %s\n",
+            pairing.approve_url);
+   }
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't start pairing (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? &pairing : NULL);
+   free(ctx);
+}
+
+bool romm_client_pair_start(const char *server, const char *web,
+      const char *device_id, const char *device_name,
+      const char *client_version,
+      romm_pair_start_cb_t cb, void *user_data)
+{
+   char url[1024];
+   rjsonwriter_t *writer;
+   romm_pair_start_ctx_t *ctx;
+   const char *body;
+   int body_len   = 0;
+   bool pushed    = false;
+   size_t i;
+
+   if (     string_is_empty(device_id)
+         || string_is_empty(device_name)
+         || !romm_client_url(url, sizeof(url), server,
+               "/api/auth/device/init"))
+      return false;
+   if (!(ctx = (romm_pair_start_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   strlcpy(ctx->web, string_is_empty(web) ? server : web,
+         sizeof(ctx->web));
+
+   if (!(writer = rjsonwriter_open_memory()))
+   {
+      free(ctx);
+      return false;
+   }
+   rjsonwriter_raw(writer, "{", 1);
+   rjsonwriter_add_string(writer, "client_device_identifier");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, device_id);
+   rjsonwriter_raw(writer, ",", 1);
+   rjsonwriter_add_string(writer, "name");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, device_name);
+   rjsonwriter_raw(writer, ",", 1);
+   rjsonwriter_add_string(writer, "client");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, ROMM_CLIENT_NAME);
+   rjsonwriter_raw(writer, ",", 1);
+   rjsonwriter_add_string(writer, "platform");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, "macOS");
+   rjsonwriter_raw(writer, ",", 1);
+   rjsonwriter_add_string(writer, "client_version");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, client_version ? client_version : "");
+   rjsonwriter_raw(writer, ",", 1);
+   rjsonwriter_add_string(writer, "requested_scopes");
+   rjsonwriter_raw(writer, ":[", 2);
+   for (i = 0; i < ARRAY_SIZE(romm_scopes); i++)
+   {
+      if (i)
+         rjsonwriter_raw(writer, ",", 1);
+      rjsonwriter_add_string(writer, romm_scopes[i]);
+   }
+   rjsonwriter_raw(writer, "]}", 2);
+
+   if ((body = rjsonwriter_get_memory_buffer(writer, &body_len)))
+      pushed = task_push_http_transfer_with_content(url, "POST",
+            body, (size_t)body_len, "application/json", true, false,
+            ROMM_HEADERS_JSON, romm_pair_start_cb, ctx) != NULL;
+   rjsonwriter_free(writer);
+
+   if (!pushed)
+      free(ctx);
+   return pushed;
 }

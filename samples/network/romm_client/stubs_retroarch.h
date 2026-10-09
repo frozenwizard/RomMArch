@@ -14,6 +14,8 @@ typedef struct
    char method[16];
    char url[1024];
    char headers[1024];
+   char content_type[64];
+   char body[4096];
    retro_task_callback_t cb;
    void *user_data;
 } stub_request_t;

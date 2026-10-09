@@ -4,7 +4,9 @@
  * recorded by the stubs, checked, and answered with the response the
  * test chooses. Covers the server address joining, the heartbeat
  * request, and how its replies are read: RomM's version, another web
- * server's page, an HTTP error, and no answer at all.
+ * server's page, an HTTP error, and no answer at all. Then the start
+ * of device pairing: the request RomM gets, and the code and approval
+ * link read from its reply.
  *
  * Includes the client's translation unit so its static JSON reader is
  * tested as shipped.
@@ -48,6 +50,27 @@ static void on_heartbeat(void *user_data, enum romm_status status,
    r->status      = status;
    r->http_status = http_status;
    strlcpy(r->version, version ? version : "(null)", sizeof(r->version));
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_pairing;
+   romm_pairing_t pairing;
+} pair_start_result_t;
+
+static void on_pair_start(void *user_data, enum romm_status status,
+      int http_status, const romm_pairing_t *pairing)
+{
+   pair_start_result_t *r = (pair_start_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_pairing = pairing != NULL;
+   if (pairing)
+      r->pairing = *pairing;
 }
 
 /* Answers the recorded request with @status and @body. -1 is what the
@@ -178,11 +201,106 @@ static void test_heartbeat(void)
    CHECK(r.calls == 0, "callback ran for a request never started");
 }
 
+static void pair_start(pair_start_result_t *r, const char *web)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_pair_start("http://192.168.1.2:8090", web,
+         "6f1c-device", "Alice's \"Mac\"", "1.22.0",
+         on_pair_start, r), "pairing not started");
+   CHECK(stub_req.count == 1, "%u requests started", stub_req.count);
+}
+
+static const char *pair_init_reply =
+   "{\"device_code\": \"9c2e6b\", \"user_code\": \"QERK5C2H\","
+   " \"verification_path\": \"/pair/device\","
+   " \"verification_path_complete\": \"/pair/device?user_code=QERK5C2H\","
+   " \"expires_in\": 600, \"interval\": 7}";
+
+static void test_pair_start(void)
+{
+   pair_start_result_t r;
+   char s[256];
+
+   pair_start(&r, "https://romm.example.org/");
+   CHECK(!strcmp(stub_req.method, "POST"), "method %s", stub_req.method);
+   CHECK(!strcmp(stub_req.url, "http://192.168.1.2:8090/api/auth/device/init"),
+         "URL %s", stub_req.url);
+   CHECK(!strcmp(stub_req.content_type, "application/json"),
+         "content type %s", stub_req.content_type);
+   CHECK(romm_json_get(stub_req.body, strlen(stub_req.body),
+            "client_device_identifier", s, sizeof(s))
+         && !strcmp(s, "6f1c-device"), "device id %s", s);
+   CHECK(romm_json_get(stub_req.body, strlen(stub_req.body), "name", s,
+            sizeof(s))
+         && !strcmp(s, "Alice's \"Mac\""), "name %s in %s", s, stub_req.body);
+   CHECK(romm_json_get(stub_req.body, strlen(stub_req.body), "client", s,
+            sizeof(s))
+         && !strcmp(s, "Rommarch"), "client %s", s);
+   CHECK(romm_json_get(stub_req.body, strlen(stub_req.body),
+            "client_version", s, sizeof(s))
+         && !strcmp(s, "1.22.0"), "client version %s", s);
+   CHECK(strstr(stub_req.body, "\"requested_scopes\":[\"me.read\",") != NULL
+         && strstr(stub_req.body, "\"assets.write\"") != NULL
+         && strstr(stub_req.body, "\"collections.write\"]") != NULL,
+         "scopes in %s", stub_req.body);
+
+   answer(201, pair_init_reply);
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_pairing,
+         "201: calls %u status %d", r.calls, r.status);
+   CHECK(!strcmp(r.pairing.device_code, "9c2e6b"),
+         "device code %s", r.pairing.device_code);
+   CHECK(!strcmp(r.pairing.user_code, "QERK5C2H"),
+         "user code %s", r.pairing.user_code);
+   CHECK(!strcmp(r.pairing.approve_url,
+            "https://romm.example.org/pair/device?user_code=QERK5C2H"),
+         "approve URL %s", r.pairing.approve_url);
+   CHECK(r.pairing.interval == 7 && r.pairing.expires_in == 600,
+         "interval %u expires in %u", r.pairing.interval,
+         r.pairing.expires_in);
+
+   pair_start(&r, "");
+   answer(201, "{\"device_code\": \"9c2e6b\", \"user_code\": \"QERK5C2H\","
+         " \"verification_path_complete\": \"/pair/device?user_code=QERK5C2H\"}");
+   CHECK(r.status == ROMM_OK && !strcmp(r.pairing.approve_url,
+            "http://192.168.1.2:8090/pair/device?user_code=QERK5C2H"),
+         "no web address: approve URL %s", r.pairing.approve_url);
+   CHECK(r.pairing.interval == 5 && r.pairing.expires_in == 600,
+         "defaults: interval %u expires in %u", r.pairing.interval,
+         r.pairing.expires_in);
+
+   pair_start(&r, NULL);
+   answer(201, "{\"device_code\": \"9c2e6b\","
+         " \"verification_path_complete\": \"/pair/device\"}");
+   CHECK(r.calls == 1 && r.status == ROMM_ERR_RESPONSE && !r.has_pairing,
+         "no user code: status %d", r.status);
+
+   pair_start(&r, NULL);
+   answer(422, "{\"detail\": [{\"msg\": \"Unknown scopes\"}]}");
+   CHECK(r.calls == 1 && r.status == ROMM_ERR_HTTP && r.http_status == 422
+         && !r.has_pairing, "422: status %d HTTP %d", r.status, r.http_status);
+
+   pair_start(&r, NULL);
+   answer(-1, NULL);
+   CHECK(r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE
+         && r.http_status == 0, "no response: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_pair_start("http://h", NULL, "", "Mac", "1",
+         on_pair_start, &r), "started without a device id");
+   stub_req.refuse = true;
+   CHECK(!romm_client_pair_start("http://h", NULL, "id", "Mac", "1",
+         on_pair_start, &r), "reported started when the request wasn't");
+   CHECK(r.calls == 0, "callback ran for a request never started");
+}
+
 int main(void)
 {
    test_url();
    test_json();
    test_heartbeat();
+   test_pair_start();
 
    if (failures)
    {

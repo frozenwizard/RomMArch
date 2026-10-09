@@ -32,10 +32,27 @@ enum romm_status
    ROMM_ERR_RESPONSE
 };
 
+/* A pairing RomM has started: the user approves it at @approve_url
+ * (or enters @user_code there) while the device polls with
+ * @device_code. Times are in seconds. */
+typedef struct
+{
+   char device_code[160];
+   char user_code[32];
+   char approve_url[1024];
+   unsigned interval;
+   unsigned expires_in;
+} romm_pairing_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
       enum romm_status status, int http_status, const char *version);
+
+/* @pairing is NULL unless @status is ROMM_OK. */
+typedef void (*romm_pair_start_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_pairing_t *pairing);
 
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
@@ -44,6 +61,16 @@ bool romm_client_url(char *s, size_t len, const char *server,
 /* Checks @server is a reachable RomM; @cb runs on the main thread. */
 bool romm_client_heartbeat(const char *server,
       romm_heartbeat_cb_t cb, void *user_data);
+
+/* Asks @server to pair this device. @device_id must stay the same
+ * across pairings so RomM updates its device entry instead of adding
+ * one; @device_name is what RomM lists it as. The approval link uses
+ * @web, the address the user signs in to RomM at, or @server when
+ * @web is empty. @cb runs on the main thread. */
+bool romm_client_pair_start(const char *server, const char *web,
+      const char *device_id, const char *device_name,
+      const char *client_version,
+      romm_pair_start_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 

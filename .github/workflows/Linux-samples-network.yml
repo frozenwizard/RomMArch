@@ -191,7 +191,10 @@ jobs:
           # Includes network/romm/romm_client.c and plays RomM: the
           # server address joining, the heartbeat request, and its
           # replies - RomM's version, another web server's page, an
-          # HTTP error and no response at all.
+          # HTTP error and no response at all - then the start of
+          # device pairing: the JSON RomM gets (escaped device name,
+          # requested scopes) and the code and approval link read
+          # back from its reply.
           make clean all SANITIZER=address,undefined
           test -x romm_client_test
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
