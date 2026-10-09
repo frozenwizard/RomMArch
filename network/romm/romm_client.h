@@ -66,6 +66,26 @@ typedef struct
    char libretro_slug[128];
 } romm_platform_t;
 
+/* A game in the user's RomM library. */
+typedef struct
+{
+   unsigned id;
+   unsigned platform_id;
+   /* The game is one file rather than a folder. */
+   bool single_file;
+   /* That file's CRC32 in hex; empty when RomM has none. */
+   char crc[9];
+   /* The file or folder name in RomM's library, and that name without
+    * its extension, which RomM matches synced saves against. */
+   char fs_name[256];
+   char fs_name_no_ext[256];
+   /* RomM's title, or fs_name_no_ext when it has none. */
+   char name[256];
+   /* Path of the large cover on the server; empty when there is none. */
+   char cover[192];
+   char updated_at[32];
+} romm_rom_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
@@ -89,6 +109,12 @@ typedef void (*romm_pair_wait_cb_t)(void *user_data,
 typedef void (*romm_platforms_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_platform_t *platforms, size_t count);
+
+/* @roms holds @count entries, valid only during the call; NULL unless
+ * @status is ROMM_OK. */
+typedef void (*romm_roms_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_rom_t *roms, size_t count);
 
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
@@ -125,6 +151,16 @@ bool romm_client_pair_wait(const char *server,
  * order; @cb runs on the main thread. */
 bool romm_client_platforms(const char *server, const char *token,
       romm_platforms_cb_t cb, void *user_data);
+
+/* Fetches up to @limit of the games on platform @platform_id, from
+ * @offset in RomM's title order, leaving out games whose files are
+ * missing. With @updated_after (UTC, such as "2026-10-03T00:23:20Z"),
+ * only games changed since then. Fewer than @limit means the last
+ * page. @cb runs on the main thread. */
+bool romm_client_roms(const char *server, const char *token,
+      unsigned platform_id, const char *updated_after,
+      unsigned offset, unsigned limit,
+      romm_roms_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 

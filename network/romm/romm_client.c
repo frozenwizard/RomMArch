@@ -88,6 +88,12 @@ typedef struct
    void *user_data;
 } romm_platforms_ctx_t;
 
+typedef struct
+{
+   romm_roms_cb_t cb;
+   void *user_data;
+} romm_roms_ctx_t;
+
 /* A scalar member of an object in the array being walked; @value is ""
  * for true, false and null. */
 typedef void (*romm_json_member_cb_t)(void *ctx, const char *key,
@@ -814,6 +820,133 @@ bool romm_client_platforms(const char *server, const char *token,
    ctx->user_data = user_data;
 
    if (!romm_get(server, token, "/api/platforms", romm_platforms_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+typedef struct
+{
+   romm_rom_t *list;
+   romm_rom_t cur;
+} romm_roms_parse_t;
+
+static void romm_roms_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_rom_t *r = &((romm_roms_parse_t*)ctx)->cur;
+
+   if (string_is_equal(key, "has_simple_single_file"))
+      r->single_file = type == RJSON_TRUE;
+   else if (type != RJSON_STRING && type != RJSON_NUMBER)
+      return;
+   else if (string_is_equal(key, "id"))
+      r->id = romm_json_uint(value);
+   else if (string_is_equal(key, "platform_id"))
+      r->platform_id = romm_json_uint(value);
+   else if (string_is_equal(key, "crc_hash"))
+      strlcpy(r->crc, value, sizeof(r->crc));
+   else if (string_is_equal(key, "fs_name"))
+      strlcpy(r->fs_name, value, sizeof(r->fs_name));
+   else if (string_is_equal(key, "fs_name_no_ext"))
+      strlcpy(r->fs_name_no_ext, value, sizeof(r->fs_name_no_ext));
+   else if (string_is_equal(key, "name"))
+      strlcpy(r->name, value, sizeof(r->name));
+   else if (string_is_equal(key, "path_cover_large"))
+      strlcpy(r->cover, value, sizeof(r->cover));
+   else if (string_is_equal(key, "updated_at"))
+      strlcpy(r->updated_at, value, sizeof(r->updated_at));
+}
+
+static void romm_roms_item_end(void *ctx)
+{
+   romm_roms_parse_t *parse = (romm_roms_parse_t*)ctx;
+   romm_rom_t *r            = &parse->cur;
+
+   if (r->id && *r->fs_name)
+   {
+      if (!*r->name)
+         strlcpy(r->name, *r->fs_name_no_ext ? r->fs_name_no_ext
+               : r->fs_name, sizeof(r->name));
+      RBUF_PUSH(parse->list, *r);
+   }
+   memset(r, 0, sizeof(*r));
+}
+
+static void romm_roms_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_roms_ctx_t *ctx       = (romm_roms_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_roms_parse_t *parse;
+
+   /* A romm_rom_t is about 1 KB, too big to parse into on the stack. */
+   if (!(parse = (romm_roms_parse_t*)calloc(1, sizeof(*parse))))
+      status = ROMM_ERR_RESPONSE;
+   else if (status == ROMM_OK
+         && !romm_json_items(data->data, data->len, "items",
+               romm_roms_member, romm_roms_item_end, parse))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status == ROMM_OK)
+      RARCH_DBG(ROMM_PFX "Got %u games.\n", (unsigned)RBUF_LEN(parse->list));
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't list games (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? parse->list : NULL,
+         status == ROMM_OK ? RBUF_LEN(parse->list) : 0);
+   if (parse)
+   {
+      RBUF_FREE(parse->list);
+      free(parse);
+   }
+   free(ctx);
+}
+
+bool romm_client_roms(const char *server, const char *token,
+      unsigned platform_id, const char *updated_after,
+      unsigned offset, unsigned limit,
+      romm_roms_cb_t cb, void *user_data)
+{
+   char path[384];
+   size_t _len;
+   romm_roms_ctx_t *ctx;
+
+   if (!platform_id || !limit)
+      return false;
+   _len = (size_t)snprintf(path, sizeof(path),
+         "/api/roms?platform_ids=%u&missing=false&order_by=name"
+         "&order_dir=asc&with_char_index=false&with_filter_values=false"
+         "&with_rom_id_index=false&with_total=false&limit=%u&offset=%u",
+         platform_id, limit, offset);
+   if (_len >= sizeof(path))
+      return false;
+   if (!string_is_empty(updated_after))
+   {
+      const char *c;
+      /* Goes into the URL as is. */
+      for (c = updated_after; *c; c++)
+         if (!ISALNUM((unsigned char)*c) && *c != ':' && *c != '-'
+               && *c != '.')
+            return false;
+      if ((size_t)snprintf(path + _len, sizeof(path) - _len,
+            "&updated_after=%s", updated_after) >= sizeof(path) - _len)
+         return false;
+   }
+
+   if (!(ctx = (romm_roms_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!romm_get(server, token, path, romm_roms_cb, ctx))
    {
       free(ctx);
       return false;

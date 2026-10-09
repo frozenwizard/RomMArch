@@ -7,7 +7,8 @@
  * server's page, an HTTP error, and no answer at all. Then the start
  * of device pairing: the request RomM gets, and the code and approval
  * link read from its reply. The token check (whose user a token acts
- * for, and a token RomM turns down). Then the wait for approval, with the
+ * for, and a token RomM turns down). The platform and game lists, read
+ * from trimmed RomM replies. Then the wait for approval, with the
  * stubs' clock standing in for time: the poll schedule, slowing down
  * when told, and how approval, denial, expiry and cancellation end it.
  *
@@ -118,7 +119,7 @@ static void on_pair_wait(void *user_data, enum romm_status status,
 static void answer(int status, const char *body)
 {
    http_transfer_data_t resp;
-   char buf[2048];
+   char buf[8192];
 
    memset(&resp, 0, sizeof(resp));
    resp.status = status;
@@ -453,6 +454,141 @@ static void test_platforms(void)
    CHECK(r.calls == 0, "callback ran for a request never started");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_list;
+   size_t count;
+   romm_rom_t roms[4];
+} roms_result_t;
+
+static void on_roms(void *user_data, enum romm_status status,
+      int http_status, const romm_rom_t *roms, size_t count)
+{
+   roms_result_t *r = (roms_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_list    = roms != NULL;
+   r->count       = count;
+   for (i = 0; i < count && i < 4; i++)
+      r->roms[i] = roms[i];
+}
+
+static void roms(roms_result_t *r, const char *updated_after)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_roms("http://romm.local:8090", "rmm_0123abcd", 15,
+         updated_after, 500, 250, on_roms, r), "game list not started");
+   CHECK(stub_req.count == 1 && !strcmp(stub_req.method, "GET")
+         && strstr(stub_req.headers, "Authorization: Bearer rmm_0123abcd\r\n"),
+         "%u requests, method %s, headers %s", stub_req.count,
+         stub_req.method, stub_req.headers);
+}
+
+/* Trimmed from RomM nightly-bdaac69. The nested objects carry their
+ * own ids, names and dates, which mustn't leak into the game. */
+static const char *roms_reply =
+   "{\"items\": ["
+   "{\"id\": 3335, \"igdb_id\": 1664, \"platform_id\": 15,"
+   " \"platform_slug\": \"segacd\","
+   " \"fs_name\": \"Final Fight CD (USA).zip\","
+   " \"fs_name_no_tags\": \"Final Fight CD\","
+   " \"fs_name_no_ext\": \"Final Fight CD (USA)\", \"fs_extension\": \"zip\","
+   " \"name\": \"Final Fight CD\", \"name_sort_key\": \"final fight cd\","
+   " \"metadatum\": {\"rom_id\": 3335, \"genres\": [\"Beat 'em up\"]},"
+   " \"igdb_metadata\": {\"platforms\": [{\"igdb_id\": 78, \"name\": \"Sega CD\"}]},"
+   " \"path_cover_small\": \"/assets/romm/resources/roms/15/3335/cover/small.png?ts=2026-10-03 00:23:20\","
+   " \"path_cover_large\": \"/assets/romm/resources/roms/15/3335/cover/big.png?ts=2026-10-03 00:23:20\","
+   " \"crc_hash\": \"0beca6fd\", \"has_simple_single_file\": true,"
+   " \"has_nested_single_file\": false, \"has_multiple_files\": false,"
+   " \"created_at\": \"2026-10-02T04:37:22+00:00\","
+   " \"updated_at\": \"2026-10-03T00:23:20+00:00\", \"missing_from_fs\": false,"
+   " \"rom_user\": {\"id\": -1, \"rom_id\": -1,"
+   " \"updated_at\": \"2026-10-09T04:02:58+00:00\", \"hidden\": false},"
+   " \"files\": [{\"id\": 3613, \"rom_id\": 3335,"
+   " \"file_name\": \"Final Fight CD (USA).zip\", \"crc_hash\": \"ffffffff\"}]},"
+   "{\"has_simple_single_file\": false, \"id\": 2810, \"platform_id\": 15,"
+   " \"fs_name\": \"Lunar - The Silver Star (USA)\","
+   " \"fs_name_no_ext\": \"Lunar - The Silver Star (USA)\","
+   " \"name\": null, \"crc_hash\": \"\", \"path_cover_large\": null,"
+   " \"updated_at\": \"2026-10-02T04:37:22+00:00\"},"
+   "{\"id\": 9, \"name\": \"No file name\"}],"
+   " \"total\": null, \"limit\": 250, \"offset\": 500,"
+   " \"char_index\": {}, \"rom_id_index\": [], \"filter_values\": {}}";
+
+static void test_roms(void)
+{
+   roms_result_t r;
+   const romm_rom_t *g;
+
+   roms(&r, NULL);
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/roms"
+            "?platform_ids=15&missing=false&order_by=name&order_dir=asc"
+            "&with_char_index=false&with_filter_values=false"
+            "&with_rom_id_index=false&with_total=false&limit=250&offset=500"),
+         "URL %s", stub_req.url);
+   answer(200, roms_reply);
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 2,
+         "list: calls %u status %d count %u", r.calls, r.status,
+         (unsigned)r.count);
+   g = &r.roms[0];
+   CHECK(g->id == 3335 && g->platform_id == 15 && g->single_file
+         && !strcmp(g->crc, "0beca6fd")
+         && !strcmp(g->fs_name, "Final Fight CD (USA).zip")
+         && !strcmp(g->fs_name_no_ext, "Final Fight CD (USA)")
+         && !strcmp(g->name, "Final Fight CD")
+         && !strcmp(g->cover, "/assets/romm/resources/roms/15/3335/cover/big.png?ts=2026-10-03 00:23:20")
+         && !strcmp(g->updated_at, "2026-10-03T00:23:20+00:00"),
+         "single file: %u %u %d %s [%s] [%s] [%s] [%s] %s", g->id,
+         g->platform_id, g->single_file, g->crc, g->fs_name,
+         g->fs_name_no_ext, g->name, g->cover, g->updated_at);
+   g = &r.roms[1];
+   CHECK(g->id == 2810 && !g->single_file && !*g->crc && !*g->cover
+         && !strcmp(g->name, "Lunar - The Silver Star (USA)"),
+         "folder: %u %d [%s] [%s] [%s]", g->id, g->single_file, g->crc,
+         g->cover, g->name);
+
+   roms(&r, "2026-10-03T00:22:20Z");
+   CHECK(strstr(stub_req.url, "&offset=500&updated_after=2026-10-03T00:22:20Z")
+         != NULL, "URL %s", stub_req.url);
+   answer(200, "{\"items\": [], \"total\": null}");
+   CHECK(r.status == ROMM_OK && r.count == 0, "nothing changed: status %d"
+         " count %u", r.status, (unsigned)r.count);
+
+   roms(&r, NULL);
+   answer(200, "[{\"id\": 1, \"fs_name\": \"a.nes\"}]");
+   CHECK(r.status == ROMM_ERR_RESPONSE && !r.has_list,
+         "bare array: status %d", r.status);
+
+   roms(&r, NULL);
+   answer(401, "{\"detail\": \"Invalid token\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED, "401: status %d", r.status);
+
+   roms(&r, NULL);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE, "no response: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_roms("http://h", "t", 15,
+         "2026-10-03T00:23:20+00:00", 0, 50, on_roms, &r),
+         "started with a '+' going into the URL");
+   CHECK(!romm_client_roms("http://h", "t", 15, "x&y=1", 0, 50, on_roms, &r),
+         "started with an '&' going into the URL");
+   CHECK(!romm_client_roms("http://h", "t", 0, NULL, 0, 50, on_roms, &r),
+         "started without a platform");
+   CHECK(!romm_client_roms("http://h", "", 15, NULL, 0, 50, on_roms, &r),
+         "started without a token");
+   CHECK(stub_req.count == 0 && r.calls == 0,
+         "request or callback for a list never started");
+}
+
 static void pair_start(pair_start_result_t *r, const char *web)
 {
    memset(r, 0, sizeof(*r));
@@ -736,6 +872,7 @@ int main(void)
    test_heartbeat();
    test_whoami();
    test_platforms();
+   test_roms();
    test_pair_start();
    test_pair_wait();
 
