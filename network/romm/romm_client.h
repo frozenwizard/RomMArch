@@ -51,6 +51,21 @@ typedef struct
    unsigned expires_in;
 } romm_pairing_t;
 
+/* A platform in the user's RomM library. */
+typedef struct
+{
+   unsigned id;
+   /* Games RomM has on the platform, before the user's filters. */
+   unsigned rom_count;
+   /* RomM's short name, such as "snes". */
+   char slug[64];
+   /* What RomM shows, the user's custom name if they set one. */
+   char name[128];
+   /* The libretro database name, such as "Nintendo - Super Nintendo
+    * Entertainment System"; empty when RomM knows none. */
+   char libretro_slug[128];
+} romm_platform_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
@@ -68,6 +83,12 @@ typedef void (*romm_whoami_cb_t)(void *user_data,
 /* @token and @device_id are empty unless @status is ROMM_OK. */
 typedef void (*romm_pair_wait_cb_t)(void *user_data,
       enum romm_status status, const char *token, const char *device_id);
+
+/* @platforms holds @count entries, valid only during the call; NULL
+ * unless @status is ROMM_OK. */
+typedef void (*romm_platforms_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_platform_t *platforms, size_t count);
 
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
@@ -99,6 +120,11 @@ bool romm_client_pair_start(const char *server, const char *web,
 bool romm_client_pair_wait(const char *server,
       const romm_pairing_t *pairing, const char *title,
       romm_pair_wait_cb_t cb, void *user_data);
+
+/* Lists the platforms @token's user can see on @server, in RomM's
+ * order; @cb runs on the main thread. */
+bool romm_client_platforms(const char *server, const char *token,
+      romm_platforms_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 

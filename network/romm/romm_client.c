@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <array/rbuf.h>
 #include <compat/strl.h>
 #include <features/features_cpu.h>
 #include <formats/rjson.h>
@@ -80,6 +81,19 @@ typedef struct
    char token[128];
    char device_id[64];
 } romm_pair_wait_ctx_t;
+
+typedef struct
+{
+   romm_platforms_cb_t cb;
+   void *user_data;
+} romm_platforms_ctx_t;
+
+/* A scalar member of an object in the array being walked; @value is ""
+ * for true, false and null. */
+typedef void (*romm_json_member_cb_t)(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len);
+/* Called after the last member of each object. */
+typedef void (*romm_json_item_end_cb_t)(void *ctx);
 
 /* Copies the string or number at @path, object keys joined by '.'
  * such as "SYSTEM.VERSION". */
@@ -165,6 +179,97 @@ static unsigned romm_json_get_uint(const char *data, size_t len,
    return fallback;
 }
 
+/* Walks the objects in the top-level array, or in the array at
+ * @array_key of the top-level object, skipping nested values. False
+ * unless that array is there and complete. */
+static bool romm_json_items(const char *data, size_t len,
+      const char *array_key, romm_json_member_cb_t member,
+      romm_json_item_end_cb_t item_end, void *ctx)
+{
+   /* Depth the array's own items are at; 0 until it starts. */
+   unsigned item_depth = 0;
+   bool key_matched    = false;
+   bool complete       = false;
+   rjson_t *json;
+   enum rjson_type type;
+   char key[64];
+
+   if (!data || !len || !(json = rjson_open_buffer(data, len)))
+      return false;
+
+   key[0] = '\0';
+   while ((type = rjson_next(json)) != RJSON_DONE && type != RJSON_ERROR)
+   {
+      /* rjson reports an opening bracket at its own depth and a
+       * closing one at the depth around it. */
+      unsigned depth = rjson_get_context_depth(json);
+      bool is_key    = type == RJSON_STRING
+            && rjson_get_context_type(json) == RJSON_OBJECT
+            && (rjson_get_context_count(json) & 1);
+      const char *str;
+      size_t _len;
+
+      if (!item_depth)
+      {
+         if (type == RJSON_ARRAY && depth == (array_key ? 2u : 1u)
+               && (!array_key || key_matched))
+            item_depth = depth + 1;
+         else if (array_key && depth == 1)
+         {
+            key_matched = false;
+            if (is_key)
+            {
+               str         = rjson_get_string(json, &_len);
+               key_matched = string_is_equal(str, array_key);
+            }
+         }
+         continue;
+      }
+
+      if (depth + 1 < item_depth)
+      {
+         complete = true;
+         break;
+      }
+      if (type == RJSON_OBJECT_END && depth + 1 == item_depth)
+      {
+         if (item_end)
+            item_end(ctx);
+         continue;
+      }
+      if (     depth != item_depth
+            || rjson_get_context_type(json) != RJSON_OBJECT)
+         continue;
+
+      switch (type)
+      {
+         case RJSON_STRING:
+         case RJSON_NUMBER:
+            str = rjson_get_string(json, &_len);
+            if (is_key)
+               strlcpy(key, str, sizeof(key));
+            else
+               member(ctx, key, type, str, _len);
+            break;
+         case RJSON_TRUE:
+         case RJSON_FALSE:
+         case RJSON_NULL:
+            member(ctx, key, type, "", 0);
+            break;
+         default:
+            break;
+      }
+   }
+
+   rjson_free(json);
+   return complete;
+}
+
+static unsigned romm_json_uint(const char *value)
+{
+   return (unsigned)strtoul(value, NULL, 10);
+}
+
 static enum romm_status romm_response_status(
       const http_transfer_data_t *data, int expected)
 {
@@ -192,6 +297,24 @@ bool romm_client_url(char *s, size_t len, const char *server,
    memcpy(s, server, server_len);
    strlcpy(s + server_len, path, len - server_len);
    return true;
+}
+
+/* Starts GET @path on @server with @token's Bearer authorization. */
+static bool romm_get(const char *server, const char *token,
+      const char *path, retro_task_callback_t cb, void *ctx)
+{
+   char url[1024];
+   char headers[512];
+
+   if (     string_is_empty(token)
+         || !romm_client_url(url, sizeof(url), server, path))
+      return false;
+   if ((size_t)snprintf(headers, sizeof(headers),
+         "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
+         >= sizeof(headers))
+      return false;
+   return task_push_http_transfer_with_headers(url, true, NULL,
+         headers, cb, ctx) != NULL;
 }
 
 static void romm_heartbeat_cb(retro_task_t *task, void *task_data,
@@ -271,24 +394,14 @@ static void romm_whoami_cb(retro_task_t *task, void *task_data,
 bool romm_client_whoami(const char *server, const char *token,
       romm_whoami_cb_t cb, void *user_data)
 {
-   char url[1024];
-   char headers[512];
    romm_whoami_ctx_t *ctx;
 
-   if (     string_is_empty(token)
-         || !romm_client_url(url, sizeof(url), server, "/api/users/me"))
-      return false;
-   if ((size_t)snprintf(headers, sizeof(headers),
-         "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
-         >= sizeof(headers))
-      return false;
    if (!(ctx = (romm_whoami_ctx_t*)malloc(sizeof(*ctx))))
       return false;
    ctx->cb        = cb;
    ctx->user_data = user_data;
 
-   if (!task_push_http_transfer_with_headers(url, true, NULL,
-         headers, romm_whoami_cb, ctx))
+   if (!romm_get(server, token, "/api/users/me", romm_whoami_cb, ctx))
    {
       free(ctx);
       return false;
@@ -620,5 +733,90 @@ bool romm_client_pair_wait(const char *server,
       return false;
    }
    RARCH_LOG(ROMM_PFX "Waiting for the pairing to be approved.\n");
+   return true;
+}
+
+typedef struct
+{
+   romm_platform_t *list;
+   romm_platform_t cur;
+} romm_platforms_parse_t;
+
+static void romm_platforms_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_platform_t *p = &((romm_platforms_parse_t*)ctx)->cur;
+
+   if (type != RJSON_STRING && type != RJSON_NUMBER)
+      return;
+   if (string_is_equal(key, "id"))
+      p->id = romm_json_uint(value);
+   else if (string_is_equal(key, "rom_count"))
+      p->rom_count = romm_json_uint(value);
+   else if (string_is_equal(key, "slug"))
+      strlcpy(p->slug, value, sizeof(p->slug));
+   else if (string_is_equal(key, "libretro_slug"))
+      strlcpy(p->libretro_slug, value, sizeof(p->libretro_slug));
+   /* display_name includes the user's custom name. */
+   else if (string_is_equal(key, "display_name") && *value)
+      strlcpy(p->name, value, sizeof(p->name));
+   else if (string_is_equal(key, "name") && !*p->name)
+      strlcpy(p->name, value, sizeof(p->name));
+}
+
+static void romm_platforms_item_end(void *ctx)
+{
+   romm_platforms_parse_t *parse = (romm_platforms_parse_t*)ctx;
+
+   if (parse->cur.id)
+      RBUF_PUSH(parse->list, parse->cur);
+   memset(&parse->cur, 0, sizeof(parse->cur));
+}
+
+static void romm_platforms_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_platforms_ctx_t *ctx  = (romm_platforms_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_platforms_parse_t parse;
+
+   memset(&parse, 0, sizeof(parse));
+   if (     status == ROMM_OK
+         && !romm_json_items(data->data, data->len, NULL,
+               romm_platforms_member, romm_platforms_item_end, &parse))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "RomM lists %u platforms.\n",
+            (unsigned)RBUF_LEN(parse.list));
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't list platforms (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? parse.list : NULL,
+         status == ROMM_OK ? RBUF_LEN(parse.list) : 0);
+   RBUF_FREE(parse.list);
+   free(ctx);
+}
+
+bool romm_client_platforms(const char *server, const char *token,
+      romm_platforms_cb_t cb, void *user_data)
+{
+   romm_platforms_ctx_t *ctx;
+
+   if (!(ctx = (romm_platforms_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!romm_get(server, token, "/api/platforms", romm_platforms_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
    return true;
 }

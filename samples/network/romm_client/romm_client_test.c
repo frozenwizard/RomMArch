@@ -178,6 +178,61 @@ static void test_json(void)
          "HTML parsed as JSON");
 }
 
+/* Records what romm_json_items() reports as "key=value;" per member and
+ * "|" per object. */
+typedef struct
+{
+   char log[512];
+} items_log_t;
+
+static void items_member(void *ctx, const char *key, enum rjson_type type,
+      const char *value, size_t len)
+{
+   items_log_t *l = (items_log_t*)ctx;
+   strlcat(l->log, key, sizeof(l->log));
+   strlcat(l->log, "=", sizeof(l->log));
+   strlcat(l->log, type == RJSON_NULL ? "null"
+         : type == RJSON_TRUE ? "true"
+         : type == RJSON_FALSE ? "false" : value, sizeof(l->log));
+   strlcat(l->log, ";", sizeof(l->log));
+}
+
+static void items_end(void *ctx)
+{
+   strlcat(((items_log_t*)ctx)->log, "|", sizeof(((items_log_t*)ctx)->log));
+}
+
+static bool items(const char *doc, const char *key, items_log_t *l)
+{
+   memset(l, 0, sizeof(*l));
+   return romm_json_items(doc, strlen(doc), key, items_member, items_end, l);
+}
+
+static void test_json_items(void)
+{
+   items_log_t l;
+
+   CHECK(items("[{\"id\": 1, \"m\": {\"id\": 9, \"x\": [1, 2]},"
+            " \"n\": \"a\", \"l\": [{\"id\": 8}], \"t\": true,"
+            " \"f\": false, \"z\": null}, {\"id\": 2}]", NULL, &l)
+         && !strcmp(l.log, "id=1;n=a;t=true;f=false;z=null;|id=2;|"),
+         "top-level array: %s", l.log);
+   CHECK(items("[]", NULL, &l) && !*l.log, "empty array: %s", l.log);
+   CHECK(items("[1, [2, 3], {\"id\": 4}, \"s\"]", NULL, &l)
+         && !strcmp(l.log, "id=4;|"), "non-object items: %s", l.log);
+   CHECK(!items("{\"items\": [{\"id\": 1}]}", NULL, &l),
+         "object walked as an array");
+   CHECK(items("{\"x\": {\"items\": [{\"id\": 7}]}, \"total\": 2,"
+            " \"items\": [{\"id\": 1, \"items\": [{\"id\": 5}]}, {\"id\": 2}],"
+            " \"after\": [{\"id\": 3}]}", "items", &l)
+         && !strcmp(l.log, "id=1;|id=2;|"), "member array: %s", l.log);
+   CHECK(!items("{\"items\": 3, \"other\": [{\"id\": 1}]}", "items", &l),
+         "array found under another key: %s", l.log);
+   CHECK(!items("[{\"id\": 1}, {\"id\": 2", NULL, &l),
+         "truncated array reported complete");
+   CHECK(!items("<html>", NULL, &l), "HTML walked as JSON");
+}
+
 static void heartbeat(heartbeat_result_t *r)
 {
    memset(r, 0, sizeof(*r));
@@ -285,6 +340,117 @@ static void test_whoami(void)
    CHECK(!romm_client_whoami("http://romm.local", "", on_whoami, &r),
          "token check started without a token");
    CHECK(stub_req.count == 0 && r.calls == 0, "request or callback without a token");
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_list;
+   size_t count;
+   romm_platform_t platforms[4];
+} platforms_result_t;
+
+static void on_platforms(void *user_data, enum romm_status status,
+      int http_status, const romm_platform_t *platforms, size_t count)
+{
+   platforms_result_t *r = (platforms_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_list    = platforms != NULL;
+   r->count       = count;
+   for (i = 0; i < count && i < 4; i++)
+      r->platforms[i] = platforms[i];
+}
+
+static void platforms(platforms_result_t *r)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_platforms("http://romm.local:8090/", "rmm_0123abcd",
+         on_platforms, r), "platform list not started");
+   CHECK(stub_req.count == 1 && !strcmp(stub_req.method, "GET"),
+         "%u requests, method %s", stub_req.count, stub_req.method);
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/platforms"),
+         "URL %s", stub_req.url);
+   CHECK(strstr(stub_req.headers, "Authorization: Bearer rmm_0123abcd\r\n")
+         != NULL, "headers %s", stub_req.headers);
+}
+
+static void test_platforms(void)
+{
+   platforms_result_t r;
+
+   /* Trimmed from RomM nightly-bdaac69: firmware entries carry their
+    * own id and file names, which mustn't leak into the platform. */
+   platforms(&r);
+   answer(200, "[{\"id\": 28, \"slug\": \"dc\", \"fs_slug\": \"dc\","
+         " \"rom_count\": 29, \"name\": \"Dreamcast\", \"igdb_slug\": \"dc\","
+         " \"libretro_slug\": \"Sega - Dreamcast\", \"custom_name\": \"\","
+         " \"firmware\": [{\"id\": 2, \"platform_id\": 28,"
+         " \"file_name\": \"boot.bin\"}], \"display_name\": \"Dreamcast\"},"
+         " {\"id\": 26, \"slug\": \"switch\", \"rom_count\": 81,"
+         " \"name\": \"Nintendo Switch\", \"libretro_slug\": null,"
+         " \"custom_name\": \"Switch\", \"firmware\": [],"
+         " \"display_name\": \"Switch\"},"
+         " {\"slug\": \"broken\", \"name\": \"No id\"},"
+         " {\"display_name\": \"Mega Drive\", \"id\": 8,"
+         " \"name\": \"Sega Mega Drive/Genesis\", \"slug\": \"genesis\","
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 3,
+         "list: calls %u status %d count %u", r.calls, r.status,
+         (unsigned)r.count);
+   CHECK(r.platforms[0].id == 28 && r.platforms[0].rom_count == 29
+         && !strcmp(r.platforms[0].slug, "dc")
+         && !strcmp(r.platforms[0].name, "Dreamcast")
+         && !strcmp(r.platforms[0].libretro_slug, "Sega - Dreamcast"),
+         "dc: %u %u %s %s %s", r.platforms[0].id, r.platforms[0].rom_count,
+         r.platforms[0].slug, r.platforms[0].name,
+         r.platforms[0].libretro_slug);
+   CHECK(r.platforms[1].id == 26 && !*r.platforms[1].libretro_slug
+         && !strcmp(r.platforms[1].name, "Switch"),
+         "custom name, no libretro name: %s [%s]", r.platforms[1].name,
+         r.platforms[1].libretro_slug);
+   CHECK(r.platforms[2].id == 8
+         && !strcmp(r.platforms[2].name, "Mega Drive"),
+         "display name before name: %s", r.platforms[2].name);
+
+   platforms(&r);
+   answer(200, "[]");
+   CHECK(r.status == ROMM_OK && r.count == 0, "empty: status %d count %u",
+         r.status, (unsigned)r.count);
+
+   platforms(&r);
+   answer(200, "{\"detail\": \"Not a list\"}");
+   CHECK(r.calls == 1 && r.status == ROMM_ERR_RESPONSE && !r.has_list,
+         "object: status %d", r.status);
+
+   platforms(&r);
+   answer(200, "[{\"id\": 28, \"slug\": \"dc\"}, {\"id\": 6, \"sl");
+   CHECK(r.status == ROMM_ERR_RESPONSE && !r.has_list && r.count == 0,
+         "truncated: status %d count %u", r.status, (unsigned)r.count);
+
+   platforms(&r);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && r.http_status == 403,
+         "403: status %d", r.status);
+
+   platforms(&r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && r.http_status == 0,
+         "no response: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_platforms("http://romm.local", "", on_platforms, &r),
+         "platform list started without a token");
+   stub_req.refuse = true;
+   CHECK(!romm_client_platforms("http://romm.local", "t", on_platforms, &r),
+         "platform list reported started when the request wasn't");
+   CHECK(r.calls == 0, "callback ran for a request never started");
 }
 
 static void pair_start(pair_start_result_t *r, const char *web)
@@ -566,8 +732,10 @@ int main(void)
 {
    test_url();
    test_json();
+   test_json_items();
    test_heartbeat();
    test_whoami();
+   test_platforms();
    test_pair_start();
    test_pair_wait();
 
