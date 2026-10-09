@@ -169,6 +169,8 @@ enum event_command
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
    /* Check the RomM server answers */
    CMD_EVENT_ROMM_CHECK_CONNECTION,
+   /* Pair this device with RomM */
+   CMD_EVENT_ROMM_PAIR,
 #endif
    /* Shutdown the OS */
    CMD_EVENT_SHUTDOWN,

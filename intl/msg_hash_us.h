@@ -33641,6 +33641,26 @@ MSG_HASH(
    "%s doesn't answer like a RomM server."
    )
 MSG_HASH(
+   MSG_ROMM_PAIR_APPROVE,
+   "Approve this device in RomM: code %s"
+   )
+MSG_HASH(
+   MSG_ROMM_PAIR_IN_PROGRESS,
+   "Already waiting for RomM to approve this device."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRED,
+   "This device is paired with RomM."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIR_DENIED,
+   "RomM turned the pairing down."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIR_EXPIRED,
+   "The pairing code expired before it was approved."
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

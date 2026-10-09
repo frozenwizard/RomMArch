@@ -86,6 +86,10 @@
 #include "../network/cloud_sync/icloud.m"
 #endif
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../network/romm/romm_apple.m"
+#endif
+
 #if defined(HAVE_CLOUDSYNC) && defined(HAVE_ICLOUD_DRIVE)
 #include "../network/cloud_sync/icloud_drive.m"
 #ifdef __MACH__

@@ -23,6 +23,11 @@ RETRO_BEGIN_DECLS
  * outcome as a notification. */
 void romm_check_connection(void);
 
+/* Pairs this install with the configured RomM server: shows the code,
+ * opens the approval page in the browser and, once the user approves,
+ * keeps the device's token and saves the configuration. */
+void romm_pair(void);
+
 RETRO_END_DECLS
 
 #endif
