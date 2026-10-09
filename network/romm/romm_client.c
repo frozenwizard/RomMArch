@@ -12,6 +12,7 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -50,6 +51,12 @@ typedef struct
    romm_heartbeat_cb_t cb;
    void *user_data;
 } romm_heartbeat_ctx_t;
+
+typedef struct
+{
+   romm_whoami_cb_t cb;
+   void *user_data;
+} romm_whoami_ctx_t;
 
 typedef struct
 {
@@ -163,6 +170,8 @@ static enum romm_status romm_response_status(
 {
    if (!data || data->status <= 0)
       return ROMM_ERR_UNREACHABLE;
+   if (data->status == 401 || data->status == 403)
+      return ROMM_ERR_UNAUTHORIZED;
    if (data->status != expected)
       return ROMM_ERR_HTTP;
    return ROMM_OK;
@@ -226,6 +235,60 @@ bool romm_client_heartbeat(const char *server,
 
    if (!task_push_http_transfer_with_headers(url, true, NULL,
          ROMM_HEADERS_JSON, romm_heartbeat_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+static void romm_whoami_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_whoami_ctx_t *ctx     = (romm_whoami_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   char username[256];
+
+   username[0] = '\0';
+   if (     status == ROMM_OK
+         && !romm_json_get(data->data, data->len, "username",
+               username, sizeof(username)))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "Token acts for user %s.\n", username);
+   else
+      RARCH_WARN(ROMM_PFX "Token check failed (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status, username);
+   free(ctx);
+}
+
+bool romm_client_whoami(const char *server, const char *token,
+      romm_whoami_cb_t cb, void *user_data)
+{
+   char url[1024];
+   char headers[512];
+   romm_whoami_ctx_t *ctx;
+
+   if (     string_is_empty(token)
+         || !romm_client_url(url, sizeof(url), server, "/api/users/me"))
+      return false;
+   if ((size_t)snprintf(headers, sizeof(headers),
+         "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
+         >= sizeof(headers))
+      return false;
+   if (!(ctx = (romm_whoami_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!task_push_http_transfer_with_headers(url, true, NULL,
+         headers, romm_whoami_cb, ctx))
    {
       free(ctx);
       return false;

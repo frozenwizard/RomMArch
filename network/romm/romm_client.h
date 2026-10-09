@@ -30,6 +30,8 @@ enum romm_status
    ROMM_ERR_HTTP,
    /* A body RomM wouldn't send, such as another web server's page. */
    ROMM_ERR_RESPONSE,
+   /* RomM turned the token down: revoked, expired or missing scopes. */
+   ROMM_ERR_UNAUTHORIZED,
    /* Pairing: the user turned the device down. */
    ROMM_ERR_DENIED,
    /* Pairing: the code ran out before the user approved it. */
@@ -59,6 +61,10 @@ typedef void (*romm_pair_start_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_pairing_t *pairing);
 
+/* @username is empty unless @status is ROMM_OK. */
+typedef void (*romm_whoami_cb_t)(void *user_data,
+      enum romm_status status, int http_status, const char *username);
+
 /* @token and @device_id are empty unless @status is ROMM_OK. */
 typedef void (*romm_pair_wait_cb_t)(void *user_data,
       enum romm_status status, const char *token, const char *device_id);
@@ -70,6 +76,11 @@ bool romm_client_url(char *s, size_t len, const char *server,
 /* Checks @server is a reachable RomM; @cb runs on the main thread. */
 bool romm_client_heartbeat(const char *server,
       romm_heartbeat_cb_t cb, void *user_data);
+
+/* Asks @server which user @token acts for; @cb runs on the main
+ * thread. */
+bool romm_client_whoami(const char *server, const char *token,
+      romm_whoami_cb_t cb, void *user_data);
 
 /* Asks @server to pair this device. @device_id must stay the same
  * across pairings so RomM updates its device entry instead of adding

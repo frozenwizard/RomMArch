@@ -6,7 +6,8 @@
  * request, and how its replies are read: RomM's version, another web
  * server's page, an HTTP error, and no answer at all. Then the start
  * of device pairing: the request RomM gets, and the code and approval
- * link read from its reply. Then the wait for approval, with the
+ * link read from its reply. The token check (whose user a token acts
+ * for, and a token RomM turns down). Then the wait for approval, with the
  * stubs' clock standing in for time: the poll schedule, slowing down
  * when told, and how approval, denial, expiry and cancellation end it.
  *
@@ -73,6 +74,24 @@ static void on_pair_start(void *user_data, enum romm_status status,
    r->has_pairing = pairing != NULL;
    if (pairing)
       r->pairing = *pairing;
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   char username[64];
+} whoami_result_t;
+
+static void on_whoami(void *user_data, enum romm_status status,
+      int http_status, const char *username)
+{
+   whoami_result_t *r = (whoami_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   strlcpy(r->username, username, sizeof(r->username));
 }
 
 typedef struct
@@ -219,6 +238,53 @@ static void test_heartbeat(void)
    CHECK(!romm_client_heartbeat("", on_heartbeat, &r),
          "heartbeat started with no server");
    CHECK(r.calls == 0, "callback ran for a request never started");
+}
+
+static void whoami(whoami_result_t *r)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_whoami("http://romm.local:8090", "rmm_0123abcd",
+         on_whoami, r), "token check not started");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/users/me"),
+         "URL %s", stub_req.url);
+   CHECK(strstr(stub_req.headers, "Authorization: Bearer rmm_0123abcd\r\n")
+         && strstr(stub_req.headers, "Accept: application/json\r\n"),
+         "headers %s", stub_req.headers);
+}
+
+static void test_whoami(void)
+{
+   whoami_result_t r;
+
+   whoami(&r);
+   answer(200, "{\"id\": 1, \"username\": \"alice\", \"role\": \"admin\","
+         " \"oauth_scopes\": [\"me.read\"]}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && !strcmp(r.username, "alice"),
+         "user: status %d username %s", r.status, r.username);
+
+   whoami(&r);
+   answer(401, "{\"detail\": \"Invalid token\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && r.http_status == 401
+         && !*r.username, "401: status %d", r.status);
+
+   whoami(&r);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED, "403: status %d", r.status);
+
+   whoami(&r);
+   answer(200, "{\"id\": 1}");
+   CHECK(r.status == ROMM_ERR_RESPONSE, "no username: status %d", r.status);
+
+   whoami(&r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE, "no response: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_whoami("http://romm.local", "", on_whoami, &r),
+         "token check started without a token");
+   CHECK(stub_req.count == 0 && r.calls == 0, "request or callback without a token");
 }
 
 static void pair_start(pair_start_result_t *r, const char *web)
@@ -501,6 +567,7 @@ int main(void)
    test_url();
    test_json();
    test_heartbeat();
+   test_whoami();
    test_pair_start();
    test_pair_wait();
 
