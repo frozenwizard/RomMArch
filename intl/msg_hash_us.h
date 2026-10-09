@@ -33641,6 +33641,14 @@ MSG_HASH(
    "%s doesn't answer like a RomM server."
    )
 MSG_HASH(
+   MSG_ROMM_CONNECTED_AS,
+   "Connected to RomM %s as %s."
+   )
+MSG_HASH(
+   MSG_ROMM_UNAUTHORIZED,
+   "RomM no longer accepts this device. Pair it again."
+   )
+MSG_HASH(
    MSG_ROMM_PAIR_APPROVE,
    "Approve this device in RomM: code %s"
    )

@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <compat/strl.h>
@@ -60,6 +61,9 @@ static void romm_notify_failure(enum romm_status status, int http_status)
       case ROMM_ERR_EXPIRED:
          strlcpy(msg, msg_hash_to_str(MSG_ROMM_PAIR_EXPIRED), sizeof(msg));
          break;
+      case ROMM_ERR_UNAUTHORIZED:
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_UNAUTHORIZED), sizeof(msg));
+         break;
       default:
          snprintf(msg, sizeof(msg),
                msg_hash_to_str(MSG_ROMM_NOT_ROMM), server);
@@ -69,9 +73,28 @@ static void romm_notify_failure(enum romm_status status, int http_status)
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
 }
 
+static void romm_check_token_cb(void *user_data,
+      enum romm_status status, int http_status, const char *username)
+{
+   char *version = (char*)user_data;
+   char msg[512];
+
+   if (status == ROMM_OK)
+   {
+      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED_AS),
+            version, username);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   }
+   else
+      romm_notify_failure(status, http_status);
+   free(version);
+}
+
 static void romm_check_connection_cb(void *user_data,
       enum romm_status status, int http_status, const char *version)
 {
+   settings_t *settings = config_get_ptr();
+   char *version_copy;
    char msg[512];
 
    if (status != ROMM_OK)
@@ -79,6 +102,17 @@ static void romm_check_connection_cb(void *user_data,
       romm_notify_failure(status, http_status);
       return;
    }
+
+   /* Paired: the token has to work too. */
+   if (     !string_is_empty(settings->arrays.romm_token)
+         && (version_copy = strdup(version)))
+   {
+      if (romm_client_whoami(settings->arrays.romm_server_url,
+            settings->arrays.romm_token, romm_check_token_cb, version_copy))
+         return;
+      free(version_copy);
+   }
+
    snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED), version);
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
 }
