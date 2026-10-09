@@ -6,7 +6,9 @@
  * request, and how its replies are read: RomM's version, another web
  * server's page, an HTTP error, and no answer at all. Then the start
  * of device pairing: the request RomM gets, and the code and approval
- * link read from its reply.
+ * link read from its reply. Then the wait for approval, with the
+ * stubs' clock standing in for time: the poll schedule, slowing down
+ * when told, and how approval, denial, expiry and cancellation end it.
  *
  * Includes the client's translation unit so its static JSON reader is
  * tested as shipped.
@@ -71,6 +73,24 @@ static void on_pair_start(void *user_data, enum romm_status status,
    r->has_pairing = pairing != NULL;
    if (pairing)
       r->pairing = *pairing;
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   char token[128];
+   char device_id[64];
+} pair_wait_result_t;
+
+static void on_pair_wait(void *user_data, enum romm_status status,
+      const char *token, const char *device_id)
+{
+   pair_wait_result_t *r = (pair_wait_result_t*)user_data;
+   r->calls++;
+   r->status = status;
+   strlcpy(r->token, token, sizeof(r->token));
+   strlcpy(r->device_id, device_id, sizeof(r->device_id));
 }
 
 /* Answers the recorded request with @status and @body. -1 is what the
@@ -295,12 +315,167 @@ static void test_pair_start(void)
    CHECK(r.calls == 0, "callback ran for a request never started");
 }
 
+#define SEC 1000000
+
+/* What the queue does with the client's task once the clock reaches
+ * its 'when': runs the handler, then the callback and cleanup when it
+ * has finished. Returns whether it finished. */
+static bool run_task(void)
+{
+   retro_task_t *task = stub_task;
+
+   if (task->when > stub_now)
+      return false;
+   task->handler(task);
+   if (!(task->flags & RETRO_TASK_FLG_FINISHED))
+      return false;
+   task->callback(task, NULL, task->user_data, NULL);
+   task->cleanup(task);
+   free(task);
+   stub_task = NULL;
+   return true;
+}
+
+static void pair_wait(pair_wait_result_t *r, unsigned expires_in)
+{
+   romm_pairing_t pairing;
+
+   memset(&pairing, 0, sizeof(pairing));
+   strlcpy(pairing.device_code, "9c2e6b", sizeof(pairing.device_code));
+   pairing.interval   = 5;
+   pairing.expires_in = expires_in;
+
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   stub_task = NULL;
+   stub_now  = 1000 * SEC;
+   CHECK(romm_client_pair_wait("http://192.168.1.2:8090/", &pairing,
+         on_pair_wait, r), "wait not started");
+   CHECK(stub_task != NULL, "no task pushed");
+   CHECK(stub_task->flags & RETRO_TASK_FLG_MAIN_THREAD,
+         "task doesn't run on the main thread");
+   CHECK(stub_req.count == 0, "polled before the first interval");
+}
+
+/* Moves the clock to the task's next run and expects a poll. */
+static void expect_poll(retro_time_t at)
+{
+   unsigned before = stub_req.count;
+   CHECK(stub_task->when == at, "next poll at %lld, expected %lld",
+         (long long)(stub_task->when - 1000 * SEC),
+         (long long)(at - 1000 * SEC));
+   stub_now = stub_task->when;
+   CHECK(!run_task(), "finished instead of polling");
+   CHECK(stub_req.count == before + 1, "no poll at %lld",
+         (long long)(stub_now - 1000 * SEC));
+}
+
+static void test_pair_wait(void)
+{
+   pair_wait_result_t r;
+   retro_time_t t0 = 1000 * SEC;
+
+   /* Pending, slowed down, then approved. */
+   pair_wait(&r, 600);
+   stub_now = t0 + 4 * SEC;
+   CHECK(!run_task() && stub_req.count == 0, "polled early");
+   expect_poll(t0 + 5 * SEC);
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url,
+               "http://192.168.1.2:8090/api/auth/device/token")
+         && !strcmp(stub_req.content_type, "application/json")
+         && !strcmp(stub_req.body, "{\"device_code\":\"9c2e6b\"}"),
+         "poll %s %s %s", stub_req.method, stub_req.url, stub_req.body);
+   answer(400, "{\"detail\": \"authorization_pending\"}");
+   expect_poll(t0 + 10 * SEC);
+   answer(400, "{\"detail\": \"slow_down\"}");
+   expect_poll(t0 + 20 * SEC);
+   answer(429, "{\"detail\": \"Too many polling attempts.\"}");
+   expect_poll(t0 + 35 * SEC);
+   answer(200, "{\"access_token\": \"rmm_0123abcd\","
+         " \"device_id\": \"5d1e-device\","
+         " \"scopes\": [\"me.read\"], \"expires_at\": null}");
+   CHECK(r.calls == 0, "callback before the task finished");
+   CHECK(stub_task->when <= stub_now, "approval not handled right away");
+   CHECK(run_task(), "approved but not finished");
+   CHECK(r.calls == 1 && r.status == ROMM_OK
+         && !strcmp(r.token, "rmm_0123abcd")
+         && !strcmp(r.device_id, "5d1e-device"),
+         "approved: calls %u status %d token %s device %s",
+         r.calls, r.status, r.token, r.device_id);
+
+   /* A dropped connection is retried at the next interval. */
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(-1, NULL);
+   expect_poll(t0 + 10 * SEC);
+   answer(400, "{\"detail\": \"access_denied\"}");
+   CHECK(run_task() && r.calls == 1 && r.status == ROMM_ERR_DENIED
+         && !*r.token, "denied: status %d token %s", r.status, r.token);
+
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(400, "{\"detail\": \"expired_token\"}");
+   CHECK(run_task() && r.status == ROMM_ERR_EXPIRED,
+         "expired code: status %d", r.status);
+
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(500, "Internal Server Error");
+   CHECK(run_task() && r.status == ROMM_ERR_HTTP, "500: status %d", r.status);
+
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(200, "{\"device_id\": \"5d1e-device\"}");
+   CHECK(run_task() && r.status == ROMM_ERR_RESPONSE,
+         "approval without a token: status %d", r.status);
+
+   /* Never approved: ends at the deadline without polling again. */
+   pair_wait(&r, 12);
+   expect_poll(t0 + 5 * SEC);
+   answer(400, "{\"detail\": \"authorization_pending\"}");
+   expect_poll(t0 + 10 * SEC);
+   answer(400, "{\"detail\": \"authorization_pending\"}");
+   stub_now = stub_task->when;
+   CHECK(run_task() && stub_req.count == 2 && r.status == ROMM_ERR_EXPIRED,
+         "deadline: finished with status %d after %u polls",
+         r.status, stub_req.count);
+
+   /* Cancelled with a poll out: waits for its answer, then stops. */
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
+   stub_now = stub_task->when;
+   CHECK(!run_task(), "finished while its poll was still out");
+   answer(400, "{\"detail\": \"authorization_pending\"}");
+   stub_now = stub_task->when;
+   CHECK(run_task() && stub_req.count == 1 && r.status == ROMM_ERR_CANCELLED,
+         "cancelled: status %d after %u polls", r.status, stub_req.count);
+
+   memset(&r, 0, sizeof(r));
+   stub_refuse_task = true;
+   {
+      romm_pairing_t pairing;
+      memset(&pairing, 0, sizeof(pairing));
+      strlcpy(pairing.device_code, "9c2e6b", sizeof(pairing.device_code));
+      pairing.expires_in = 600;
+      CHECK(!romm_client_pair_wait("http://h", &pairing, on_pair_wait, &r),
+            "reported waiting when the task wasn't pushed");
+      pairing.device_code[0] = '\0';
+      stub_refuse_task = false;
+      CHECK(!romm_client_pair_wait("http://h", &pairing, on_pair_wait, &r),
+            "waiting without a device code");
+   }
+   CHECK(r.calls == 0, "callback ran for a wait never started");
+}
+
 int main(void)
 {
    test_url();
    test_json();
    test_heartbeat();
    test_pair_start();
+   test_pair_wait();
 
    if (failures)
    {

@@ -194,7 +194,11 @@ jobs:
           # HTTP error and no response at all - then the start of
           # device pairing: the JSON RomM gets (escaped device name,
           # requested scopes) and the code and approval link read
-          # back from its reply.
+          # back from its reply - and the wait for approval on a fake
+          # clock: the poll schedule, slow_down and 429 stretching it,
+          # a dropped poll retried, approval, denial, expiry by RomM
+          # and by deadline, and a cancel that waits for the poll
+          # still out before freeing what its callback uses.
           make clean all SANITIZER=address,undefined
           test -x romm_client_test
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \

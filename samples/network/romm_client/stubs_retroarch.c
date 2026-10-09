@@ -31,6 +31,14 @@ void RARCH_WARN(const char *fmt, ...)
    va_end(ap);
 }
 
+void RARCH_DBG(const char *fmt, ...)
+{
+   va_list ap;
+   va_start(ap, fmt);
+   vprintf(fmt, ap);
+   va_end(ap);
+}
+
 void RARCH_ERR(const char *fmt, ...)
 {
    va_list ap;
@@ -41,10 +49,44 @@ void RARCH_ERR(const char *fmt, ...)
 }
 
 stub_request_t stub_req;
+retro_time_t stub_now;
+retro_task_t *stub_task;
+bool stub_refuse_task;
 
 void stub_reset(void)
 {
    memset(&stub_req, 0, sizeof(stub_req));
+}
+
+retro_time_t cpu_features_get_time_usec(void)
+{
+   return stub_now;
+}
+
+retro_task_t *task_init(void)
+{
+   return (retro_task_t*)calloc(1, sizeof(retro_task_t));
+}
+
+bool task_queue_push(retro_task_t *task)
+{
+   if (stub_refuse_task)
+      return false;
+   stub_task = task;
+   return true;
+}
+
+void task_set_flags(retro_task_t *task, uint8_t flags, bool set)
+{
+   if (set)
+      task->flags |= flags;
+   else
+      task->flags &= ~flags;
+}
+
+uint8_t task_get_flags(retro_task_t *task)
+{
+   return (uint8_t)task->flags;
 }
 
 void *task_push_http_transfer_with_headers(const char *url, bool mute,

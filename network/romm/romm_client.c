@@ -16,7 +16,9 @@
 #include <string.h>
 
 #include <compat/strl.h>
+#include <features/features_cpu.h>
 #include <formats/rjson.h>
+#include <queues/task_queue.h>
 #include <retro_miscellaneous.h>
 #include <string/stdstring.h>
 
@@ -55,6 +57,22 @@ typedef struct
    void *user_data;
    char web[1024];
 } romm_pair_start_ctx_t;
+
+typedef struct
+{
+   romm_pair_wait_cb_t cb;
+   void *user_data;
+   retro_task_t *task;
+   retro_time_t deadline;
+   unsigned interval;
+   enum romm_status status;
+   bool finished;
+   bool poll_pending;
+   char url[1024];
+   char body[256];
+   char token[128];
+   char device_id[64];
+} romm_pair_wait_ctx_t;
 
 /* Copies the string or number at @path, object keys joined by '.'
  * such as "SYSTEM.VERSION". */
@@ -326,4 +344,210 @@ bool romm_client_pair_start(const char *server, const char *web,
    if (!pushed)
       free(ctx);
    return pushed;
+}
+
+static void romm_pair_wait_finish(romm_pair_wait_ctx_t *ctx,
+      enum romm_status status)
+{
+   ctx->status    = status;
+   ctx->finished  = true;
+   ctx->task->when = 0;
+}
+
+static void romm_pair_poll_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_pair_wait_ctx_t *ctx  = (romm_pair_wait_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   char detail[64];
+
+   ctx->poll_pending = false;
+
+   if (status == ROMM_OK)
+   {
+      if (     romm_json_get(data->data, data->len, "access_token",
+                  ctx->token, sizeof(ctx->token))
+            && romm_json_get(data->data, data->len, "device_id",
+                  ctx->device_id, sizeof(ctx->device_id)))
+         romm_pair_wait_finish(ctx, ROMM_OK);
+      else
+         romm_pair_wait_finish(ctx, ROMM_ERR_RESPONSE);
+      return;
+   }
+   /* Keep polling through a dropped connection; the deadline ends it. */
+   if (status == ROMM_ERR_UNREACHABLE)
+   {
+      RARCH_DBG(ROMM_PFX "Pairing poll got no response.\n");
+      return;
+   }
+   if (data->status == 400 && romm_json_get(data->data, data->len,
+            "detail", detail, sizeof(detail)))
+   {
+      if (string_is_equal(detail, "authorization_pending"))
+      {
+         RARCH_DBG(ROMM_PFX "Pairing not approved yet.\n");
+         return;
+      }
+      if (string_is_equal(detail, "slow_down"))
+      {
+         RARCH_DBG(ROMM_PFX "Pairing polls slowed down.\n");
+         ctx->interval   += 5;
+         ctx->task->when += 5000000;
+         return;
+      }
+      if (string_is_equal(detail, "access_denied"))
+      {
+         romm_pair_wait_finish(ctx, ROMM_ERR_DENIED);
+         return;
+      }
+      if (string_is_equal(detail, "expired_token"))
+      {
+         romm_pair_wait_finish(ctx, ROMM_ERR_EXPIRED);
+         return;
+      }
+   }
+   /* Rate limited */
+   if (data->status == 429)
+   {
+      RARCH_DBG(ROMM_PFX "Pairing polls rate limited.\n");
+      ctx->interval   += 5;
+      ctx->task->when += 5000000;
+      return;
+   }
+   RARCH_WARN(ROMM_PFX "Pairing poll failed (HTTP %d).\n", data->status);
+   romm_pair_wait_finish(ctx, ROMM_ERR_HTTP);
+}
+
+/* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the poll
+ * callbacks, so the two share @ctx without locking. */
+static void romm_pair_wait_handler(retro_task_t *task)
+{
+   romm_pair_wait_ctx_t *ctx = (romm_pair_wait_ctx_t*)task->state;
+   retro_time_t now          = cpu_features_get_time_usec();
+
+   /* A poll still out holds @ctx; finish only once it has answered. */
+   if (ctx->poll_pending)
+   {
+      task->when = now + 250000;
+      return;
+   }
+   if (!ctx->finished && (task_get_flags(task) & RETRO_TASK_FLG_CANCELLED))
+   {
+      ctx->status   = ROMM_ERR_CANCELLED;
+      ctx->finished = true;
+   }
+   if (!ctx->finished && now >= ctx->deadline)
+   {
+      ctx->status   = ROMM_ERR_EXPIRED;
+      ctx->finished = true;
+   }
+   if (ctx->finished)
+   {
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+
+   if (task_push_http_transfer_with_content(ctx->url, "POST",
+         ctx->body, strlen(ctx->body), "application/json", true, false,
+         ROMM_HEADERS_JSON, romm_pair_poll_cb, ctx))
+      ctx->poll_pending = true;
+   task->when = now + (retro_time_t)ctx->interval * 1000000;
+}
+
+static void romm_pair_wait_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_pair_wait_ctx_t *ctx = (romm_pair_wait_ctx_t*)user_data;
+
+   if (ctx->status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "Paired as device %s.\n", ctx->device_id);
+   else
+      RARCH_WARN(ROMM_PFX "Pairing ended (status %d).\n", ctx->status);
+
+   ctx->cb(ctx->user_data, ctx->status,
+         ctx->status == ROMM_OK ? ctx->token     : "",
+         ctx->status == ROMM_OK ? ctx->device_id : "");
+}
+
+static void romm_pair_wait_cleanup(retro_task_t *task)
+{
+   romm_pair_wait_ctx_t *ctx = (romm_pair_wait_ctx_t*)task->state;
+   if (ctx)
+      memset(ctx->token, 0, sizeof(ctx->token));
+   free(ctx);
+   task->state = NULL;
+}
+
+bool romm_client_pair_wait(const char *server,
+      const romm_pairing_t *pairing,
+      romm_pair_wait_cb_t cb, void *user_data)
+{
+   romm_pair_wait_ctx_t *ctx;
+   retro_task_t *task;
+   retro_time_t now;
+   rjsonwriter_t *writer;
+   const char *body;
+   int body_len = 0;
+
+   if (!pairing || string_is_empty(pairing->device_code))
+      return false;
+   if (!(ctx = (romm_pair_wait_ctx_t*)calloc(1, sizeof(*ctx))))
+      return false;
+   if (!romm_client_url(ctx->url, sizeof(ctx->url), server,
+         "/api/auth/device/token"))
+   {
+      free(ctx);
+      return false;
+   }
+
+   if (!(writer = rjsonwriter_open_memory()))
+   {
+      free(ctx);
+      return false;
+   }
+   rjsonwriter_raw(writer, "{", 1);
+   rjsonwriter_add_string(writer, "device_code");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, pairing->device_code);
+   rjsonwriter_raw(writer, "}", 1);
+   body = rjsonwriter_get_memory_buffer(writer, &body_len);
+   if (!body || (size_t)body_len >= sizeof(ctx->body))
+   {
+      rjsonwriter_free(writer);
+      free(ctx);
+      return false;
+   }
+   memcpy(ctx->body, body, (size_t)body_len);
+   rjsonwriter_free(writer);
+
+   if (!(task = task_init()))
+   {
+      free(ctx);
+      return false;
+   }
+
+   now            = cpu_features_get_time_usec();
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   ctx->task      = task;
+   ctx->interval  = pairing->interval ? pairing->interval : 5;
+   ctx->deadline  = now + (retro_time_t)pairing->expires_in * 1000000;
+
+   task->handler   = romm_pair_wait_handler;
+   task->callback  = romm_pair_wait_cb;
+   task->cleanup   = romm_pair_wait_cleanup;
+   task->state     = ctx;
+   task->user_data = ctx;
+   task->when      = now + (retro_time_t)ctx->interval * 1000000;
+   task->flags    |= RETRO_TASK_FLG_MAIN_THREAD | RETRO_TASK_FLG_MUTE;
+
+   if (!task_queue_push(task))
+   {
+      free(task);
+      free(ctx);
+      return false;
+   }
+   RARCH_LOG(ROMM_PFX "Waiting for the pairing to be approved.\n");
+   return true;
 }

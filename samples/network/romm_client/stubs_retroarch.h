@@ -2,6 +2,7 @@
 #define ROMM_CLIENT_STUBS_H
 
 #include <boolean.h>
+#include <queues/task_queue.h>
 
 #include "../../../tasks/tasks_internal.h"
 
@@ -21,6 +22,12 @@ typedef struct
 } stub_request_t;
 
 extern stub_request_t stub_req;
+
+/* The clock cpu_features_get_time_usec() reports, the last task the
+ * client pushed, and whether pushing one fails. */
+extern retro_time_t stub_now;
+extern retro_task_t *stub_task;
+extern bool stub_refuse_task;
 
 void stub_reset(void);
 

@@ -29,7 +29,12 @@ enum romm_status
    /* An HTTP status the request doesn't expect. */
    ROMM_ERR_HTTP,
    /* A body RomM wouldn't send, such as another web server's page. */
-   ROMM_ERR_RESPONSE
+   ROMM_ERR_RESPONSE,
+   /* Pairing: the user turned the device down. */
+   ROMM_ERR_DENIED,
+   /* Pairing: the code ran out before the user approved it. */
+   ROMM_ERR_EXPIRED,
+   ROMM_ERR_CANCELLED
 };
 
 /* A pairing RomM has started: the user approves it at @approve_url
@@ -54,6 +59,10 @@ typedef void (*romm_pair_start_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_pairing_t *pairing);
 
+/* @token and @device_id are empty unless @status is ROMM_OK. */
+typedef void (*romm_pair_wait_cb_t)(void *user_data,
+      enum romm_status status, const char *token, const char *device_id);
+
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
       const char *path);
@@ -71,6 +80,12 @@ bool romm_client_pair_start(const char *server, const char *web,
       const char *device_id, const char *device_name,
       const char *client_version,
       romm_pair_start_cb_t cb, void *user_data);
+
+/* Polls @server until the user approves or denies @pairing, or it
+ * expires; @cb runs on the main thread with the device's token. */
+bool romm_client_pair_wait(const char *server,
+      const romm_pairing_t *pairing,
+      romm_pair_wait_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 
