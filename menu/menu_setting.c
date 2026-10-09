@@ -374,6 +374,7 @@ enum settings_list_type
    SETTINGS_LIST_LOGGING,
    SETTINGS_LIST_SAVING,
    SETTINGS_LIST_CLOUD_SYNC,
+   SETTINGS_LIST_ROMM,
    SETTINGS_LIST_REWIND,
    SETTINGS_LIST_CHEAT_DETAILS,
    SETTINGS_LIST_CHEAT_SEARCH,
@@ -8617,6 +8618,9 @@ static const enum settings_list_type settings_list_build_order[] =
       SETTINGS_LIST_LOGGING,
       SETTINGS_LIST_SAVING,
       SETTINGS_LIST_CLOUD_SYNC,
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      SETTINGS_LIST_ROMM,
+#endif
       SETTINGS_LIST_REWIND,
       SETTINGS_LIST_CHEAT_DETAILS,
       SETTINGS_LIST_CHEAT_SEARCH,
@@ -12379,6 +12383,12 @@ static const setting_desc_t cs_desc_2[] = {
 #include "../settings/settings_def_cloud_sync_s3.h"
 };
 #endif
+#endif
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+static const setting_desc_t romm_desc_0[] = {
+#include "../settings/settings_def_romm.h"
+};
 #endif
 
 static const setting_desc_t frame_time_cou_desc_0[] = {
@@ -18581,6 +18591,13 @@ static const settings_build_entry_t settings_build_registry[] = {
    { SETTINGS_LIST_LOGGING, settings_build_logging, NULL, 0, MSG_UNKNOWN, MSG_UNKNOWN, MSG_UNKNOWN },
    { SETTINGS_LIST_SAVING, settings_build_saving, NULL, 0, MSG_UNKNOWN, MSG_UNKNOWN, MSG_UNKNOWN },
    { SETTINGS_LIST_CLOUD_SYNC, settings_build_cloud_sync, NULL, 0, MSG_UNKNOWN, MSG_UNKNOWN, MSG_UNKNOWN },
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   { SETTINGS_LIST_ROMM, NULL,
+     romm_desc_0, (unsigned)ARRAY_SIZE(romm_desc_0),
+     MENU_ENUM_LABEL_VALUE_ROMM_SETTINGS,
+     MSG_UNKNOWN,
+     MENU_ENUM_LABEL_ROMM_SETTINGS },
+#endif
    { SETTINGS_LIST_FRAME_TIME_COUNTER, NULL,
      frame_time_cou_desc_0, (unsigned)ARRAY_SIZE(frame_time_cou_desc_0),
      MENU_ENUM_LABEL_VALUE_FRAME_TIME_COUNTER_SETTINGS,
@@ -18904,6 +18921,9 @@ static const settings_desc_table_t settings_desc_registry[] = {
 #ifdef HAVE_S3
    { cs_desc_2, (uint16_t)ARRAY_SIZE(cs_desc_2) },
 #endif
+#endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   { romm_desc_0, (uint16_t)ARRAY_SIZE(romm_desc_0) },
 #endif
    { frame_time_cou_desc_0, (uint16_t)ARRAY_SIZE(frame_time_cou_desc_0) },
    { rewind_desc_0, (uint16_t)ARRAY_SIZE(rewind_desc_0) },

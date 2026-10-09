@@ -19465,6 +19465,7 @@ enum msg_hash_enums
    MENU_ENUM_LABEL_DEFERRED_CONFIGURATION_SETTINGS_LIST,
    MENU_ENUM_LABEL_DEFERRED_SAVING_SETTINGS_LIST,
    MENU_ENUM_LABEL_DEFERRED_CLOUD_SYNC_SETTINGS_LIST,
+   MENU_ENUM_LABEL_DEFERRED_ROMM_SETTINGS_LIST,
    MENU_ENUM_LABEL_DEFERRED_FRAME_THROTTLE_SETTINGS_LIST,
    MENU_ENUM_LABEL_DEFERRED_REWIND_SETTINGS_LIST,
    MENU_ENUM_LABEL_DEFERRED_FRAME_TIME_COUNTER_SETTINGS_LIST,
@@ -29111,6 +29112,16 @@ enum msg_hash_enums
 #undef S_UINT_NS_H
 #undef S_INT_NS_H
 #undef S_FLOAT_NS_H
+#undef SETTINGS_DEF_STRINGS_PASS
+#undef SETTINGS_DEF_ENUM_PASS
+   /* RomM group enum rows (see settings/settings_def_romm.h). */
+#define SETTINGS_DEF_ENUM_PASS
+#define SETTINGS_DEF_STRINGS_PASS
+#define S_STRING(f, T, n, d, sd, c, ok, rp, sta, sel, lf, rt, ui, us, sub) MENU_LABEL(T),
+#define S_ACTION(T, n, us, sub) MENU_LABEL(T),
+#include "settings/settings_def_romm.h"
+#undef S_STRING
+#undef S_ACTION
 #undef SETTINGS_DEF_STRINGS_PASS
 #undef SETTINGS_DEF_ENUM_PASS
    /* GENERATED REGION: second main menu list actions enum rows (see settings/settings_def_menu_main_lists_2.h). */

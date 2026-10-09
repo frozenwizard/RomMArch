@@ -13183,6 +13183,24 @@ unsigned menu_displaylist_build_list(
             }
          }
          break;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      case DISPLAYLIST_ROMM_SETTINGS_LIST:
+         {
+            static const menu_displaylist_build_info_t build_list[] = {
+               {MENU_ENUM_LABEL_ROMM_SERVER_URL,  PARSE_ONLY_STRING},
+               {MENU_ENUM_LABEL_ROMM_WEB_URL,     PARSE_ONLY_STRING},
+            };
+
+            for (i = 0; i < ARRAY_SIZE(build_list); i++)
+            {
+               if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                        build_list[i].enum_idx,  build_list[i].parse_type,
+                        false) == 0)
+                  count++;
+            }
+         }
+         break;
+#endif
       case DISPLAYLIST_CLOUD_SYNC_SETTINGS_LIST:
          {
             static menu_displaylist_build_info_selective_t build_list[] = {
@@ -13306,6 +13324,9 @@ unsigned menu_displaylist_build_list(
             bool settings_show_ai_service = settings->bools.settings_show_ai_service;
 #endif
             static menu_displaylist_build_info_selective_t build_list[] = {
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+               {MENU_ENUM_LABEL_ROMM_SETTINGS,               PARSE_ACTION, true},
+#endif
                {MENU_ENUM_LABEL_USER_INTERFACE_SETTINGS,     PARSE_ACTION, true},
                {MENU_ENUM_LABEL_VIDEO_SETTINGS,              PARSE_ACTION, true},
                {MENU_ENUM_LABEL_AUDIO_SETTINGS,              PARSE_ACTION, true},
@@ -16710,6 +16731,9 @@ static bool menu_displaylist_ctl_internal(
 #endif
          case DISPLAYLIST_SAVING_SETTINGS_LIST:
          case DISPLAYLIST_CLOUD_SYNC_SETTINGS_LIST:
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         case DISPLAYLIST_ROMM_SETTINGS_LIST:
+#endif
          case DISPLAYLIST_DRIVER_SETTINGS_LIST:
          case DISPLAYLIST_LOGGING_SETTINGS_LIST:
          case DISPLAYLIST_FRAME_THROTTLE_SETTINGS_LIST:
