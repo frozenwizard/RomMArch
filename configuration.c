@@ -1081,6 +1081,7 @@ static const char *config_sensitive_keys[] = {
    "smb_client_username",
    "smb_client_password",
    "mcp_server_token",
+   "romm_token",
    "netplay_password",
    "netplay_spectate_password",
    "kiosk_mode_password",
@@ -2017,6 +2018,12 @@ static struct config_array_setting *populate_settings_array(
    SETTING_ARRAY_SENSITIVE("access_key_id",               settings->arrays.access_key_id, false, NULL, true);
    SETTING_ARRAY_SENSITIVE("secret_access_key",           settings->arrays.secret_access_key, false, NULL, true);
 #endif
+#endif
+#ifdef HAVE_ROMM
+   SETTING_ARRAY("romm_server_url",                       settings->arrays.romm_server_url, false, NULL, true);
+   SETTING_ARRAY("romm_web_url",                          settings->arrays.romm_web_url, false, NULL, true);
+   SETTING_ARRAY("romm_device_identifier",                settings->arrays.romm_device_identifier, false, NULL, true);
+   SETTING_ARRAY_SENSITIVE("romm_token",                  settings->arrays.romm_token, false, NULL, true);
 #endif
    SETTING_ARRAY_SENSITIVE("youtube_stream_key",          settings->arrays.youtube_stream_key, true, NULL, true);
    SETTING_ARRAY_SENSITIVE("twitch_stream_key",           settings->arrays.twitch_stream_key, true, NULL, true);
@@ -5902,6 +5909,12 @@ void config_set_defaults(settings_t *target)
    strlcpy(settings->arrays.mcp_server_bind_address, "127.0.0.1",
          sizeof(settings->arrays.mcp_server_bind_address));
    *settings->arrays.mcp_server_token = '\0';
+#if defined(HAVE_NETWORKING) && defined(HAVE_ROMM)
+   *settings->arrays.romm_server_url        = '\0';
+   *settings->arrays.romm_web_url           = '\0';
+   *settings->arrays.romm_device_identifier = '\0';
+   *settings->arrays.romm_token             = '\0';
+#endif
 #ifdef HAVE_MENU
    if (def_menu)
       configuration_set_string(settings,

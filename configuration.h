@@ -1302,6 +1302,16 @@ typedef struct settings
       char secret_access_key[186]; /* TODO/RESEARCH - check size, ex https://github.com/winscp/winscp/pull/15/files */
 #endif
 #endif
+#ifdef HAVE_ROMM
+      /* Where the app talks to RomM, and where the user signs in to
+       * approve a pairing when that differs (a proxy with single
+       * sign-on in front of RomM). */
+      char romm_server_url[NAME_MAX_LENGTH];
+      char romm_web_url[NAME_MAX_LENGTH];
+      /* Identifies this install to RomM across pairings. */
+      char romm_device_identifier[64];
+      char romm_token[128];
+#endif
 #endif
 
       char crt_switch_timings[NAME_MAX_LENGTH];
