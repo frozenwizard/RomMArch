@@ -12,6 +12,7 @@ flags   += -std=gnu99
 # that translation unit needs to link.
 SOURCES_C := \
 	romm_client_test.c \
+	$(CORE_DIR)/network/romm/romm_json.c \
 	stubs_retroarch.c \
 	$(LIBRETRO_COMM_DIR)/formats/json/rjson.c \
 	$(LIBRETRO_COMM_DIR)/string/stdstring.c \
