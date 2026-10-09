@@ -13189,6 +13189,7 @@ unsigned menu_displaylist_build_list(
             static const menu_displaylist_build_info_t build_list[] = {
                {MENU_ENUM_LABEL_ROMM_SERVER_URL,  PARSE_ONLY_STRING},
                {MENU_ENUM_LABEL_ROMM_WEB_URL,     PARSE_ONLY_STRING},
+               {MENU_ENUM_LABEL_ROMM_CHECK_CONNECTION, PARSE_ACTION},
             };
 
             for (i = 0; i < ARRAY_SIZE(build_list); i++)

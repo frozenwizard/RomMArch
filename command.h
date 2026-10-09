@@ -166,6 +166,10 @@ enum event_command
    /* Resolve cloud sync conflicts by keeping server files */
    CMD_EVENT_CLOUD_SYNC_RESOLVE_KEEP_SERVER,
 #endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* Check the RomM server answers */
+   CMD_EVENT_ROMM_CHECK_CONNECTION,
+#endif
    /* Shutdown the OS */
    CMD_EVENT_SHUTDOWN,
    /* Reboot the OS */

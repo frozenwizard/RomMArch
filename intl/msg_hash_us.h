@@ -2496,9 +2496,13 @@ MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 #define S_ACTION(T, n, us, sub) \
 MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us) \
 MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
+#define S_ACTION_EX(T, n, sd, ok, rp, c, us, sub) \
+MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us) \
+MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 #include "../settings/settings_def_romm.h"
 #undef S_STRING
 #undef S_ACTION
+#undef S_ACTION_EX
 #undef SETTINGS_DEF_STRINGS_PASS
 /* GENERATED REGION: S3 credentials group (see settings_def_cloud_sync_s3.h). */
 #define SETTINGS_DEF_STRINGS_PASS
@@ -33615,6 +33619,26 @@ MSG_HASH(
 MSG_HASH(
    MSG_CHEEVOS_LOGIN_TOKEN_EXPIRED,
    "RetroAchievements login expired. Please re-enter your password and reload the game."
+   )
+MSG_HASH(
+   MSG_ROMM_NO_SERVER,
+   "Enter the RomM server address first."
+   )
+MSG_HASH(
+   MSG_ROMM_CONNECTED,
+   "Connected to RomM %s."
+   )
+MSG_HASH(
+   MSG_ROMM_UNREACHABLE,
+   "Couldn't reach RomM at %s."
+   )
+MSG_HASH(
+   MSG_ROMM_HTTP_ERROR,
+   "RomM answered with HTTP error %d."
+   )
+MSG_HASH(
+   MSG_ROMM_NOT_ROMM,
+   "%s doesn't answer like a RomM server."
    )
 MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,

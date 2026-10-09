@@ -1557,6 +1557,7 @@
 #define MENU_ENUM_LABEL_RGUI_MENU_COLOR_THEME_STR "rgui_menu_color_theme"
 #define MENU_ENUM_LABEL_RGUI_MENU_THEME_PRESET_STR "rgui_menu_theme_preset"
 #define MENU_ENUM_LABEL_RGUI_SHOW_START_SCREEN_STR "rgui_show_start_screen"
+#define MENU_ENUM_LABEL_ROMM_CHECK_CONNECTION_STR "romm_check_connection"
 #define MENU_ENUM_LABEL_ROMM_SERVER_URL_STR "romm_server_url"
 #define MENU_ENUM_LABEL_ROMM_SETTINGS_STR "romm_settings"
 #define MENU_ENUM_LABEL_ROMM_WEB_URL_STR "romm_web_url"

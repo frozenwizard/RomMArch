@@ -21,4 +21,8 @@ S_STRING(romm_web_url, ROMM_WEB_URL,
       "", SD_FLAG_ALLOW_INPUT, 0, NULL, NULL, setting_generic_action_start_default, NULL, NULL, NULL, ST_UI_TYPE_STRING_LINE_EDIT,
       "Sign-in Address",
       "Where you sign in to RomM to approve this device, when that isn't the server address: a web address in front of RomM with single sign-on, for example. Empty uses the server address.")
+S_ACTION_EX(ROMM_CHECK_CONNECTION,
+      "romm_check_connection", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_CHECK_CONNECTION,
+      "Check Connection",
+      "See whether RomM answers at the server address.")
 #endif

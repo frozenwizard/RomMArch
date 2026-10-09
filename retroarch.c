@@ -192,6 +192,9 @@
 #ifdef HAVE_CLOUDSYNC
 #include "network/cloud_sync_driver.h"
 #endif
+#ifdef HAVE_ROMM
+#include "network/romm/romm.h"
+#endif
 #endif
 
 #ifdef HAVE_THREADS
@@ -5324,6 +5327,11 @@ bool command_event(enum event_command cmd, void *data)
          break;
       case CMD_EVENT_CLOUD_SYNC_RESOLVE_KEEP_SERVER:
          task_push_cloud_sync_resolve_keep_server();
+         break;
+#endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      case CMD_EVENT_ROMM_CHECK_CONNECTION:
+         romm_check_connection();
          break;
 #endif
       case CMD_EVENT_MENU_RESET_TO_DEFAULT_CONFIG:

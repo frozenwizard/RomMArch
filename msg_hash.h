@@ -29119,9 +29119,11 @@ enum msg_hash_enums
 #define SETTINGS_DEF_STRINGS_PASS
 #define S_STRING(f, T, n, d, sd, c, ok, rp, sta, sel, lf, rt, ui, us, sub) MENU_LABEL(T),
 #define S_ACTION(T, n, us, sub) MENU_LABEL(T),
+#define S_ACTION_EX(T, n, sd, ok, rp, c, us, sub) MENU_LABEL(T),
 #include "settings/settings_def_romm.h"
 #undef S_STRING
 #undef S_ACTION
+#undef S_ACTION_EX
 #undef SETTINGS_DEF_STRINGS_PASS
 #undef SETTINGS_DEF_ENUM_PASS
    /* GENERATED REGION: second main menu list actions enum rows (see settings/settings_def_menu_main_lists_2.h). */
@@ -33655,6 +33657,11 @@ enum msg_hash_enums
    MSG_CHEEVOS_GAME_LOAD_FAILED,
    MSG_CHEEVOS_CHANGE_MEDIA_FAILED,
    MSG_CHEEVOS_LOGIN_TOKEN_EXPIRED,
+   MSG_ROMM_NO_SERVER,
+   MSG_ROMM_CONNECTED,
+   MSG_ROMM_UNREACHABLE,
+   MSG_ROMM_HTTP_ERROR,
+   MSG_ROMM_NOT_ROMM,
    MENU_ENUM_LABEL_VALUE_TIMEDATE_YMD_HMS,
    MENU_ENUM_LABEL_VALUE_TIMEDATE_YMD_HM,
    MENU_ENUM_LABEL_VALUE_TIMEDATE_YMD,
