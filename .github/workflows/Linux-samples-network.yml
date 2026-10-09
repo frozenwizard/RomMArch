@@ -183,6 +183,22 @@ jobs:
           TSAN_OPTIONS=halt_on_error=1 timeout 120 ./webdav_backup_test
           echo "[pass] webdav_backup_test (TSan)"
 
+      - name: Build and run romm_client_test (ASan + UBSan)
+        shell: bash
+        working-directory: samples/network/romm_client
+        run: |
+          set -eu
+          # Includes network/romm/romm_client.c and plays RomM: the
+          # server address joining, the heartbeat request, and its
+          # replies - RomM's version, another web server's page, an
+          # HTTP error and no response at all.
+          make clean all SANITIZER=address,undefined
+          test -x romm_client_test
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+             UBSAN_OPTIONS=print_stacktrace=1 timeout 60 \
+             ./romm_client_test
+          echo "[pass] romm_client_test (ASan)"
+
       - name: Build and run s3_backup_test (ASan + UBSan, TSan)
         shell: bash
         working-directory: samples/network/s3_backup

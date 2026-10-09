@@ -1,0 +1,50 @@
+/*  RetroArch - A frontend for libretro.
+ *
+ *  RetroArch is free software: you can redistribute it and/or modify it under the terms
+ *  of the GNU General Public License as published by the Free Software Found-
+ *  ation, either version 3 of the License, or (at your option) any later version.
+ *
+ *  RetroArch is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ *  PURPOSE.  See the GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License along with RetroArch.
+ *  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef __ROMM_CLIENT_H
+#define __ROMM_CLIENT_H
+
+#include <stddef.h>
+#include <boolean.h>
+#include <retro_common_api.h>
+
+RETRO_BEGIN_DECLS
+
+enum romm_status
+{
+   ROMM_OK = 0,
+   /* No HTTP response: wrong address, server down or no network. */
+   ROMM_ERR_UNREACHABLE,
+   /* An HTTP status the request doesn't expect. */
+   ROMM_ERR_HTTP,
+   /* A body RomM wouldn't send, such as another web server's page. */
+   ROMM_ERR_RESPONSE
+};
+
+/* @version is RomM's version string, empty unless @status is ROMM_OK.
+ * @http_status is 0 when there was no response. */
+typedef void (*romm_heartbeat_cb_t)(void *user_data,
+      enum romm_status status, int http_status, const char *version);
+
+/* Joins @server (with or without a trailing slash) and @path. */
+bool romm_client_url(char *s, size_t len, const char *server,
+      const char *path);
+
+/* Checks @server is a reachable RomM; @cb runs on the main thread. */
+bool romm_client_heartbeat(const char *server,
+      romm_heartbeat_cb_t cb, void *user_data);
+
+RETRO_END_DECLS
+
+#endif
