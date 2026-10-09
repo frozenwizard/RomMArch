@@ -1,6 +1,9 @@
 /* Harness for the RomM library (network/romm/romm_library.c): the
  * romm:// paths games get, playlist file names, the playlists written
  * for a platform, read back as JSON, and the manifest's round trip.
+ * Then a sync, with the test playing RomM through the client harness's
+ * request stubs: the requests made, paging, the playlists and manifest
+ * written, and how a failed request or a cancel ends it.
  *
  * Includes the library's translation unit so its statics are tested
  * as shipped. Files are written to the current directory and removed.
@@ -13,6 +16,8 @@
 #include <boolean.h>
 
 #include "../../../network/romm/romm_library.c"
+
+#include "../romm_client/stubs_retroarch.h"
 
 static unsigned failures = 0;
 
@@ -318,12 +323,278 @@ static void test_manifest(void)
    romm_library_free(&lib);
 }
 
+#define TEST_DIR "romm_library_test_dir"
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   size_t platforms;
+   size_t games;
+} sync_result_t;
+
+static void on_sync(void *user_data, enum romm_status status,
+      const romm_library_t *lib)
+{
+   sync_result_t *r = (sync_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status    = status;
+   r->platforms = RBUF_LEN(lib->platforms);
+   r->games     = 0;
+   for (i = 0; i < r->platforms; i++)
+      r->games += RBUF_LEN(lib->platforms[i].roms);
+}
+
+/* Runs the sync task's handler once, then its callback and cleanup if
+ * that finished it. Returns whether it finished. */
+static bool sync_step(void)
+{
+   retro_task_t *task = stub_task;
+
+   task->handler(task);
+   if (!(task->flags & RETRO_TASK_FLG_FINISHED))
+      return false;
+   task->callback(task, NULL, task->user_data, NULL);
+   task->cleanup(task);
+   free(task->title);
+   free(task);
+   stub_task = NULL;
+   return true;
+}
+
+/* Runs the handler until it starts a request, then answers it. */
+static void sync_answer(int status, const char *body)
+{
+   http_transfer_data_t resp;
+   unsigned before = stub_req.count;
+   unsigned steps  = 0;
+
+   while (stub_req.count == before && stub_task && steps++ < 10)
+      sync_step();
+   CHECK(stub_req.count == before + 1, "no request to answer");
+   if (stub_req.count != before + 1)
+      return;
+   memset(&resp, 0, sizeof(resp));
+   resp.status = status;
+   resp.data   = (char*)body;
+   resp.len    = body ? strlen(body) : 0;
+   stub_req.cb(NULL, &resp, stub_req.user_data,
+         status < 0 ? "Connection refused" : NULL);
+}
+
+/* Steps the task until it finishes; false if it starts a request. */
+static bool sync_run_out(void)
+{
+   unsigned before = stub_req.count;
+   unsigned steps  = 0;
+   while (stub_task && steps++ < 20)
+      if (sync_step())
+         return stub_req.count == before;
+   return false;
+}
+
+/* A page of @count games on @platform_id, ids from @first_id. */
+static char *roms_page(unsigned platform_id, unsigned first_id,
+      unsigned count)
+{
+   size_t cap = 64 + (size_t)count * 320;
+   char *s    = (char*)malloc(cap);
+   size_t len = strlcpy(s, "{\"items\": [", cap);
+   unsigned i;
+
+   for (i = 0; i < count; i++)
+      len += snprintf(s + len, cap - len, "%s{\"id\": %u,"
+            " \"platform_id\": %u, \"fs_name\": \"Game %u (USA).md\","
+            " \"fs_name_no_ext\": \"Game %u (USA)\", \"name\": \"Game %u\","
+            " \"has_simple_single_file\": true, \"crc_hash\": \"%08x\","
+            " \"path_cover_large\": \"/assets/%u.png\","
+            " \"updated_at\": \"2026-10-02T04:00:%02u+00:00\"}",
+            i ? ", " : "", first_id + i, platform_id, first_id + i,
+            first_id + i, first_id + i, first_id + i, first_id + i,
+            i % 60);
+   strlcpy(s + len, "], \"total\": null}", cap - len);
+   return s;
+}
+
+static unsigned count_entries(const char *path)
+{
+   char *doc     = NULL;
+   int64_t len   = 0;
+   unsigned n    = 0;
+   const char *p;
+   if (!filestream_read_file(path, (void**)&doc, &len) || !doc)
+      return 0;
+   for (p = doc; (p = strstr(p, "\"path\": \"romm://")); p++)
+      n++;
+   free(doc);
+   return n;
+}
+
+static const char *sync_platforms_reply =
+   "[{\"id\": 15, \"slug\": \"segacd\", \"rom_count\": 2,"
+   " \"name\": \"Sega CD\", \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
+   " {\"id\": 26, \"slug\": \"switch\", \"rom_count\": 0,"
+   " \"name\": \"Nintendo Switch\", \"libretro_slug\": null},"
+   " {\"id\": 8, \"slug\": \"genesis\", \"rom_count\": 300,"
+   " \"name\": \"Genesis\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+   " {\"id\": 30, \"slug\": \"megadrive\", \"rom_count\": 1,"
+   " \"name\": \"Mega Drive\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+   " {\"id\": 40, \"slug\": \"ps3\", \"rom_count\": 5,"
+   " \"name\": \"PlayStation 3\", \"libretro_slug\": null}]";
+
+static void test_sync(void)
+{
+   sync_result_t r;
+   romm_library_t lib;
+   char manifest[256];
+   char *page;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   stub_task = NULL;
+   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+         "Syncing", on_sync, &r) && stub_task, "sync not started");
+   CHECK(stub_task && (stub_task->flags & RETRO_TASK_FLG_MAIN_THREAD)
+         && !strcmp(stub_task->title, "Syncing"), "task flags or title");
+
+   sync_answer(200, sync_platforms_reply);
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/platforms")
+         && strstr(stub_req.headers, "Bearer rmm_tok"), "platforms request"
+         " %s", stub_req.url);
+
+   /* The platform with no games is never asked for. */
+   page = roms_page(15, 1, 2);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=15&") && strstr(stub_req.url,
+         "&limit=250&offset=0"), "Sega CD request %s", stub_req.url);
+
+   page = roms_page(8, 100, 250);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=8&")
+         && strstr(stub_req.url, "&offset=0"), "Genesis page 1 %s",
+         stub_req.url);
+   CHECK(stub_task && stub_task->progress == 40, "progress %d",
+         stub_task ? (int)stub_task->progress : -1);
+   page = roms_page(8, 350, 50);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=8&")
+         && strstr(stub_req.url, "&offset=250"), "Genesis page 2 %s",
+         stub_req.url);
+
+   page = roms_page(30, 900, 1);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=30&"), "Mega Drive %s",
+         stub_req.url);
+
+   /* Everything hidden from this user: no playlist. */
+   sync_answer(200, "{\"items\": []}");
+   CHECK(strstr(stub_req.url, "platform_ids=40&"), "PS3 %s", stub_req.url);
+
+   CHECK(sync_run_out(), "sync didn't finish without more requests");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.platforms == 3
+         && r.games == 303, "result: calls %u status %d platforms %u"
+         " games %u", r.calls, r.status, (unsigned)r.platforms,
+         (unsigned)r.games);
+
+   CHECK(count_entries(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl") == 2,
+         "Sega CD playlist");
+   CHECK(count_entries(TEST_DIR "/Sega - Mega Drive - Genesis.lpl") == 301,
+         "Genesis and Mega Drive share one playlist: %u entries",
+         count_entries(TEST_DIR "/Sega - Mega Drive - Genesis.lpl"));
+   CHECK(!path_is_valid(TEST_DIR "/RomM - PlayStation 3.lpl")
+         && !path_is_valid(TEST_DIR "/RomM - Nintendo Switch.lpl"),
+         "playlist for a platform without games");
+
+   CHECK(romm_library_load(&lib, manifest), "manifest not written");
+   CHECK(!strcmp(lib.server, "http://romm.local:8090") && lib.synced_at > 0
+         && RBUF_LEN(lib.platforms) == 3, "manifest: %s %lld %u",
+         lib.server, (long long)lib.synced_at,
+         (unsigned)RBUF_LEN(lib.platforms));
+   if (RBUF_LEN(lib.platforms) == 3)
+      CHECK(lib.platforms[1].platform.id == 8
+            && RBUF_LEN(lib.platforms[1].roms) == 300
+            && lib.platforms[1].roms[299].id == 399
+            && !strcmp(lib.platforms[2].playlist,
+               "Sega - Mega Drive - Genesis.lpl"),
+            "manifest Genesis: %u games", (unsigned)RBUF_LEN(
+               lib.platforms[1].roms));
+   romm_library_free(&lib);
+
+   /* No response part way: reported, the manifest left as it was. */
+   memset(&r, 0, sizeof(r));
+   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+         NULL, on_sync, &r), "second sync not started");
+   CHECK(stub_task && (stub_task->flags & RETRO_TASK_FLG_MUTE),
+         "untitled sync not muted");
+   sync_answer(200, sync_platforms_reply);
+   sync_answer(-1, NULL);
+   CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE,
+         "unreachable: calls %u status %d", r.calls, r.status);
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 3,
+         "manifest changed by a failed sync");
+   romm_library_free(&lib);
+
+   /* Cancelled while a request is out: it waits for the answer, then
+    * stops without another. */
+   memset(&r, 0, sizeof(r));
+   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+         NULL, on_sync, &r), "third sync not started");
+   sync_step();
+   CHECK(stub_req.count == 9, "%u requests", stub_req.count);
+   stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
+   sync_step();
+   CHECK(stub_task && r.calls == 0, "finished with a request out");
+   {
+      http_transfer_data_t resp;
+      memset(&resp, 0, sizeof(resp));
+      resp.status = 200;
+      resp.data   = (char*)sync_platforms_reply;
+      resp.len    = strlen(sync_platforms_reply);
+      stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   }
+   CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_CANCELLED,
+         "cancel: calls %u status %d", r.calls, r.status);
+
+   /* A request that can't start ends the sync. */
+   memset(&r, 0, sizeof(r));
+   stub_req.refuse = true;
+   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+         NULL, on_sync, &r), "fourth sync not started");
+   CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE,
+         "refused: calls %u status %d", r.calls, r.status);
+   stub_req.refuse = false;
+
+   CHECK(!romm_library_sync("http://h", "", TEST_DIR, NULL, on_sync, &r)
+         && !romm_library_sync("", "t", TEST_DIR, NULL, on_sync, &r)
+         && !romm_library_sync("http://h", "t", "", NULL, on_sync, &r),
+         "sync started without a server, token or folder");
+   stub_refuse_task = true;
+   CHECK(!romm_library_sync("http://h", "t", TEST_DIR, NULL, on_sync, &r),
+         "sync reported started when its task wasn't");
+   stub_refuse_task = false;
+
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(TEST_DIR "/Sega - Mega Drive - Genesis.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
    test_playlist_name();
    test_write_playlist();
    test_manifest();
+   test_sync();
 
    if (failures)
    {

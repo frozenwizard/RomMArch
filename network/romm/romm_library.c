@@ -15,11 +15,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <array/rbuf.h>
 #include <compat/strl.h>
+#include <features/features_cpu.h>
 #include <file/file_path.h>
 #include <formats/rjson.h>
+#include <queues/task_queue.h>
 #include <streams/file_stream.h>
 #include <string/stdstring.h>
 
@@ -27,8 +30,42 @@
 #include "romm_library.h"
 #include "../../file_path_special.h"
 #include "../../playlist.h"
+#include "../../verbosity.h"
 
 #define ROMM_LIBRARY_VERSION 1
+#define ROMM_LIBRARY_PAGE 250
+#define ROMM_LIB_PFX "[RomM] "
+
+enum romm_lib_sync_state
+{
+   ROMM_LIB_SYNC_PLATFORMS = 0,
+   /* Fetching the current platform's games, a page at a time */
+   ROMM_LIB_SYNC_ROMS,
+   ROMM_LIB_SYNC_WRITE,
+   ROMM_LIB_SYNC_SAVE
+};
+
+typedef struct
+{
+   romm_library_sync_cb_t cb;
+   void *user_data;
+   retro_task_t *task;
+   romm_library_t lib;
+   /* RomM's platforms, and the games of the one being fetched */
+   romm_platform_t *remote;
+   romm_rom_t *roms;
+   size_t platform;
+   unsigned offset;
+   retro_time_t started;
+   enum romm_lib_sync_state state;
+   enum romm_status status;
+   bool pending;
+   bool finished;
+   char *token;
+   char server[NAME_MAX_LENGTH];
+   char playlist_dir[PATH_MAX_LENGTH];
+   char manifest[PATH_MAX_LENGTH];
+} romm_lib_sync_t;
 
 /* Characters a file name can't hold on some system RetroArch runs on. */
 static void romm_lib_scrub_file_name(char *s)
@@ -411,4 +448,282 @@ void romm_library_free(romm_library_t *lib)
       RBUF_FREE(lib->platforms[i].roms);
    RBUF_FREE(lib->platforms);
    memset(lib, 0, sizeof(*lib));
+}
+
+/* Writes @name from every platform in @lib it belongs to: RomM can have
+ * two platforms with one libretro name, such as Genesis and Mega
+ * Drive. */
+static bool romm_lib_write_named_playlist(const romm_library_t *lib,
+      const char *playlist_dir, const char *name)
+{
+   char path[PATH_MAX_LENGTH];
+   const romm_library_platform_t *only = NULL;
+   romm_rom_t *merged = NULL;
+   bool ok;
+   size_t i, j;
+
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+   {
+      const romm_library_platform_t *p = &lib->platforms[i];
+      if (!string_is_equal(p->playlist, name))
+         continue;
+      if (!only)
+      {
+         only = p;
+         continue;
+      }
+      if (!merged)
+         for (j = 0; j < RBUF_LEN(only->roms); j++)
+            RBUF_PUSH(merged, only->roms[j]);
+      for (j = 0; j < RBUF_LEN(p->roms); j++)
+         RBUF_PUSH(merged, p->roms[j]);
+   }
+   if (!only)
+      return false;
+
+   fill_pathname_join(path, playlist_dir, name, sizeof(path));
+   ok = merged
+      ? romm_library_write_playlist(path, name, NULL, NULL,
+            merged, RBUF_LEN(merged))
+      : romm_library_write_playlist(path, name, NULL, NULL,
+            only->roms, RBUF_LEN(only->roms));
+   RBUF_FREE(merged);
+   return ok;
+}
+
+static void romm_lib_sync_finish(romm_lib_sync_t *sync,
+      enum romm_status status)
+{
+   sync->status    = status;
+   sync->finished  = true;
+   sync->task->when = 0;
+}
+
+static void romm_lib_sync_platforms_cb(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_platform_t *platforms, size_t count)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)user_data;
+   size_t i;
+
+   sync->pending    = false;
+   sync->task->when = 0;
+   if (status != ROMM_OK)
+   {
+      romm_lib_sync_finish(sync, status);
+      return;
+   }
+   for (i = 0; i < count; i++)
+      RBUF_PUSH(sync->remote, platforms[i]);
+   sync->state = ROMM_LIB_SYNC_ROMS;
+}
+
+static void romm_lib_sync_roms_cb(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_rom_t *roms, size_t count)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)user_data;
+   size_t i;
+
+   sync->pending    = false;
+   sync->task->when = 0;
+   if (status != ROMM_OK)
+   {
+      romm_lib_sync_finish(sync, status);
+      return;
+   }
+   for (i = 0; i < count; i++)
+      RBUF_PUSH(sync->roms, roms[i]);
+   if (count == ROMM_LIBRARY_PAGE)
+      sync->offset += ROMM_LIBRARY_PAGE;
+   else
+      sync->state = ROMM_LIB_SYNC_WRITE;
+}
+
+/* Moves the fetched games into the library and writes their playlist;
+ * a platform with none the user can see gets no playlist. */
+static bool romm_lib_sync_write(romm_lib_sync_t *sync)
+{
+   romm_library_platform_t entry;
+
+   if (!RBUF_LEN(sync->roms))
+      return true;
+   memset(&entry, 0, sizeof(entry));
+   entry.platform = sync->remote[sync->platform];
+   if (!romm_library_playlist_name(entry.playlist, sizeof(entry.playlist),
+         &entry.platform))
+   {
+      RBUF_FREE(sync->roms);
+      return true;
+   }
+   entry.roms = sync->roms;
+   sync->roms = NULL;
+   RBUF_PUSH(sync->lib.platforms, entry);
+   return romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
+         entry.playlist);
+}
+
+/* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the
+ * request callbacks, so they share @sync without locking. */
+static void romm_lib_sync_handler(retro_task_t *task)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)task->state;
+   size_t count          = RBUF_LEN(sync->remote);
+
+   /* A request still out holds @sync; its callback wakes the task. */
+   if (sync->pending)
+   {
+      task->when = cpu_features_get_time_usec() + 250000;
+      return;
+   }
+   if (!sync->finished && (task_get_flags(task) & RETRO_TASK_FLG_CANCELLED))
+      romm_lib_sync_finish(sync, ROMM_ERR_CANCELLED);
+   if (sync->finished)
+   {
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+
+   task->when = 0;
+   switch (sync->state)
+   {
+      case ROMM_LIB_SYNC_PLATFORMS:
+         if (romm_client_platforms(sync->server, sync->token,
+               romm_lib_sync_platforms_cb, sync))
+            sync->pending = true;
+         else
+            romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
+         break;
+      case ROMM_LIB_SYNC_ROMS:
+         while (     sync->platform < count
+               && !sync->remote[sync->platform].rom_count)
+            sync->platform++;
+         if (sync->platform >= count)
+         {
+            sync->state = ROMM_LIB_SYNC_SAVE;
+            break;
+         }
+         task_set_progress(task, (int8_t)(sync->platform * 100 / count));
+         if (romm_client_roms(sync->server, sync->token,
+               sync->remote[sync->platform].id, NULL, sync->offset,
+               ROMM_LIBRARY_PAGE, romm_lib_sync_roms_cb, sync))
+            sync->pending = true;
+         else
+            romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
+         break;
+      case ROMM_LIB_SYNC_WRITE:
+         if (!romm_lib_sync_write(sync))
+         {
+            RARCH_WARN(ROMM_LIB_PFX "Couldn't write the playlist for %s.\n",
+                  sync->remote[sync->platform].name);
+            romm_lib_sync_finish(sync, ROMM_ERR_WRITE);
+            break;
+         }
+         sync->platform++;
+         sync->offset = 0;
+         sync->state  = ROMM_LIB_SYNC_ROMS;
+         break;
+      case ROMM_LIB_SYNC_SAVE:
+         strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
+         sync->lib.synced_at = (int64_t)time(NULL);
+         romm_lib_sync_finish(sync,
+               romm_library_save(&sync->lib, sync->manifest)
+               ? ROMM_OK : ROMM_ERR_WRITE);
+         break;
+   }
+}
+
+static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)user_data;
+   size_t games          = 0;
+   size_t i;
+
+   for (i = 0; i < RBUF_LEN(sync->lib.platforms); i++)
+      games += RBUF_LEN(sync->lib.platforms[i].roms);
+   if (sync->status == ROMM_OK)
+      RARCH_LOG(ROMM_LIB_PFX "Library synced: %u platforms, %u games, "
+            "in %u ms.\n", (unsigned)RBUF_LEN(sync->lib.platforms),
+            (unsigned)games, (unsigned)((cpu_features_get_time_usec()
+               - sync->started) / 1000));
+   else
+      RARCH_WARN(ROMM_LIB_PFX "Library sync ended (status %d).\n",
+            sync->status);
+
+   if (sync->cb)
+      sync->cb(sync->user_data, sync->status, &sync->lib);
+}
+
+static void romm_lib_sync_cleanup(retro_task_t *task)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)task->state;
+
+   if (sync)
+   {
+      romm_library_free(&sync->lib);
+      RBUF_FREE(sync->remote);
+      RBUF_FREE(sync->roms);
+      if (sync->token)
+      {
+         memset(sync->token, 0, strlen(sync->token));
+         free(sync->token);
+      }
+      free(sync);
+   }
+   task->state = NULL;
+}
+
+bool romm_library_sync(const char *server, const char *token,
+      const char *playlist_dir, const char *title,
+      romm_library_sync_cb_t cb, void *user_data)
+{
+   romm_lib_sync_t *sync;
+   retro_task_t *task;
+
+   if (     string_is_empty(server) || string_is_empty(token)
+         || string_is_empty(playlist_dir))
+      return false;
+   if (!(sync = (romm_lib_sync_t*)calloc(1, sizeof(*sync))))
+      return false;
+   if (!(sync->token = strdup(token)) || !(task = task_init()))
+   {
+      free(sync->token);
+      free(sync);
+      return false;
+   }
+
+   sync->cb        = cb;
+   sync->user_data = user_data;
+   sync->task      = task;
+   sync->started   = cpu_features_get_time_usec();
+   strlcpy(sync->server, server, sizeof(sync->server));
+   strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));
+   romm_library_manifest_path(sync->manifest, sizeof(sync->manifest),
+         playlist_dir);
+
+   task->handler   = romm_lib_sync_handler;
+   task->callback  = romm_lib_sync_cb;
+   task->cleanup   = romm_lib_sync_cleanup;
+   task->state     = sync;
+   task->user_data = sync;
+   task->flags    |= RETRO_TASK_FLG_MAIN_THREAD;
+   if (title)
+   {
+      task->title    = strdup(title);
+      task->progress = 0;
+   }
+   else
+      task->flags   |= RETRO_TASK_FLG_MUTE;
+
+   if (!task_queue_push(task))
+   {
+      free(task->title);
+      free(task);
+      free(sync->token);
+      free(sync);
+      return false;
+   }
+   RARCH_LOG(ROMM_LIB_PFX "Syncing the library from %s.\n", server);
+   return true;
 }

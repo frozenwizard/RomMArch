@@ -9,9 +9,12 @@ CC      := $(compiler)
 flags   += -std=gnu99
 
 # The test includes network/romm/romm_library.c; everything below is
-# what that translation unit needs to link.
+# what that translation unit needs to link. Requests go to the RomM
+# client harness's stubs, which record them for the test to answer.
 SOURCES_C := \
 	romm_library_test.c \
+	../romm_client/stubs_retroarch.c \
+	$(CORE_DIR)/network/romm/romm_client.c \
 	$(CORE_DIR)/network/romm/romm_json.c \
 	$(LIBRETRO_COMM_DIR)/formats/json/rjson.c \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \

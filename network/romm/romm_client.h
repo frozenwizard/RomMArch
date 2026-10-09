@@ -36,7 +36,9 @@ enum romm_status
    ROMM_ERR_DENIED,
    /* Pairing: the code ran out before the user approved it. */
    ROMM_ERR_EXPIRED,
-   ROMM_ERR_CANCELLED
+   ROMM_ERR_CANCELLED,
+   /* A file couldn't be written, such as a playlist. */
+   ROMM_ERR_WRITE
 };
 
 /* A pairing RomM has started: the user approves it at @approve_url
