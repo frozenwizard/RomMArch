@@ -33669,6 +33669,26 @@ MSG_HASH(
    "The pairing code expired before it was approved."
    )
 MSG_HASH(
+   MSG_ROMM_NOT_PAIRED,
+   "Pair this device with RomM first."
+   )
+MSG_HASH(
+   MSG_ROMM_SYNCING,
+   "Syncing the RomM library"
+   )
+MSG_HASH(
+   MSG_ROMM_SYNC_IN_PROGRESS,
+   "The RomM library is already syncing."
+   )
+MSG_HASH(
+   MSG_ROMM_SYNCED,
+   "RomM library synced: %u games on %u platforms."
+   )
+MSG_HASH(
+   MSG_ROMM_WRITE_FAILED,
+   "Couldn't save the RomM library in the playlist folder."
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

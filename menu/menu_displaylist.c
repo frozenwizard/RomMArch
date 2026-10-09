@@ -13191,6 +13191,7 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_ROMM_WEB_URL,     PARSE_ONLY_STRING},
                {MENU_ENUM_LABEL_ROMM_PAIR,         PARSE_ACTION},
                {MENU_ENUM_LABEL_ROMM_CHECK_CONNECTION, PARSE_ACTION},
+               {MENU_ENUM_LABEL_ROMM_REFRESH_LIBRARY, PARSE_ACTION},
             };
 
             for (i = 0; i < ARRAY_SIZE(build_list); i++)

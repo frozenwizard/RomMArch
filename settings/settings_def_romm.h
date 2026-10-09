@@ -29,4 +29,8 @@ S_ACTION_EX(ROMM_CHECK_CONNECTION,
       "romm_check_connection", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_CHECK_CONNECTION,
       "Check Connection",
       "See whether RomM answers at the server address and, once this device is paired, which RomM user it acts for.")
+S_ACTION_EX(ROMM_REFRESH_LIBRARY,
+      "romm_refresh_library", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_LIBRARY,
+      "Refresh Library",
+      "Update the game lists from RomM, adding and removing platforms and games to match it.")
 #endif

@@ -16,20 +16,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <array/rbuf.h>
 #include <compat/strl.h>
+#include <file/file_path.h>
 #include <string/stdstring.h>
 
 #include "romm.h"
 #include "romm_client.h"
+#include "romm_library.h"
 #include "romm_platform.h"
 #include "../../command.h"
 #include "../../configuration.h"
 #include "../../msg_hash.h"
+#include "../../playlist.h"
 #include "../../runloop.h"
 #include "../../version.h"
+#ifdef HAVE_MENU
+#include "../../menu/menu_driver.h"
+#endif
 
 /* Set from the moment pairing starts until its wait ends. */
 static bool romm_pairing = false;
+static bool romm_syncing = false;
 
 static void romm_notify(const char *msg,
       enum message_queue_category category)
@@ -63,6 +71,9 @@ static void romm_notify_failure(enum romm_status status, int http_status)
          break;
       case ROMM_ERR_UNAUTHORIZED:
          strlcpy(msg, msg_hash_to_str(MSG_ROMM_UNAUTHORIZED), sizeof(msg));
+         break;
+      case ROMM_ERR_WRITE:
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_WRITE_FAILED), sizeof(msg));
          break;
       default:
          snprintf(msg, sizeof(msg),
@@ -213,4 +224,100 @@ void romm_pair(void)
       return;
    }
    romm_pairing = true;
+}
+
+/* The menu shows playlists from a cached copy and lists them in its
+ * sidebar; both have to be reloaded after a sync rewrote the files. */
+static void romm_reload_playlists(const romm_library_t *lib)
+{
+   settings_t *settings     = config_get_ptr();
+   playlist_t *cached       = playlist_get_cached();
+#ifdef HAVE_MENU
+   struct menu_state *menu_st = menu_state_get_ptr();
+#endif
+   size_t i;
+
+   if (cached)
+   {
+      for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      {
+         char path[PATH_MAX_LENGTH];
+         fill_pathname_join(path, settings->paths.directory_playlist,
+               lib->platforms[i].playlist, sizeof(path));
+         if (string_is_equal(path, playlist_get_conf_path(cached)))
+         {
+            playlist_config_t config;
+            if (playlist_config_copy(playlist_get_config(cached), &config))
+            {
+               playlist_free_cached();
+               playlist_init_cached(&config);
+            }
+            break;
+         }
+      }
+   }
+
+#ifdef HAVE_MENU
+   if (menu_st->driver_ctx && menu_st->driver_ctx->environ_cb)
+      menu_st->driver_ctx->environ_cb(MENU_ENVIRON_RESET_HORIZONTAL_LIST,
+            NULL, menu_st->userdata);
+   menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+#endif
+}
+
+static void romm_on_library_synced(void *user_data, enum romm_status status,
+      int http_status, const romm_library_t *lib)
+{
+   size_t games = 0;
+   size_t i;
+   char msg[256];
+
+   romm_syncing = false;
+   romm_reload_playlists(lib);
+
+   if (status == ROMM_ERR_CANCELLED)
+      return;
+   if (status != ROMM_OK)
+   {
+      romm_notify_failure(status, http_status);
+      return;
+   }
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      games += RBUF_LEN(lib->platforms[i].roms);
+   snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNCED),
+         (unsigned)games, (unsigned)RBUF_LEN(lib->platforms));
+   romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+}
+
+void romm_refresh_library(void)
+{
+   settings_t *settings = config_get_ptr();
+
+   if (romm_syncing)
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_SYNC_IN_PROGRESS),
+            MESSAGE_QUEUE_CATEGORY_INFO);
+      return;
+   }
+   if (string_is_empty(settings->arrays.romm_server_url))
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   if (string_is_empty(settings->arrays.romm_token))
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_NOT_PAIRED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+
+   if (!romm_library_sync(settings->arrays.romm_server_url,
+         settings->arrays.romm_token, settings->paths.directory_playlist,
+         msg_hash_to_str(MSG_ROMM_SYNCING), romm_on_library_synced, NULL))
+   {
+      romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+      return;
+   }
+   romm_syncing = true;
 }

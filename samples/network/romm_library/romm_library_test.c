@@ -331,17 +331,19 @@ typedef struct
 {
    unsigned calls;
    enum romm_status status;
+   int http_status;
    size_t platforms;
    size_t games;
 } sync_result_t;
 
 static void on_sync(void *user_data, enum romm_status status,
-      const romm_library_t *lib)
+      int http_status, const romm_library_t *lib)
 {
    sync_result_t *r = (sync_result_t*)user_data;
    size_t i;
    r->calls++;
-   r->status    = status;
+   r->status      = status;
+   r->http_status = http_status;
    r->platforms = RBUF_LEN(lib->platforms);
    r->games     = 0;
    for (i = 0; i < r->platforms; i++)
@@ -658,9 +660,10 @@ static void test_sync_reconcile(void)
    sync_answer(200, page);
    free(page);
    sync_answer(500, "{\"detail\": \"Internal Server Error\"}");
-   CHECK(sync_run_out() && r.status == ROMM_ERR_HTTP && r.platforms == 2
-         && r.games == 4, "partial: status %d platforms %u games %u",
-         r.status, (unsigned)r.platforms, (unsigned)r.games);
+   CHECK(sync_run_out() && r.status == ROMM_ERR_HTTP
+         && r.http_status == 500 && r.platforms == 2 && r.games == 4,
+         "partial: status %d HTTP %d platforms %u games %u", r.status,
+         r.http_status, (unsigned)r.platforms, (unsigned)r.games);
    CHECK(count_entries(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl") == 3
          && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
          "playlists after a partial sync");

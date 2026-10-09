@@ -66,9 +66,10 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
       const romm_rom_t *roms, size_t count);
 
 /* @lib is the library as the sync left it, valid only during the
- * call. */
+ * call. @http_status is that of a failed request, or 0. */
 typedef void (*romm_library_sync_cb_t)(void *user_data,
-      enum romm_status status, const romm_library_t *lib);
+      enum romm_status status, int http_status,
+      const romm_library_t *lib);
 
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,

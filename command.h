@@ -171,6 +171,8 @@ enum event_command
    CMD_EVENT_ROMM_CHECK_CONNECTION,
    /* Pair this device with RomM */
    CMD_EVENT_ROMM_PAIR,
+   /* Sync the game library from RomM */
+   CMD_EVENT_ROMM_REFRESH_LIBRARY,
 #endif
    /* Shutdown the OS */
    CMD_EVENT_SHUTDOWN,

@@ -61,6 +61,7 @@ typedef struct
    retro_time_t started;
    enum romm_lib_sync_state state;
    enum romm_status status;
+   int http_status;
    bool pending;
    bool finished;
    char *token;
@@ -560,6 +561,7 @@ static void romm_lib_sync_platforms_cb(void *user_data,
    sync->task->when = 0;
    if (status != ROMM_OK)
    {
+      sync->http_status = http_status;
       romm_lib_sync_finish(sync, status);
       return;
    }
@@ -579,6 +581,7 @@ static void romm_lib_sync_roms_cb(void *user_data,
    sync->task->when = 0;
    if (status != ROMM_OK)
    {
+      sync->http_status = http_status;
       romm_lib_sync_finish(sync, status);
       return;
    }
@@ -706,7 +709,8 @@ static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
             sync->status);
 
    if (sync->cb)
-      sync->cb(sync->user_data, sync->status, &sync->lib);
+      sync->cb(sync->user_data, sync->status, sync->http_status,
+            &sync->lib);
 }
 
 static void romm_lib_sync_cleanup(retro_task_t *task)
