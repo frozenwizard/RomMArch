@@ -36,6 +36,13 @@ void romm_refresh_library(void);
  * failure the user has to act on is reported. */
 void romm_refresh_library_at_start(void);
 
+/* Launches the romm:// playlist entry @content_path with @core_path:
+ * fetches the game from RomM into memory first, unless it's there
+ * already, then loads it the way any playlist entry loads. Returns
+ * 0, or -1 when it couldn't start. */
+int romm_launch_from_menu(const char *core_path, const char *content_path,
+      const char *label);
+
 RETRO_END_DECLS
 
 #endif

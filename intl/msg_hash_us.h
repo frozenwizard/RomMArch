@@ -33697,6 +33697,34 @@ MSG_HASH(
    "Fetching RomM covers"
    )
 MSG_HASH(
+   MSG_ROMM_DOWNLOADING,
+   "Downloading %s"
+   )
+MSG_HASH(
+   MSG_ROMM_LAUNCH_IN_PROGRESS,
+   "A game is already downloading."
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_GONE,
+   "This game is no longer in RomM. Refresh the library."
+   )
+MSG_HASH(
+   MSG_ROMM_RAR_UNSUPPORTED,
+   "This game is a RAR archive, which RetroArch can't open."
+   )
+MSG_HASH(
+   MSG_ROMM_CANT_LAUNCH,
+   "Nothing in this game can be launched."
+   )
+MSG_HASH(
+   MSG_ROMM_DOWNLOAD_BAD,
+   "The download didn't match RomM's copy. Try again."
+   )
+MSG_HASH(
+   MSG_ROMM_NO_MEMORY,
+   "Not enough memory to hold this game."
+   )
+MSG_HASH(
    MSG_ROMM_SAVE_NAME_CLASHES,
    "%u games share a save name with another game, so RomM may file their saves under the wrong one."
    )

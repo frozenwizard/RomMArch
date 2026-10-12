@@ -102,6 +102,9 @@
 #include "../../network/wifi_driver.h"
 #endif
 #endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../../network/romm/romm.h"
+#endif
 
 #ifdef __WINRT__
 #include "../../uwp/uwp_func.h"
@@ -3223,6 +3226,17 @@ static int action_ok_playlist_entry_collection(const char *path,
       }
       return 1;
    }
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* A RomM game is fetched into memory first. */
+   if (string_starts_with(content_path, "romm://"))
+   {
+      if (playlist_initialized && tmp_playlist)
+         playlist_free(tmp_playlist);
+      return romm_launch_from_menu(core_path, content_path,
+            *content_label ? content_label : NULL);
+   }
+#endif
 
    /* Ensure entry path is valid */
    if (!playlist_entry_path_is_valid(content_path))

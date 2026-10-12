@@ -1896,6 +1896,7 @@ ROMM
 #include "../network/romm/romm_json.c"
 #include "../network/romm/romm_client.c"
 #include "../network/romm/romm_library.c"
+#include "../network/romm/romm_launch.c"
 #include "../network/romm/romm.c"
 #endif
 

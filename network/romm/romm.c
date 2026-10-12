@@ -23,6 +23,7 @@
 
 #include "romm.h"
 #include "romm_client.h"
+#include "romm_launch.h"
 #include "romm_library.h"
 #include "romm_platform.h"
 #include "../../command.h"
@@ -31,6 +32,7 @@
 #include "../../msg_hash.h"
 #include "../../playlist.h"
 #include "../../runloop.h"
+#include "../../tasks/task_content.h"
 #include "../../version.h"
 #ifdef HAVE_MENU
 #include "../../menu/menu_driver.h"
@@ -388,4 +390,100 @@ void romm_refresh_library(void)
 
    if (!romm_start_library_sync(false))
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+}
+
+/* The entry being fetched, loaded once it's in memory */
+static bool romm_launching = false;
+static char romm_launch_core[PATH_MAX_LENGTH];
+static char romm_launch_content[PATH_MAX_LENGTH];
+static char romm_launch_label[NAME_MAX_LENGTH];
+
+static int romm_load_content(const char *core_path,
+      const char *content_path, const char *label)
+{
+   content_ctx_info_t content_info;
+
+   content_info.argc        = 0;
+   content_info.argv        = NULL;
+   content_info.args        = NULL;
+   content_info.environ_get = NULL;
+   return task_push_load_content_from_playlist_from_menu(core_path,
+         content_path, *label ? label : NULL, &content_info, NULL, NULL)
+      ? 0 : -1;
+}
+
+static void romm_on_launch_prepared(void *user_data,
+      enum romm_status status, int http_status)
+{
+   enum msg_hash_enums msg = MSG_UNKNOWN;
+
+   romm_launching = false;
+   switch (status)
+   {
+      case ROMM_OK:
+         romm_load_content(romm_launch_core, romm_launch_content,
+               romm_launch_label);
+         return;
+      case ROMM_ERR_CANCELLED:
+         return;
+      case ROMM_ERR_HTTP:
+         if (http_status == 404 || http_status == 403)
+            msg = MSG_ROMM_GAME_GONE;
+         break;
+      case ROMM_ERR_UNSUPPORTED:
+         msg = string_is_equal_noncase(
+               path_get_extension(romm_launch_content), "rar")
+            ? MSG_ROMM_RAR_UNSUPPORTED : MSG_ROMM_CANT_LAUNCH;
+         break;
+      case ROMM_ERR_CHECKSUM:
+         msg = MSG_ROMM_DOWNLOAD_BAD;
+         break;
+      case ROMM_ERR_MEMORY:
+         msg = MSG_ROMM_NO_MEMORY;
+         break;
+      default:
+         break;
+   }
+   if (msg != MSG_UNKNOWN)
+      romm_notify(msg_hash_to_str(msg), MESSAGE_QUEUE_CATEGORY_ERROR);
+   else
+      romm_notify_failure(status, http_status);
+}
+
+int romm_launch_from_menu(const char *core_path, const char *content_path,
+      const char *label)
+{
+   settings_t *settings = config_get_ptr();
+   char title[NAME_MAX_LENGTH];
+
+   if (romm_launch_is_ready(content_path))
+      return romm_load_content(core_path, content_path, label ? label : "");
+   if (romm_launching)
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_LAUNCH_IN_PROGRESS),
+            MESSAGE_QUEUE_CATEGORY_INFO);
+      return 0;
+   }
+   if (string_is_empty(settings->arrays.romm_token))
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_NOT_PAIRED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return -1;
+   }
+
+   strlcpy(romm_launch_core, core_path, sizeof(romm_launch_core));
+   strlcpy(romm_launch_content, content_path, sizeof(romm_launch_content));
+   strlcpy(romm_launch_label, label ? label : "", sizeof(romm_launch_label));
+   snprintf(title, sizeof(title), msg_hash_to_str(MSG_ROMM_DOWNLOADING),
+         *romm_launch_label ? romm_launch_label
+         : path_basename(content_path));
+   if (!romm_launch_prepare(settings->arrays.romm_server_url,
+         settings->arrays.romm_token, content_path, title,
+         romm_on_launch_prepared, NULL))
+   {
+      romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+      return -1;
+   }
+   romm_launching = true;
+   return 0;
 }

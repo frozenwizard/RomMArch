@@ -39,7 +39,13 @@ enum romm_status
    ROMM_ERR_EXPIRED,
    ROMM_ERR_CANCELLED,
    /* A file couldn't be written, such as a playlist. */
-   ROMM_ERR_WRITE
+   ROMM_ERR_WRITE,
+   /* Launch: nothing in the game can be loaded, such as a RAR. */
+   ROMM_ERR_UNSUPPORTED,
+   /* Launch: a download doesn't match RomM's size or CRC32. */
+   ROMM_ERR_CHECKSUM,
+   /* Launch: no memory to hold the game. */
+   ROMM_ERR_MEMORY
 };
 
 /* A pairing RomM has started: the user approves it at @approve_url
