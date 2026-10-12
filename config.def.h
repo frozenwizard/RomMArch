@@ -1807,6 +1807,8 @@
 
 #define DEFAULT_PLAYLIST_USE_FILENAME false
 
+#define DEFAULT_ROMM_REFRESH_ON_START true
+
 #ifdef HAVE_ROMM
 /* Most of RomM's covers are JPEG. */
 #define DEFAULT_PLAYLIST_ALLOW_NON_PNG true

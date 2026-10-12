@@ -32,6 +32,10 @@ void romm_pair(void);
  * playlist folder, reporting the outcome as a notification. */
 void romm_refresh_library(void);
 
+/* The same at startup, when paired and the user wants it: only a
+ * failure the user has to act on is reported. */
+void romm_refresh_library_at_start(void);
+
 RETRO_END_DECLS
 
 #endif

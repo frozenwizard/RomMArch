@@ -3012,6 +3012,10 @@ static struct config_bool_setting *populate_settings_bool(
    SETTING_BOOL("gcdwebserver_alert",            &settings->bools.gcdwebserver_alert, true, true, false);
 #endif
 
+#ifdef HAVE_ROMM
+   SETTING_BOOL("romm_refresh_on_start",         &settings->bools.romm_refresh_on_start, true, DEFAULT_ROMM_REFRESH_ON_START, false);
+#endif
+
 
    *size = count;
 

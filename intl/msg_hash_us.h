@@ -2499,10 +2499,14 @@ MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 #define S_ACTION_EX(T, n, sd, ok, rp, c, us, sub) \
 MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us) \
 MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
+#define S_BOOL(f, T, n, d, sd, df, c, us, sub) \
+MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us) \
+MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 #include "../settings/settings_def_romm.h"
 #undef S_STRING
 #undef S_ACTION
 #undef S_ACTION_EX
+#undef S_BOOL
 #undef SETTINGS_DEF_STRINGS_PASS
 /* GENERATED REGION: S3 credentials group (see settings_def_cloud_sync_s3.h). */
 #define SETTINGS_DEF_STRINGS_PASS

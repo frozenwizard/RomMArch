@@ -33,4 +33,9 @@ S_ACTION_EX(ROMM_REFRESH_LIBRARY,
       "romm_refresh_library", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_LIBRARY,
       "Refresh Library",
       "Update the game lists from RomM, adding and removing platforms and games to match it.")
+S_BOOL(romm_refresh_on_start, ROMM_REFRESH_ON_START,
+      "romm_refresh_on_start",
+      DEFAULT_ROMM_REFRESH_ON_START, SD_FLAG_NONE, 0, 0,
+      "Refresh Library at Start",
+      "Bring the game lists up to date with RomM each time Rommarch starts. Only what changed is fetched.")
 #endif

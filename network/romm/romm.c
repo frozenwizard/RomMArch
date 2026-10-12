@@ -39,6 +39,8 @@
 /* Set from the moment pairing starts until its wait ends. */
 static bool romm_pairing = false;
 static bool romm_syncing = false;
+/* The running sync was started at startup rather than by the user. */
+static bool romm_syncing_quietly = false;
 
 static void romm_notify(const char *msg,
       enum message_queue_category category)
@@ -298,6 +300,7 @@ static bool romm_find_core(const char *const *cores, char *path,
 static void romm_on_library_synced(void *user_data, enum romm_status status,
       int http_status, const romm_library_t *lib)
 {
+   bool quiet   = romm_syncing_quietly;
    size_t games = 0;
    size_t clashes;
    size_t i;
@@ -310,9 +313,13 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
       return;
    if (status != ROMM_OK)
    {
-      romm_notify_failure(status, http_status);
+      if (     !quiet
+            || status == ROMM_ERR_UNAUTHORIZED || status == ROMM_ERR_WRITE)
+         romm_notify_failure(status, http_status);
       return;
    }
+   if (quiet)
+      return;
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
       games += RBUF_LEN(lib->platforms[i].roms);
    snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNCED),
@@ -327,10 +334,38 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    }
 }
 
-void romm_refresh_library(void)
+static bool romm_start_library_sync(bool quiet)
 {
    settings_t *settings = config_get_ptr();
    romm_library_sync_params_t params;
+
+   params.server         = settings->arrays.romm_server_url;
+   params.token          = settings->arrays.romm_token;
+   params.playlist_dir   = settings->paths.directory_playlist;
+   params.thumbnails_dir = settings->paths.directory_thumbnails;
+   params.title          = msg_hash_to_str(MSG_ROMM_SYNCING);
+   params.covers_title   = msg_hash_to_str(MSG_ROMM_FETCHING_COVERS);
+   params.find_core      = romm_find_core;
+   if (!romm_library_sync(&params, romm_on_library_synced, NULL))
+      return false;
+   romm_syncing         = true;
+   romm_syncing_quietly = quiet;
+   return true;
+}
+
+void romm_refresh_library_at_start(void)
+{
+   settings_t *settings = config_get_ptr();
+
+   if (     !romm_syncing
+         && !string_is_empty(settings->arrays.romm_server_url)
+         && !string_is_empty(settings->arrays.romm_token))
+      romm_start_library_sync(true);
+}
+
+void romm_refresh_library(void)
+{
+   settings_t *settings = config_get_ptr();
 
    if (romm_syncing)
    {
@@ -351,17 +386,6 @@ void romm_refresh_library(void)
       return;
    }
 
-   params.server         = settings->arrays.romm_server_url;
-   params.token          = settings->arrays.romm_token;
-   params.playlist_dir   = settings->paths.directory_playlist;
-   params.thumbnails_dir = settings->paths.directory_thumbnails;
-   params.title          = msg_hash_to_str(MSG_ROMM_SYNCING);
-   params.covers_title   = msg_hash_to_str(MSG_ROMM_FETCHING_COVERS);
-   params.find_core      = romm_find_core;
-   if (!romm_library_sync(&params, romm_on_library_synced, NULL))
-   {
+   if (!romm_start_library_sync(false))
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
-      return;
-   }
-   romm_syncing = true;
 }

@@ -1156,6 +1156,9 @@ typedef struct settings
       bool playlist_portable_paths;
       bool playlist_use_filename;
       bool playlist_allow_non_png;
+#ifdef HAVE_ROMM
+      bool romm_refresh_on_start;
+#endif
 
       bool confirm_quit;
       bool confirm_close;
