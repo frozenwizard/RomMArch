@@ -33689,6 +33689,10 @@ MSG_HASH(
    "Couldn't save the RomM library in the playlist folder."
    )
 MSG_HASH(
+   MSG_ROMM_FETCHING_COVERS,
+   "Fetching RomM covers"
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

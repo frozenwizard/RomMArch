@@ -49,6 +49,16 @@ void RARCH_ERR(const char *fmt, ...)
 }
 
 stub_request_t stub_req;
+stub_logged_t stub_log[STUB_LOG_MAX];
+unsigned stub_log_count;
+
+static void stub_log_request(void)
+{
+   stub_logged_t *l = &stub_log[stub_log_count++ % STUB_LOG_MAX];
+   l->cb        = stub_req.cb;
+   l->user_data = stub_req.user_data;
+   strlcpy(l->url, stub_req.url, sizeof(l->url));
+}
 retro_time_t stub_now;
 retro_task_t *stub_task;
 bool stub_refuse_task;
@@ -108,6 +118,7 @@ void *task_push_http_transfer_with_headers(const char *url, bool mute,
          sizeof(stub_req.headers));
    stub_req.cb        = cb;
    stub_req.user_data = user_data;
+   stub_log_request();
    /* Any non-NULL handle: callers only test it for NULL. */
    return &stub_req;
 }
@@ -135,5 +146,6 @@ void *task_push_http_transfer_with_content(const char *url,
    }
    stub_req.cb        = cb;
    stub_req.user_data = user_data;
+   stub_log_request();
    return &stub_req;
 }

@@ -23,6 +23,7 @@
 #include <file/file_path.h>
 #include <formats/rjson.h>
 #include <queues/task_queue.h>
+#include <retro_miscellaneous.h>
 #include <streams/file_stream.h>
 #include <string/stdstring.h>
 
@@ -34,7 +35,28 @@
 
 #define ROMM_LIBRARY_VERSION 1
 #define ROMM_LIBRARY_PAGE 250
+#define ROMM_LIBRARY_COVERS_AT_ONCE 4
 #define ROMM_LIB_PFX "[RomM] "
+
+/* A cover to fetch: its path on the server and where it goes. */
+typedef struct
+{
+   char *url_path;
+   char *dest;
+} romm_lib_cover_t;
+
+typedef struct
+{
+   retro_task_t *task;
+   romm_lib_cover_t *jobs;
+   size_t next;
+   size_t done;
+   size_t failed;
+   unsigned in_flight;
+   retro_time_t started;
+   char *token;
+   char server[NAME_MAX_LENGTH];
+} romm_lib_covers_t;
 
 enum romm_lib_sync_state
 {
@@ -64,9 +86,13 @@ typedef struct
    int http_status;
    bool pending;
    bool finished;
+   /* Covers the sync found missing or changed, for the covers task */
+   romm_lib_cover_t *covers;
    char *token;
+   char *covers_title;
    char server[NAME_MAX_LENGTH];
    char playlist_dir[PATH_MAX_LENGTH];
+   char thumbnails_dir[PATH_MAX_LENGTH];
    char manifest[PATH_MAX_LENGTH];
 } romm_lib_sync_t;
 
@@ -89,6 +115,30 @@ size_t romm_library_content_path(char *s, size_t len,
       return 0;
    }
    return (size_t)_len;
+}
+
+size_t romm_library_cover_path(char *s, size_t len,
+      const char *thumbnails_dir, const char *playlist,
+      const romm_rom_t *rom)
+{
+   char content_path[PATH_MAX_LENGTH];
+   char system[NAME_MAX_LENGTH];
+   char name[NAME_MAX_LENGTH];
+   char dir[PATH_MAX_LENGTH];
+   char *c;
+
+   if (!romm_library_content_path(content_path, sizeof(content_path), rom))
+      return 0;
+   /* As gfx_thumbnail_set_content_playlist() and
+    * gfx_thumbnail_fill_content_img() name it. */
+   fill_pathname(name, path_basename(content_path), "", sizeof(name));
+   for (c = name; (c = strpbrk(c, "&*/:`\"<>?\\|")); c++)
+      *c = '_';
+   strlcat(name, ".png", sizeof(name));
+   fill_pathname(system, playlist, "", sizeof(system));
+   fill_pathname_join(dir, thumbnails_dir, system, sizeof(dir));
+   fill_pathname_join(dir, dir, "Named_Boxarts", sizeof(dir));
+   return fill_pathname_join(s, dir, name, len);
 }
 
 size_t romm_library_playlist_name(char *s, size_t len,
@@ -542,6 +592,310 @@ static void romm_lib_sync_save_partial(romm_lib_sync_t *sync)
    romm_library_save(&sync->lib, sync->manifest);
 }
 
+static void romm_lib_covers_free(romm_lib_cover_t *jobs)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(jobs); i++)
+   {
+      free(jobs[i].url_path);
+      free(jobs[i].dest);
+   }
+   RBUF_FREE(jobs);
+}
+
+/* RetroArch picks an image decoder by extension, and RomM serves JPEG
+ * covers under .png names. */
+static const char *romm_lib_cover_ext(const void *data, size_t len)
+{
+   const unsigned char *b = (const unsigned char*)data;
+   if (len >= 8 && !memcmp(b, "\x89PNG\r\n\x1a\n", 8))
+      return ".png";
+   if (len >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF)
+      return ".jpg";
+   return NULL;
+}
+
+static const char *const romm_lib_cover_exts[] = { ".png", ".jpg" };
+
+/* Is @dest, as .png or .jpg, on disk? */
+static bool romm_lib_cover_exists(const char *dest)
+{
+   char path[PATH_MAX_LENGTH];
+   size_t i;
+   for (i = 0; i < ARRAY_SIZE(romm_lib_cover_exts); i++)
+   {
+      fill_pathname(path, dest, romm_lib_cover_exts[i], sizeof(path));
+      if (path_is_valid(path))
+         return true;
+   }
+   return false;
+}
+
+/* Deletes @dest as .png and .jpg, except as @keep_ext. */
+static void romm_lib_cover_delete(const char *dest, const char *keep_ext)
+{
+   char path[PATH_MAX_LENGTH];
+   size_t i;
+   for (i = 0; i < ARRAY_SIZE(romm_lib_cover_exts); i++)
+   {
+      if (keep_ext && string_is_equal(keep_ext, romm_lib_cover_exts[i]))
+         continue;
+      fill_pathname(path, dest, romm_lib_cover_exts[i], sizeof(path));
+      if (path_is_valid(path))
+         filestream_delete(path);
+   }
+}
+
+static int romm_lib_cmp_str(const void *a, const void *b)
+{
+   return strcmp(*(char* const*)a, *(char* const*)b);
+}
+
+static int romm_lib_cmp_rom_id(const void *a, const void *b)
+{
+   unsigned x = (*(const romm_rom_t* const*)a)->id;
+   unsigned y = (*(const romm_rom_t* const*)b)->id;
+   return x < y ? -1 : x > y;
+}
+
+/* Lists the covers to fetch: those not on disk, and those RomM changed
+ * since the last sync. Deletes the covers of games no longer listed,
+ * or listed under another name. */
+static void romm_lib_sync_plan_covers(romm_lib_sync_t *sync)
+{
+   const romm_rom_t **old_roms = NULL;
+   char **dests                = NULL;
+   char dest[PATH_MAX_LENGTH];
+   size_t i, j;
+
+   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+      for (j = 0; j < RBUF_LEN(sync->old.platforms[i].roms); j++)
+         RBUF_PUSH(old_roms, &sync->old.platforms[i].roms[j]);
+   if (old_roms)
+      qsort(old_roms, RBUF_LEN(old_roms), sizeof(*old_roms),
+            romm_lib_cmp_rom_id);
+
+   for (i = 0; i < RBUF_LEN(sync->lib.platforms); i++)
+   {
+      const romm_library_platform_t *p = &sync->lib.platforms[i];
+      for (j = 0; j < RBUF_LEN(p->roms); j++)
+      {
+         const romm_rom_t *rom = &p->roms[j];
+         const romm_rom_t **old;
+         romm_lib_cover_t job;
+         char *query;
+         char *dest_copy;
+
+         if (     !*rom->cover
+               || !romm_library_cover_path(dest, sizeof(dest),
+                     sync->thumbnails_dir, p->playlist, rom)
+               || !(dest_copy = strdup(dest)))
+            continue;
+         RBUF_PUSH(dests, dest_copy);
+
+         old = old_roms ? (const romm_rom_t**)bsearch(&rom, old_roms,
+               RBUF_LEN(old_roms), sizeof(*old_roms), romm_lib_cmp_rom_id)
+               : NULL;
+         if (     romm_lib_cover_exists(dest)
+               && old && string_is_equal((*old)->cover, rom->cover))
+            continue;
+
+         /* Only a cache buster, with a space in it. */
+         job.url_path = strdup(rom->cover);
+         job.dest     = strdup(dest);
+         if (!job.url_path || !job.dest)
+         {
+            free(job.url_path);
+            free(job.dest);
+            continue;
+         }
+         if ((query = strchr(job.url_path, '?')))
+            *query = '\0';
+         RBUF_PUSH(sync->covers, job);
+      }
+   }
+
+   if (dests)
+      qsort(dests, RBUF_LEN(dests), sizeof(*dests), romm_lib_cmp_str);
+   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+   {
+      const romm_library_platform_t *p = &sync->old.platforms[i];
+      for (j = 0; j < RBUF_LEN(p->roms); j++)
+      {
+         char *key = dest;
+         if (     !*p->roms[j].cover
+               || !romm_library_cover_path(dest, sizeof(dest),
+                     sync->thumbnails_dir, p->playlist, &p->roms[j]))
+            continue;
+         if (!dests || !bsearch(&key, dests, RBUF_LEN(dests),
+               sizeof(*dests), romm_lib_cmp_str))
+            romm_lib_cover_delete(dest, NULL);
+      }
+   }
+
+   for (i = 0; i < RBUF_LEN(dests); i++)
+      free(dests[i]);
+   RBUF_FREE(dests);
+   RBUF_FREE(old_roms);
+}
+
+/* One download in flight. */
+typedef struct
+{
+   romm_lib_covers_t *covers;
+   size_t job;
+} romm_lib_cover_req_t;
+
+static void romm_lib_covers_download_cb(void *user_data,
+      enum romm_status status, int http_status,
+      const void *data, size_t len)
+{
+   romm_lib_cover_req_t *req = (romm_lib_cover_req_t*)user_data;
+   romm_lib_covers_t *covers = req->covers;
+   const char *dest          = covers->jobs[req->job].dest;
+   const char *ext           = status == ROMM_OK
+         ? romm_lib_cover_ext(data, len) : NULL;
+   char path[PATH_MAX_LENGTH];
+   char dir[PATH_MAX_LENGTH];
+   bool ok                   = false;
+
+   if (ext)
+   {
+      fill_pathname(path, dest, ext, sizeof(path));
+      fill_pathname_basedir(dir, path, sizeof(dir));
+      if (     path_mkdir(dir)
+            && filestream_write_file_atomic(path, data, (int64_t)len))
+      {
+         /* RomM may have changed the cover's format. */
+         romm_lib_cover_delete(dest, ext);
+         ok = true;
+      }
+   }
+   if (!ok)
+   {
+      RARCH_WARN(ROMM_LIB_PFX "No cover for %s (status %d, HTTP %d).\n",
+            dest, status, http_status);
+      covers->failed++;
+   }
+   covers->in_flight--;
+   covers->done++;
+   covers->task->when = 0;
+   free(req);
+}
+
+/* Runs on the main thread, like the download callbacks. */
+static void romm_lib_covers_handler(retro_task_t *task)
+{
+   romm_lib_covers_t *covers = (romm_lib_covers_t*)task->state;
+   size_t count              = RBUF_LEN(covers->jobs);
+   bool cancelled            = (task_get_flags(task)
+         & RETRO_TASK_FLG_CANCELLED) != 0;
+
+   while (     !cancelled
+         && covers->in_flight < ROMM_LIBRARY_COVERS_AT_ONCE
+         && covers->next < count)
+   {
+      romm_lib_cover_req_t *req = (romm_lib_cover_req_t*)
+            malloc(sizeof(*req));
+      if (req)
+      {
+         req->covers = covers;
+         req->job    = covers->next;
+      }
+      covers->next++;
+      if (req && romm_client_download(covers->server, covers->token,
+            covers->jobs[req->job].url_path,
+            romm_lib_covers_download_cb, req))
+         covers->in_flight++;
+      else
+      {
+         free(req);
+         covers->failed++;
+         covers->done++;
+      }
+   }
+
+   task_set_progress(task, (int8_t)(count ? covers->done * 100 / count : 100));
+   /* Downloads still out hold @covers; finish once they answer. */
+   if (!covers->in_flight && (cancelled || covers->done >= count))
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+   else
+      task->when = cpu_features_get_time_usec() + 250000;
+}
+
+static void romm_lib_covers_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_lib_covers_t *covers = (romm_lib_covers_t*)user_data;
+   RARCH_LOG(ROMM_LIB_PFX "Fetched %u of %u covers in %u ms.\n",
+         (unsigned)(covers->done - covers->failed),
+         (unsigned)RBUF_LEN(covers->jobs),
+         (unsigned)((cpu_features_get_time_usec() - covers->started)
+            / 1000));
+}
+
+static void romm_lib_covers_cleanup(retro_task_t *task)
+{
+   romm_lib_covers_t *covers = (romm_lib_covers_t*)task->state;
+
+   if (covers)
+   {
+      romm_lib_covers_free(covers->jobs);
+      if (covers->token)
+      {
+         memset(covers->token, 0, strlen(covers->token));
+         free(covers->token);
+      }
+      free(covers);
+   }
+   task->state = NULL;
+}
+
+/* Starts fetching @jobs, which the task then owns. */
+static bool romm_lib_fetch_covers(const char *server, const char *token,
+      romm_lib_cover_t *jobs, const char *title)
+{
+   romm_lib_covers_t *covers;
+   retro_task_t *task;
+
+   if (!(covers = (romm_lib_covers_t*)calloc(1, sizeof(*covers))))
+      return false;
+   if (!(covers->token = strdup(token)) || !(task = task_init()))
+   {
+      free(covers->token);
+      free(covers);
+      return false;
+   }
+   covers->task    = task;
+   covers->jobs    = jobs;
+   covers->started = cpu_features_get_time_usec();
+   strlcpy(covers->server, server, sizeof(covers->server));
+
+   task->handler   = romm_lib_covers_handler;
+   task->callback  = romm_lib_covers_cb;
+   task->cleanup   = romm_lib_covers_cleanup;
+   task->state     = covers;
+   task->user_data = covers;
+   task->flags    |= RETRO_TASK_FLG_MAIN_THREAD;
+   if (title)
+   {
+      task->title    = strdup(title);
+      task->progress = 0;
+   }
+   else
+      task->flags   |= RETRO_TASK_FLG_MUTE;
+
+   if (!task_queue_push(task))
+   {
+      free(task->title);
+      free(task);
+      free(covers->token);
+      free(covers);
+      return false;
+   }
+   RARCH_LOG(ROMM_LIB_PFX "Covers to fetch: %u.\n", (unsigned)RBUF_LEN(jobs));
+   return true;
+}
 static void romm_lib_sync_finish(romm_lib_sync_t *sync,
       enum romm_status status)
 {
@@ -679,6 +1033,8 @@ static void romm_lib_sync_handler(retro_task_t *task)
          break;
       case ROMM_LIB_SYNC_SAVE:
          romm_lib_sync_remove_stale(sync);
+         if (*sync->thumbnails_dir)
+            romm_lib_sync_plan_covers(sync);
          strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
          sync->lib.synced_at = (int64_t)time(NULL);
          romm_lib_sync_finish(sync,
@@ -697,6 +1053,10 @@ static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
 
    if (sync->status != ROMM_OK)
       romm_lib_sync_save_partial(sync);
+   else if (RBUF_LEN(sync->covers)
+         && romm_lib_fetch_covers(sync->server, sync->token, sync->covers,
+               sync->covers_title))
+      sync->covers = NULL;
    for (i = 0; i < RBUF_LEN(sync->lib.platforms); i++)
       games += RBUF_LEN(sync->lib.platforms[i].roms);
    if (sync->status == ROMM_OK)
@@ -721,8 +1081,10 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
    {
       romm_library_free(&sync->old);
       romm_library_free(&sync->lib);
+      romm_lib_covers_free(sync->covers);
       RBUF_FREE(sync->remote);
       RBUF_FREE(sync->roms);
+      free(sync->covers_title);
       if (sync->token)
       {
          memset(sync->token, 0, strlen(sync->token));
@@ -734,7 +1096,8 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
 }
 
 bool romm_library_sync(const char *server, const char *token,
-      const char *playlist_dir, const char *title,
+      const char *playlist_dir, const char *thumbnails_dir,
+      const char *title, const char *covers_title,
       romm_library_sync_cb_t cb, void *user_data)
 {
    romm_lib_sync_t *sync;
@@ -758,6 +1121,11 @@ bool romm_library_sync(const char *server, const char *token,
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));
+   if (thumbnails_dir)
+      strlcpy(sync->thumbnails_dir, thumbnails_dir,
+            sizeof(sync->thumbnails_dir));
+   if (covers_title)
+      sync->covers_title = strdup(covers_title);
    romm_library_manifest_path(sync->manifest, sizeof(sync->manifest),
          playlist_dir);
 
@@ -779,6 +1147,7 @@ bool romm_library_sync(const char *server, const char *token,
    {
       free(task->title);
       free(task);
+      free(sync->covers_title);
       free(sync->token);
       free(sync);
       return false;

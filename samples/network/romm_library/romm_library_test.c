@@ -5,7 +5,9 @@
  * request stubs: the requests made, paging, the playlists and manifest
  * written, and how a failed request or a cancel ends it; playlists of
  * platforms gone from RomM removed, others' left alone, and the
- * manifest after a sync that stopped part way.
+ * manifest after a sync that stopped part way. Covers: where they go,
+ * which a sync fetches (new or changed in RomM, not already on disk),
+ * and which it deletes.
  *
  * Includes the library's translation unit so its statics are tested
  * as shipped. Files are written to the current directory and removed.
@@ -359,11 +361,12 @@ static bool sync_step(void)
    task->handler(task);
    if (!(task->flags & RETRO_TASK_FLG_FINISHED))
       return false;
+   /* The callback may push the covers task in its place. */
+   stub_task = NULL;
    task->callback(task, NULL, task->user_data, NULL);
    task->cleanup(task);
    free(task->title);
    free(task);
-   stub_task = NULL;
    return true;
 }
 
@@ -392,8 +395,9 @@ static bool sync_run_out(void)
 {
    unsigned before = stub_req.count;
    unsigned steps  = 0;
-   while (stub_task && steps++ < 20)
-      if (sync_step())
+   retro_task_t *task;
+   while ((task = stub_task) && steps++ < 20)
+      if (sync_step() || stub_task != task)
          return stub_req.count == before;
    return false;
 }
@@ -461,7 +465,7 @@ static void test_sync(void)
    stub_reset();
    stub_task = NULL;
    CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
-         "Syncing", on_sync, &r) && stub_task, "sync not started");
+         NULL, "Syncing", NULL, on_sync, &r) && stub_task, "sync not started");
    CHECK(stub_task && (stub_task->flags & RETRO_TASK_FLG_MAIN_THREAD)
          && !strcmp(stub_task->title, "Syncing"), "task flags or title");
 
@@ -535,7 +539,7 @@ static void test_sync(void)
    /* No response part way: reported, the manifest left as it was. */
    memset(&r, 0, sizeof(r));
    CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
-         NULL, on_sync, &r), "second sync not started");
+         NULL, NULL, NULL, on_sync, &r), "second sync not started");
    CHECK(stub_task && (stub_task->flags & RETRO_TASK_FLG_MUTE),
          "untitled sync not muted");
    sync_answer(200, sync_platforms_reply);
@@ -550,7 +554,7 @@ static void test_sync(void)
     * stops without another. */
    memset(&r, 0, sizeof(r));
    CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
-         NULL, on_sync, &r), "third sync not started");
+         NULL, NULL, NULL, on_sync, &r), "third sync not started");
    sync_step();
    CHECK(stub_req.count == 9, "%u requests", stub_req.count);
    stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
@@ -571,17 +575,21 @@ static void test_sync(void)
    memset(&r, 0, sizeof(r));
    stub_req.refuse = true;
    CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
-         NULL, on_sync, &r), "fourth sync not started");
+         NULL, NULL, NULL, on_sync, &r), "fourth sync not started");
    CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE,
          "refused: calls %u status %d", r.calls, r.status);
    stub_req.refuse = false;
 
-   CHECK(!romm_library_sync("http://h", "", TEST_DIR, NULL, on_sync, &r)
-         && !romm_library_sync("", "t", TEST_DIR, NULL, on_sync, &r)
-         && !romm_library_sync("http://h", "t", "", NULL, on_sync, &r),
+   CHECK(!romm_library_sync("http://h", "", TEST_DIR, NULL, NULL, NULL,
+            on_sync, &r)
+         && !romm_library_sync("", "t", TEST_DIR, NULL, NULL, NULL,
+            on_sync, &r)
+         && !romm_library_sync("http://h", "t", "", NULL, NULL, NULL,
+            on_sync, &r),
          "sync started without a server, token or folder");
    stub_refuse_task = true;
-   CHECK(!romm_library_sync("http://h", "t", TEST_DIR, NULL, on_sync, &r),
+   CHECK(!romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r),
          "sync reported started when its task wasn't");
    stub_refuse_task = false;
 
@@ -622,7 +630,7 @@ static void test_sync_reconcile(void)
 
    memset(&r, 0, sizeof(r));
    CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR, NULL,
-         on_sync, &r), "sync not started");
+         NULL, NULL, on_sync, &r), "sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 2,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
          " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
@@ -650,7 +658,7 @@ static void test_sync_reconcile(void)
     * it, and the sync time doesn't move, so a refresh is still due. */
    memset(&r, 0, sizeof(r));
    CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR, NULL,
-         on_sync, &r), "second sync not started");
+         NULL, NULL, on_sync, &r), "second sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
          " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
@@ -688,6 +696,205 @@ static void test_sync_reconcile(void)
    filestream_delete(TEST_DIR);
 }
 
+static void test_cover_path(void)
+{
+   char s[512];
+   romm_rom_t r = rom(3335, true, "Tom & Jerry: \"Fun\" (USA).zip",
+         "Tom and Jerry", "");
+
+   CHECK(romm_library_cover_path(s, sizeof(s), "/thumbs",
+         "Sega - Mega-CD - Sega CD.lpl", &r)
+         && !strcmp(s, "/thumbs/Sega - Mega-CD - Sega CD/Named_Boxarts/"
+            "Tom _ Jerry_ _Fun_ (USA).png"), "scrubbed: %s", s);
+   r = rom(4920, false, "Christmas Nights Into Dreams... (EUR)", "", "");
+   CHECK(romm_library_cover_path(s, sizeof(s), "/thumbs", "RomM - X 2.0.lpl",
+         &r) && !strcmp(s, "/thumbs/RomM - X 2.0/Named_Boxarts/"
+            "Christmas Nights Into Dreams... (EUR).png"), "folder: %s", s);
+}
+
+/* A page of games on platform 15 with the covers given; NULL for none. */
+static char *covers_page(const char *cover1, const char *cover2,
+      const char *cover3)
+{
+   const char *covers[3];
+   char *s    = (char*)malloc(4096);
+   size_t len = strlcpy(s, "{\"items\": [", 4096);
+   unsigned i;
+
+   covers[0] = cover1;
+   covers[1] = cover2;
+   covers[2] = cover3;
+   for (i = 0; i < 3; i++)
+   {
+      if (!covers[i] && i == 2)
+         break;
+      len += snprintf(s + len, 4096 - len, "%s{\"id\": %u,"
+            " \"platform_id\": 15, \"fs_name\": \"Game %u & Co (USA).bin\","
+            " \"has_simple_single_file\": true,"
+            " \"path_cover_large\": %s%s%s}",
+            i ? ", " : "", i + 1, i + 1, covers[i] ? "\"" : "",
+            covers[i] ? covers[i] : "null", covers[i] ? "\"" : "");
+   }
+   strlcpy(s + len, "]}", 4096 - len);
+   return s;
+}
+
+#define COVER_DIR TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD/Named_Boxarts/"
+
+/* Syncs one platform with the given page, through to its end. */
+static void covers_sync(sync_result_t *r, const char *page)
+{
+   memset(r, 0, sizeof(*r));
+   CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR,
+         TEST_DIR "/thumbs", NULL, "Covers", on_sync, r), "sync not started");
+   sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"}]");
+   sync_answer(200, page);
+   CHECK(sync_run_out() && r->status == ROMM_OK, "sync: status %d",
+         r->status);
+}
+
+/* Answers download @n (counting from 1) with @status and @body. */
+static void answer_download(unsigned n, int status, const char *body)
+{
+   http_transfer_data_t resp;
+   stub_logged_t *l = &stub_log[(n - 1) % STUB_LOG_MAX];
+
+   memset(&resp, 0, sizeof(resp));
+   resp.status = status;
+   resp.data   = (char*)body;
+   resp.len    = body ? strlen(body) : 0;
+   l->cb(NULL, &resp, l->user_data, NULL);
+}
+
+#define PNG_DATA "\x89PNG\r\n\x1a\n-png"
+#define JPG_DATA "\xff\xd8\xff\xe0-jpg"
+
+static bool file_is(const char *path, const char *data)
+{
+   char *doc   = NULL;
+   int64_t len = 0;
+   bool same   = filestream_read_file(path, (void**)&doc, &len) && doc
+      && len == (int64_t)strlen(data) && !memcmp(doc, data, (size_t)len);
+   free(doc);
+   return same;
+}
+
+static void test_covers(void)
+{
+   sync_result_t r;
+   char manifest[256];
+   char *page;
+   unsigned first;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+
+   /* First sync: both covers fetched, four at a time at most, without
+    * the cache buster; the game without one gets none. RomM's JPEG
+    * covers are saved as .jpg, whatever their name on the server. */
+   page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20",
+         "/assets/romm/resources/roms/15/2/cover/big.png?ts=2026-10-03 00:23:21",
+         NULL);
+   covers_sync(&r, page);
+   free(page);
+   CHECK(stub_task && !strcmp(stub_task->title, "Covers"), "no covers task");
+   if (!stub_task)
+      return;
+   first = stub_log_count + 1;
+   sync_step();
+   CHECK(stub_log_count == first + 1, "%u downloads started",
+         stub_log_count - first + 1);
+   CHECK(!strcmp(stub_log[(first - 1) % STUB_LOG_MAX].url,
+         "http://romm.local:8090/assets/romm/resources/roms/15/1/cover/big.png")
+         && !strcmp(stub_log[first % STUB_LOG_MAX].url,
+         "http://romm.local:8090/assets/romm/resources/roms/15/2/cover/big.png"),
+         "cover URLs %s %s", stub_log[(first - 1) % STUB_LOG_MAX].url,
+         stub_log[first % STUB_LOG_MAX].url);
+   CHECK(!sync_step(), "covers finished with downloads out");
+   answer_download(first + 1, 200, JPG_DATA);
+   answer_download(first, 200, PNG_DATA);
+   CHECK(sync_step() && !stub_task, "covers task didn't finish");
+   CHECK(file_is(COVER_DIR "Game 1 _ Co (USA).png", PNG_DATA),
+         "PNG cover not saved as .png");
+   CHECK(file_is(COVER_DIR "Game 2 _ Co (USA).jpg", JPG_DATA)
+         && !path_is_valid(COVER_DIR "Game 2 _ Co (USA).png"),
+         "JPEG cover not saved as .jpg");
+
+   /* Nothing changed: nothing to fetch, .jpg counting as there. */
+   page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20",
+         "/assets/romm/resources/roms/15/2/cover/big.png?ts=2026-10-03 00:23:21",
+         NULL);
+   covers_sync(&r, page);
+   free(page);
+   CHECK(!stub_task, "covers task with nothing to fetch");
+
+   /* Game 1's cover changed in RomM, now a JPEG, and game 2 is gone:
+    * 1 is fetched again and its PNG removed, 2's cover deleted. */
+   page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
+         NULL, NULL);
+   covers_sync(&r, page);
+   free(page);
+   CHECK(!path_is_valid(COVER_DIR "Game 2 _ Co (USA).jpg"),
+         "cover of a game without one kept");
+   CHECK(stub_task != NULL, "changed cover not fetched");
+   if (stub_task)
+   {
+      first = stub_log_count + 1;
+      sync_step();
+      CHECK(stub_log_count == first, "%u downloads", stub_log_count - first + 1);
+      answer_download(first, 200, JPG_DATA);
+      CHECK(sync_step() && !stub_task, "covers task didn't finish");
+   }
+   CHECK(file_is(COVER_DIR "Game 1 _ Co (USA).jpg", JPG_DATA)
+         && !path_is_valid(COVER_DIR "Game 1 _ Co (USA).png"),
+         "cover that changed format");
+
+   /* Deleted by hand: fetched again. A failed fetch, or one that isn't
+    * an image, saves nothing. */
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).jpg");
+   page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
+         NULL, NULL);
+   covers_sync(&r, page);
+   free(page);
+   CHECK(stub_task != NULL, "missing cover not fetched");
+   if (stub_task)
+   {
+      first = stub_log_count + 1;
+      sync_step();
+      answer_download(first, 200, "<html>Not found</html>");
+      CHECK(sync_step() && !stub_task, "covers task didn't finish");
+   }
+   CHECK(!path_is_valid(COVER_DIR "Game 1 _ Co (USA).png")
+         && !path_is_valid(COVER_DIR "Game 1 _ Co (USA).jpg"),
+         "saved something that isn't an image");
+
+   page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
+         NULL, NULL);
+   covers_sync(&r, page);
+   free(page);
+   if (stub_task)
+   {
+      /* Cancelled with a download out: waits for it, starts no more. */
+      first = stub_log_count + 1;
+      sync_step();
+      stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
+      CHECK(!sync_step(), "cancelled covers finished with a download out");
+      answer_download(first, 404, "{}");
+      CHECK(sync_step() && !stub_task && stub_log_count == first,
+            "cancelled covers task");
+   }
+
+   filestream_delete(COVER_DIR);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -696,6 +903,8 @@ int main(void)
    test_manifest();
    test_sync();
    test_sync_reconcile();
+   test_cover_path();
+   test_covers();
 
    if (failures)
    {

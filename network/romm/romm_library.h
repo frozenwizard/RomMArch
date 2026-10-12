@@ -71,6 +71,15 @@ typedef void (*romm_library_sync_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_library_t *lib);
 
+/* Where RetroArch looks for @rom's box art when it is listed in
+ * @playlist: thumbnails/<playlist name>/Named_Boxarts/<file name>.png,
+ * named after the playlist path's file name as the menu names it. A
+ * JPEG cover is saved as .jpg in its place, which the menu finds when
+ * it allows image types other than PNG. */
+size_t romm_library_cover_path(char *s, size_t len,
+      const char *thumbnails_dir, const char *playlist,
+      const romm_rom_t *rom);
+
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,
       const char *playlist_dir);
@@ -87,9 +96,12 @@ void romm_library_free(romm_library_t *lib);
 /* Brings the playlists in @playlist_dir in line with @server: one per
  * RomM platform with games the token's user can see, and the manifest
  * recording them. Runs as a task showing @title and its progress; @cb
- * runs on the main thread when it ends. */
+ * runs on the main thread when it ends. Then, given @thumbnails_dir,
+ * a second task showing @covers_title fetches the box art that is new
+ * or changed; covers of games gone are deleted. */
 bool romm_library_sync(const char *server, const char *token,
-      const char *playlist_dir, const char *title,
+      const char *playlist_dir, const char *thumbnails_dir,
+      const char *title, const char *covers_title,
       romm_library_sync_cb_t cb, void *user_data);
 
 RETRO_END_DECLS

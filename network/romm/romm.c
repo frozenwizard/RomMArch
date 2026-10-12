@@ -314,7 +314,10 @@ void romm_refresh_library(void)
 
    if (!romm_library_sync(settings->arrays.romm_server_url,
          settings->arrays.romm_token, settings->paths.directory_playlist,
-         msg_hash_to_str(MSG_ROMM_SYNCING), romm_on_library_synced, NULL))
+         settings->paths.directory_thumbnails,
+         msg_hash_to_str(MSG_ROMM_SYNCING),
+         msg_hash_to_str(MSG_ROMM_FETCHING_COVERS),
+         romm_on_library_synced, NULL))
    {
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
       return;

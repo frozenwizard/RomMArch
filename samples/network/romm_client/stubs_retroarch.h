@@ -23,6 +23,19 @@ typedef struct
 
 extern stub_request_t stub_req;
 
+/* Every request since the program started: request n (counting from
+ * 1 across resets) is stub_log[(n - 1) % STUB_LOG_MAX]. */
+#define STUB_LOG_MAX 64
+typedef struct
+{
+   retro_task_callback_t cb;
+   void *user_data;
+   char url[1024];
+} stub_logged_t;
+
+extern stub_logged_t stub_log[STUB_LOG_MAX];
+extern unsigned stub_log_count;
+
 /* The clock cpu_features_get_time_usec() reports, the last task the
  * client pushed, and whether pushing one fails. */
 extern retro_time_t stub_now;
