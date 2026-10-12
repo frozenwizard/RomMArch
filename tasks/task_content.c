@@ -1457,11 +1457,13 @@ static void content_file_apply_overrides(
  *
  * Returns : true if successful, otherwise false.
  **/
-#if defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT)
-/* smb:// or nfs://: a path only the VFS can open. */
+#if defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT) || defined(HAVE_ROMM)
+/* smb://, nfs:// or romm://: a path only the VFS can open. */
 static bool content_path_is_network(const char *path)
 {
-   return path && (string_starts_with(path, "smb://") || string_starts_with(path, "nfs://"));
+   return path && (string_starts_with(path, "smb://")
+         || string_starts_with(path, "nfs://")
+         || string_starts_with(path, "romm://"));
 }
 #endif
 
@@ -1476,7 +1478,7 @@ static bool content_file_load(
    size_t i;
    retro_ctx_load_content_info_t load_info;
    bool used_vfs_fallback_copy                = false;
-#if defined(__WINRT__) || defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT)
+#if defined(__WINRT__) || defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT) || defined(HAVE_ROMM)
    rarch_system_info_t *sys_info              = &runloop_state_get_ptr()->system;
 #endif
    enum rarch_content_type first_content_type = RARCH_CONTENT_NONE;
@@ -1548,7 +1550,7 @@ static bool content_file_load(
                      valid_exts, &content_path, err_string))
                return false;
 #endif
-#if defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT)
+#if defined(HAVE_SMBCLIENT) || defined(HAVE_NFSCLIENT) || defined(HAVE_ROMM)
             /* Network content for a core that reads paths itself: an
              * smb:// or nfs:// path means nothing to its fopen(), so
              * the file is staged into the cache directory and the
