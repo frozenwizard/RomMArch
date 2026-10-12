@@ -36,6 +36,9 @@
 #define ROMM_LIBRARY_VERSION 1
 #define ROMM_LIBRARY_PAGE 250
 #define ROMM_LIBRARY_COVERS_AT_ONCE 4
+/* RomM's timestamps have whole seconds, and a game can be saved with
+ * one a moment older than the newest the last sync saw. */
+#define ROMM_LIBRARY_CURSOR_MARGIN 60
 #define ROMM_LIB_PFX "[RomM] "
 
 /* A cover to fetch: its path on the server and where it goes. */
@@ -61,7 +64,14 @@ typedef struct
 enum romm_lib_sync_state
 {
    ROMM_LIB_SYNC_PLATFORMS = 0,
-   /* Fetching the current platform's games, a page at a time */
+   /* Starting the next platform RomM has games on */
+   ROMM_LIB_SYNC_NEXT,
+   /* For a platform the last sync wrote: its game ids, then the games
+    * changed since, a page at a time, merged with the manifest's */
+   ROMM_LIB_SYNC_IDS,
+   ROMM_LIB_SYNC_CHANGES,
+   ROMM_LIB_SYNC_MERGE,
+   /* All its games, a page at a time */
    ROMM_LIB_SYNC_ROMS,
    ROMM_LIB_SYNC_WRITE,
    ROMM_LIB_SYNC_SAVE
@@ -80,6 +90,14 @@ typedef struct
    romm_rom_t *roms;
    size_t platform;
    unsigned offset;
+   /* That platform in the last sync's manifest, its ids now, and when
+    * its games were last seen changing */
+   const romm_library_platform_t *old_platform;
+   unsigned *ids;
+   char cursor[32];
+   /* Per entry of @lib: was its playlist written by this sync? */
+   bool *written;
+   unsigned rewritten;
    retro_time_t started;
    enum romm_lib_sync_state state;
    enum romm_status status;
@@ -896,6 +914,142 @@ static bool romm_lib_fetch_covers(const char *server, const char *token,
    RARCH_LOG(ROMM_LIB_PFX "Covers to fetch: %u.\n", (unsigned)RBUF_LEN(jobs));
    return true;
 }
+/* Days since 1970-01-01 of a proleptic Gregorian date, and back. */
+static long romm_lib_days_from_civil(int y, int m, int d)
+{
+   long era;
+   long yoe, doy, doe;
+   y  -= m <= 2;
+   era = (y >= 0 ? y : y - 399) / 400;
+   yoe = y - era * 400;
+   doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+   doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+   return era * 146097 + doe - 719468;
+}
+
+static void romm_lib_civil_from_days(long z, int *y, int *m, int *d)
+{
+   long era, doe, yoe, doy, mp;
+   z  += 719468;
+   era = (z >= 0 ? z : z - 146096) / 146097;
+   doe = z - era * 146097;
+   yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+   doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+   mp  = (5 * doy + 2) / 153;
+   *d  = (int)(doy - (153 * mp + 2) / 5 + 1);
+   *m  = (int)(mp < 10 ? mp + 3 : mp - 9);
+   *y  = (int)(yoe + era * 400 + (*m <= 2));
+}
+
+/* RomM's ISO 8601 time @at, less @margin seconds, as UTC for a URL:
+ * "2026-10-03T00:22:20Z". */
+static bool romm_lib_cursor(char *s, size_t len, const char *at,
+      unsigned margin)
+{
+   int y, mo, d, h, mi, sec;
+   long offset = 0;
+   long days;
+   long t;
+   const char *zone;
+
+   if (     sscanf(at, "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi,
+               &sec) != 6
+         || strlen(at) < 19)
+      return false;
+   for (zone = at + 19; *zone == '.' || ISDIGIT((unsigned char)*zone);
+         zone++);
+   if (*zone == '+' || *zone == '-')
+   {
+      int zh, zm;
+      if (sscanf(zone + 1, "%2d:%2d", &zh, &zm) != 2)
+         return false;
+      offset = (*zone == '+' ? 1 : -1) * (zh * 3600L + zm * 60L);
+   }
+
+   days = romm_lib_days_from_civil(y, mo, d);
+   t    = h * 3600L + mi * 60L + sec - offset - (long)margin;
+   days += t / 86400;
+   t    %= 86400;
+   if (t < 0)
+   {
+      t += 86400;
+      days--;
+   }
+   romm_lib_civil_from_days(days, &y, &mo, &d);
+   return (size_t)snprintf(s, len, "%04d-%02d-%02dT%02ld:%02ld:%02ldZ",
+         y, mo, d, t / 3600, t / 60 % 60, t % 60) < len;
+}
+
+/* Builds the platform's list in RomM's order from its ids: the games
+ * that changed, fetched into @sync->roms, and the manifest's for the
+ * rest. False when an id is in neither, such as a game the user can
+ * see again, which needs a full fetch. */
+static bool romm_lib_sync_merge(romm_lib_sync_t *sync)
+{
+   const romm_library_platform_t *old = sync->old_platform;
+   const romm_rom_t **changed         = NULL;
+   const romm_rom_t **known           = NULL;
+   romm_rom_t *merged                 = NULL;
+   bool ok                            = true;
+   size_t i;
+
+   for (i = 0; i < RBUF_LEN(sync->roms); i++)
+      RBUF_PUSH(changed, &sync->roms[i]);
+   for (i = 0; i < RBUF_LEN(old->roms); i++)
+      RBUF_PUSH(known, &old->roms[i]);
+   if (changed)
+      qsort(changed, RBUF_LEN(changed), sizeof(*changed),
+            romm_lib_cmp_rom_id);
+   if (known)
+      qsort(known, RBUF_LEN(known), sizeof(*known), romm_lib_cmp_rom_id);
+
+   for (i = 0; ok && i < RBUF_LEN(sync->ids); i++)
+   {
+      romm_rom_t key;
+      const romm_rom_t *k = &key;
+      const romm_rom_t **found = NULL;
+
+      key.id = sync->ids[i];
+      if (changed)
+         found = (const romm_rom_t**)bsearch(&k, changed,
+               RBUF_LEN(changed), sizeof(*changed), romm_lib_cmp_rom_id);
+      if (!found && known)
+         found = (const romm_rom_t**)bsearch(&k, known,
+               RBUF_LEN(known), sizeof(*known), romm_lib_cmp_rom_id);
+      if (found)
+         RBUF_PUSH(merged, **found);
+      else
+         ok = false;
+   }
+
+   RBUF_FREE(changed);
+   RBUF_FREE(known);
+   if (!ok)
+   {
+      RBUF_FREE(merged);
+      return false;
+   }
+   RBUF_FREE(sync->roms);
+   sync->roms = merged;
+   return true;
+}
+
+/* Would @a and @b make the same playlist entries? */
+static bool romm_lib_same_roms(const romm_rom_t *a, const romm_rom_t *b)
+{
+   size_t i;
+   if (RBUF_LEN(a) != RBUF_LEN(b))
+      return false;
+   for (i = 0; i < RBUF_LEN(a); i++)
+      if (     a[i].id != b[i].id
+            || a[i].single_file != b[i].single_file
+            || !string_is_equal(a[i].crc, b[i].crc)
+            || !string_is_equal(a[i].fs_name, b[i].fs_name)
+            || !string_is_equal(a[i].name, b[i].name))
+         return false;
+   return true;
+}
+
 static void romm_lib_sync_finish(romm_lib_sync_t *sync,
       enum romm_status status)
 {
@@ -921,7 +1075,27 @@ static void romm_lib_sync_platforms_cb(void *user_data,
    }
    for (i = 0; i < count; i++)
       RBUF_PUSH(sync->remote, platforms[i]);
-   sync->state = ROMM_LIB_SYNC_ROMS;
+   sync->state = ROMM_LIB_SYNC_NEXT;
+}
+
+static void romm_lib_sync_ids_cb(void *user_data,
+      enum romm_status status, int http_status,
+      const unsigned *ids, size_t count)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)user_data;
+   size_t i;
+
+   sync->pending    = false;
+   sync->task->when = 0;
+   if (status != ROMM_OK)
+   {
+      sync->http_status = http_status;
+      romm_lib_sync_finish(sync, status);
+      return;
+   }
+   for (i = 0; i < count; i++)
+      RBUF_PUSH(sync->ids, ids[i]);
+   sync->state = ROMM_LIB_SYNC_CHANGES;
 }
 
 static void romm_lib_sync_roms_cb(void *user_data,
@@ -943,15 +1117,22 @@ static void romm_lib_sync_roms_cb(void *user_data,
       RBUF_PUSH(sync->roms, roms[i]);
    if (count == ROMM_LIBRARY_PAGE)
       sync->offset += ROMM_LIBRARY_PAGE;
+   else if (sync->state == ROMM_LIB_SYNC_CHANGES)
+      sync->state = ROMM_LIB_SYNC_MERGE;
    else
       sync->state = ROMM_LIB_SYNC_WRITE;
 }
 
-/* Moves the fetched games into the library and writes their playlist;
- * a platform with none the user can see gets no playlist. */
+/* Moves the fetched games into the library and, unless it would come
+ * out as it is, writes their playlist; a platform with none the user
+ * can see gets no playlist. */
 static bool romm_lib_sync_write(romm_lib_sync_t *sync)
 {
+   const romm_library_platform_t *old = sync->old_platform;
    romm_library_platform_t entry;
+   char path[PATH_MAX_LENGTH];
+   bool write;
+   size_t i;
 
    if (!RBUF_LEN(sync->roms))
       return true;
@@ -963,11 +1144,38 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
       RBUF_FREE(sync->roms);
       return true;
    }
+   fill_pathname_join(path, sync->playlist_dir, entry.playlist,
+         sizeof(path));
+   write = !old
+      || !string_is_equal(old->playlist, entry.playlist)
+      || !romm_lib_same_roms(old->roms, sync->roms)
+      || !path_is_valid(path);
+   /* A playlist shared with a platform written earlier in this sync
+    * was written without this one's games. */
+   for (i = 0; !write && i < RBUF_LEN(sync->lib.platforms); i++)
+      write = sync->written[i] && string_is_equal(
+            sync->lib.platforms[i].playlist, entry.playlist);
+
    entry.roms = sync->roms;
    sync->roms = NULL;
    RBUF_PUSH(sync->lib.platforms, entry);
+   RBUF_PUSH(sync->written, write);
+   if (!write)
+      return true;
+   sync->rewritten++;
    return romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
          entry.playlist);
+}
+
+/* The last sync's entry for platform @id, if it wrote one. */
+static const romm_library_platform_t *romm_lib_find_platform(
+      const romm_library_t *lib, unsigned id)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (lib->platforms[i].platform.id == id)
+         return &lib->platforms[i];
+   return NULL;
 }
 
 /* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the
@@ -976,6 +1184,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
 {
    romm_lib_sync_t *sync = (romm_lib_sync_t*)task->state;
    size_t count          = RBUF_LEN(sync->remote);
+   size_t i;
 
    /* A request still out holds @sync; its callback wakes the task. */
    if (sync->pending)
@@ -1002,7 +1211,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
          else
             romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
          break;
-      case ROMM_LIB_SYNC_ROMS:
+      case ROMM_LIB_SYNC_NEXT:
          while (     sync->platform < count
                && !sync->remote[sync->platform].rom_count)
             sync->platform++;
@@ -1012,9 +1221,47 @@ static void romm_lib_sync_handler(retro_task_t *task)
             break;
          }
          task_set_progress(task, (int8_t)(sync->platform * 100 / count));
+         RBUF_CLEAR(sync->ids);
+         RBUF_FREE(sync->roms);
+         sync->offset       = 0;
+         sync->state        = ROMM_LIB_SYNC_ROMS;
+         sync->old_platform = romm_lib_find_platform(&sync->old,
+               sync->remote[sync->platform].id);
+         if (sync->old_platform)
+         {
+            const romm_library_platform_t *old = sync->old_platform;
+            const char *newest = "";
+            for (i = 0; i < RBUF_LEN(old->roms); i++)
+               if (strcmp(old->roms[i].updated_at, newest) > 0)
+                  newest = old->roms[i].updated_at;
+            if (romm_lib_cursor(sync->cursor, sizeof(sync->cursor),
+                  newest, ROMM_LIBRARY_CURSOR_MARGIN))
+               sync->state = ROMM_LIB_SYNC_IDS;
+         }
+         break;
+      case ROMM_LIB_SYNC_IDS:
+         if (romm_client_rom_ids(sync->server, sync->token,
+               sync->remote[sync->platform].id, romm_lib_sync_ids_cb, sync))
+            sync->pending = true;
+         else
+            romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
+         break;
+      case ROMM_LIB_SYNC_MERGE:
+         if (romm_lib_sync_merge(sync))
+            sync->state = ROMM_LIB_SYNC_WRITE;
+         else
+         {
+            RBUF_FREE(sync->roms);
+            sync->offset = 0;
+            sync->state  = ROMM_LIB_SYNC_ROMS;
+         }
+         break;
+      case ROMM_LIB_SYNC_CHANGES:
+      case ROMM_LIB_SYNC_ROMS:
          if (romm_client_roms(sync->server, sync->token,
-               sync->remote[sync->platform].id, NULL, sync->offset,
-               ROMM_LIBRARY_PAGE, romm_lib_sync_roms_cb, sync))
+               sync->remote[sync->platform].id,
+               sync->state == ROMM_LIB_SYNC_CHANGES ? sync->cursor : NULL,
+               sync->offset, ROMM_LIBRARY_PAGE, romm_lib_sync_roms_cb, sync))
             sync->pending = true;
          else
             romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
@@ -1028,8 +1275,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
             break;
          }
          sync->platform++;
-         sync->offset = 0;
-         sync->state  = ROMM_LIB_SYNC_ROMS;
+         sync->state = ROMM_LIB_SYNC_NEXT;
          break;
       case ROMM_LIB_SYNC_SAVE:
          romm_lib_sync_remove_stale(sync);
@@ -1061,8 +1307,9 @@ static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
       games += RBUF_LEN(sync->lib.platforms[i].roms);
    if (sync->status == ROMM_OK)
       RARCH_LOG(ROMM_LIB_PFX "Library synced: %u platforms, %u games, "
-            "in %u ms.\n", (unsigned)RBUF_LEN(sync->lib.platforms),
-            (unsigned)games, (unsigned)((cpu_features_get_time_usec()
+            "%u playlists rewritten, in %u ms.\n",
+            (unsigned)RBUF_LEN(sync->lib.platforms), (unsigned)games,
+            sync->rewritten, (unsigned)((cpu_features_get_time_usec()
                - sync->started) / 1000));
    else
       RARCH_WARN(ROMM_LIB_PFX "Library sync ended (status %d).\n",
@@ -1084,6 +1331,8 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
       romm_lib_covers_free(sync->covers);
       RBUF_FREE(sync->remote);
       RBUF_FREE(sync->roms);
+      RBUF_FREE(sync->ids);
+      RBUF_FREE(sync->written);
       free(sync->covers_title);
       if (sync->token)
       {

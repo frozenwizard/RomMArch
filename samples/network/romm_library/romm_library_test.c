@@ -664,7 +664,9 @@ static void test_sync_reconcile(void)
          " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
          " \"libretro_slug\": \"Nintendo - SNES\"},"
          " {\"id\": 17, \"rom_count\": 1, \"name\": \"New\"}]");
-   page = roms_page(15, 1, 3);
+   /* Sega CD: its ids, then the one game new since the last sync. */
+   sync_answer(200, "{\"rom_id_index\": [1, 2, 3]}");
+   page = roms_page(15, 3, 1);
    sync_answer(200, page);
    free(page);
    sync_answer(500, "{\"detail\": \"Internal Server Error\"}");
@@ -731,6 +733,7 @@ static char *covers_page(const char *cover1, const char *cover2,
       len += snprintf(s + len, 4096 - len, "%s{\"id\": %u,"
             " \"platform_id\": 15, \"fs_name\": \"Game %u & Co (USA).bin\","
             " \"has_simple_single_file\": true,"
+            " \"updated_at\": \"2026-10-02T04:00:00+00:00\","
             " \"path_cover_large\": %s%s%s}",
             i ? ", " : "", i + 1, i + 1, covers[i] ? "\"" : "",
             covers[i] ? covers[i] : "null", covers[i] ? "\"" : "");
@@ -741,14 +744,17 @@ static char *covers_page(const char *cover1, const char *cover2,
 
 #define COVER_DIR TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD/Named_Boxarts/"
 
-/* Syncs one platform with the given page, through to its end. */
-static void covers_sync(sync_result_t *r, const char *page)
+/* Syncs one platform through to its end: @page answers the full fetch
+ * or, after a first sync, the changed games, with @ids its index. */
+static void covers_sync(sync_result_t *r, const char *ids, const char *page)
 {
    memset(r, 0, sizeof(*r));
    CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR,
          TEST_DIR "/thumbs", NULL, "Covers", on_sync, r), "sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"}]");
+   if (ids)
+      sync_answer(200, ids);
    sync_answer(200, page);
    CHECK(sync_run_out() && r->status == ROMM_OK, "sync: status %d",
          r->status);
@@ -797,7 +803,7 @@ static void test_covers(void)
    page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20",
          "/assets/romm/resources/roms/15/2/cover/big.png?ts=2026-10-03 00:23:21",
          NULL);
-   covers_sync(&r, page);
+   covers_sync(&r, NULL, page);
    free(page);
    CHECK(stub_task && !strcmp(stub_task->title, "Covers"), "no covers task");
    if (!stub_task)
@@ -826,7 +832,7 @@ static void test_covers(void)
    page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20",
          "/assets/romm/resources/roms/15/2/cover/big.png?ts=2026-10-03 00:23:21",
          NULL);
-   covers_sync(&r, page);
+   covers_sync(&r, "{\"rom_id_index\": [1, 2]}", page);
    free(page);
    CHECK(!stub_task, "covers task with nothing to fetch");
 
@@ -834,7 +840,7 @@ static void test_covers(void)
     * 1 is fetched again and its PNG removed, 2's cover deleted. */
    page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
          NULL, NULL);
-   covers_sync(&r, page);
+   covers_sync(&r, "{\"rom_id_index\": [1, 2]}", page);
    free(page);
    CHECK(!path_is_valid(COVER_DIR "Game 2 _ Co (USA).jpg"),
          "cover of a game without one kept");
@@ -856,7 +862,7 @@ static void test_covers(void)
    filestream_delete(COVER_DIR "Game 1 _ Co (USA).jpg");
    page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
          NULL, NULL);
-   covers_sync(&r, page);
+   covers_sync(&r, "{\"rom_id_index\": [1, 2]}", page);
    free(page);
    CHECK(stub_task != NULL, "missing cover not fetched");
    if (stub_task)
@@ -872,7 +878,7 @@ static void test_covers(void)
 
    page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
          NULL, NULL);
-   covers_sync(&r, page);
+   covers_sync(&r, "{\"rom_id_index\": [1, 2]}", page);
    free(page);
    if (stub_task)
    {
@@ -895,6 +901,214 @@ static void test_covers(void)
    filestream_delete(TEST_DIR);
 }
 
+static void test_cursor(void)
+{
+   char s[32];
+
+   CHECK(romm_lib_cursor(s, sizeof(s), "2026-10-03T00:23:20+00:00", 60)
+         && !strcmp(s, "2026-10-03T00:22:20Z"), "plain: %s", s);
+   CHECK(romm_lib_cursor(s, sizeof(s), "2026-10-03T00:00:30+00:00", 60)
+         && !strcmp(s, "2026-10-02T23:59:30Z"), "previous day: %s", s);
+   CHECK(romm_lib_cursor(s, sizeof(s), "2024-03-01T00:00:10+00:00", 60)
+         && !strcmp(s, "2024-02-29T23:59:10Z"), "leap day: %s", s);
+   CHECK(romm_lib_cursor(s, sizeof(s), "2026-01-01T01:00:00+02:00", 60)
+         && !strcmp(s, "2025-12-31T22:59:00Z"), "zone ahead: %s", s);
+   CHECK(romm_lib_cursor(s, sizeof(s), "2026-10-09T04:02:58.718378-05:30",
+            0) && !strcmp(s, "2026-10-09T09:32:58Z"), "fraction, zone"
+         " behind: %s", s);
+   CHECK(romm_lib_cursor(s, sizeof(s), "2026-10-09T04:02:58Z", 0)
+         && !strcmp(s, "2026-10-09T04:02:58Z"), "Z: %s", s);
+   CHECK(!romm_lib_cursor(s, sizeof(s), "", 60)
+         && !romm_lib_cursor(s, sizeof(s), "yesterday", 60),
+         "cursor from no time");
+}
+
+/* A game for the incremental test's pages. */
+static void game_json(char *s, size_t len, unsigned id, const char *name,
+      const char *updated_at)
+{
+   size_t _len = strlen(s);
+   snprintf(s + _len, len - _len, "%s{\"id\": %u, \"platform_id\": 8,"
+         " \"fs_name\": \"g%u.md\", \"name\": \"%s\","
+         " \"has_simple_single_file\": true, \"updated_at\": \"%s\"}",
+         _len > 12 ? ", " : "", id, id, name, updated_at);
+}
+
+static void test_sync_incremental(void)
+{
+   const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   sync_result_t r;
+   char manifest[256];
+   char page[2048];
+   char s[256];
+   char *doc       = NULL;
+   int64_t len     = 0;
+   unsigned before;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+
+   /* First sync: everything. */
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 100, "A", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 101, "B", "2026-10-03T00:23:20+00:00");
+   game_json(page, sizeof(page), 102, "C", "2026-10-01T10:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
+         "first: status %d games %u", r.status, (unsigned)r.games);
+
+   /* Nothing changed: the ids and an empty change list, asked for
+    * since a minute before the newest game, and no rewrite. */
+   filestream_write_file(pl, "untouched", 9);
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [100, 101, 102]}");
+   CHECK(strstr(stub_req.url, "with_rom_id_index=true&") != NULL,
+         "ids request %s", stub_req.url);
+   sync_answer(200, "{\"items\": []}");
+   CHECK(strstr(stub_req.url, "&updated_after=2026-10-03T00:22:20Z")
+         && strstr(stub_req.url, "with_rom_id_index=false"),
+         "changes request %s", stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
+         "unchanged: status %d games %u", r.status, (unsigned)r.games);
+   CHECK(filestream_read_file(pl, (void**)&doc, &len) && len == 9,
+         "unchanged playlist rewritten");
+   free(doc);
+   doc = NULL;
+
+   /* A game added first in RomM's order, one renamed, one removed. */
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [103, 100, 102]}");
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 103, "New", "2026-10-09T10:00:00+00:00");
+   game_json(page, sizeof(page), 100, "A Renamed", "2026-10-09T10:00:01+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
+         "changed: status %d games %u", r.status, (unsigned)r.games);
+   CHECK(count_entries(pl) == 3, "%u entries", count_entries(pl));
+   if (filestream_read_file(pl, (void**)&doc, &len) && doc)
+   {
+      CHECK(lpl_get(doc, len, 0, "path", s, sizeof(s))
+            && !strcmp(s, "romm://103/g103.md"), "0: %s", s);
+      CHECK(lpl_get(doc, len, 1, "label", s, sizeof(s))
+            && !strcmp(s, "A Renamed"), "1: %s", s);
+      CHECK(lpl_get(doc, len, 2, "path", s, sizeof(s))
+            && !strcmp(s, "romm://102/g102.md"), "2: %s", s);
+      free(doc);
+      doc = NULL;
+   }
+
+   /* A game the last sync didn't have and that hasn't changed, such as
+    * one shown again: the platform is fetched in full. */
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 4,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [99, 103, 100, 102]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(strstr(stub_req.url, "updated_after=2026-10-09T09:59:01Z") != NULL,
+         "changes request %s", stub_req.url);
+   before = stub_req.count;
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 99, "Shown", "2026-01-01T00:00:00+00:00");
+   game_json(page, sizeof(page), 103, "New", "2026-10-09T10:00:00+00:00");
+   game_json(page, sizeof(page), 100, "A Renamed", "2026-10-09T10:00:01+00:00");
+   game_json(page, sizeof(page), 102, "C", "2026-10-01T10:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   CHECK(stub_req.count == before + 1 && !strstr(stub_req.url,
+         "updated_after") && strstr(stub_req.url, "&offset=0"),
+         "full fetch %s", stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 4
+         && count_entries(pl) == 4, "full: status %d games %u entries %u",
+         r.status, (unsigned)r.games, count_entries(pl));
+
+   /* The playlist deleted by hand is written again. */
+   filestream_delete(pl);
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 4,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [99, 103, 100, 102]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && count_entries(pl) == 4, "deleted playlist");
+
+   filestream_delete(pl);
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
+/* Genesis and Mega Drive share a playlist; when only one changes, the
+ * playlist still lists both. */
+static void test_sync_shared_playlist(void)
+{
+   const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   const char *platforms =
+      "[{\"id\": 8, \"rom_count\": 1,"
+      " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+      " {\"id\": 30, \"rom_count\": 1,"
+      " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]";
+   sync_result_t r;
+   char manifest[256];
+   char page[1024];
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, platforms);
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 1, "Genesis game", "2026-10-02T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 2, "Mega Drive game", "2026-10-02T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   CHECK(sync_run_out() && count_entries(pl) == 2, "first: %u entries",
+         count_entries(pl));
+
+   /* Genesis gains a game; Mega Drive is unchanged. */
+   memset(&r, 0, sizeof(r));
+   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, platforms);
+   sync_answer(200, "{\"rom_id_index\": [1, 3]}");
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 3, "Genesis game 2", "2026-10-09T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   sync_answer(200, "{\"rom_id_index\": [2]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && count_entries(pl) == 3,
+         "shared: status %d, %u entries", r.status, count_entries(pl));
+
+   filestream_delete(pl);
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -903,6 +1117,9 @@ int main(void)
    test_manifest();
    test_sync();
    test_sync_reconcile();
+   test_cursor();
+   test_sync_incremental();
+   test_sync_shared_playlist();
    test_cover_path();
    test_covers();
 
