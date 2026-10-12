@@ -1337,6 +1337,9 @@ FILE
 #include "../libretro-common/streams/network_stream.c"
 #ifndef __WINRT__
 #include "../libretro-common/vfs/vfs_implementation.c"
+#ifdef HAVE_ROMM
+#include "../libretro-common/vfs/vfs_implementation_romm.c"
+#endif
 #endif
 #include "../libretro-common/vfs/vfs_hybrid.c"
 

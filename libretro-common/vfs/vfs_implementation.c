@@ -314,6 +314,9 @@ static void vfs_unix_to_filetime(int64_t unix_s, FILETIME *ft)
 #ifdef HAVE_NFSCLIENT
 #include "vfs_implementation_nfs.h"
 #endif
+#ifdef HAVE_ROMM
+#include <vfs/vfs_implementation_romm.h>
+#endif
 
 #if (defined(_POSIX_C_SOURCE) && (_POSIX_C_SOURCE - 0) >= 200112) || (defined(__POSIX_VISIBLE) && __POSIX_VISIBLE >= 200112) || (defined(_POSIX_VERSION) && _POSIX_VERSION >= 200112) || (defined(__USE_LARGEFILE) && __USE_LARGEFILE) || (defined(_FILE_OFFSET_BITS) && _FILE_OFFSET_BITS == 64)
 #ifndef HAVE_64BIT_OFFSETS
@@ -617,6 +620,16 @@ static int path_is_nfs(const char *p)
 }
 #endif
 
+#ifdef HAVE_ROMM
+static int path_is_romm(const char *p)
+{
+   return (p
+         && p[0] == 'r' && p[1] == 'o' && p[2] == 'm' && p[3] == 'm'
+         && p[4] == ':' && p[5] == '/' && p[6] == '/'
+         && p[7] != '\0');
+}
+#endif
+
 #if defined(ANDROID) && defined(HAVE_SAF)
 static int path_is_saf(const char *p)
 {
@@ -633,6 +646,11 @@ int64_t retro_vfs_file_seek_internal(
 {
    if (!stream)
       return -1;
+
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+      return retro_vfs_file_seek_romm(stream, offset, whence);
+#endif
 
    if ((stream->hints & RFILE_HINT_UNBUFFERED) == 0)
    {
@@ -733,6 +751,20 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
          && path[8] == '/'
          && path[9] == '/')
          path             += sizeof("vfsonly://")-1;
+#endif
+
+#ifdef HAVE_ROMM
+   /* Served from memory: none of the buffering or mapping below
+    * applies, whatever hints the caller passed. */
+   if (path_is_romm(path))
+   {
+      stream->scheme    = VFS_SCHEME_ROMM;
+      stream->orig_path = strdup(path);
+      if (     !stream->orig_path
+            || !retro_vfs_file_open_romm(stream, path, mode))
+         goto error;
+      return stream;
+   }
 #endif
 
 #ifdef HAVE_CDROM
@@ -1203,6 +1235,16 @@ int retro_vfs_file_close_impl(libretro_vfs_implementation_file *stream)
    if (!stream)
       return -1;
 
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+   {
+      retro_vfs_file_close_romm(stream);
+      free(stream->orig_path);
+      free(stream);
+      return 0;
+   }
+#endif
+
 #ifdef HAVE_CDROM
    if (stream->scheme == VFS_SCHEME_CDROM)
    {
@@ -1289,6 +1331,10 @@ int retro_vfs_file_error_impl(libretro_vfs_implementation_file *stream)
 {
    if (!stream)
       return -1;
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+      return 0;
+#endif
 #ifdef HAVE_CDROM
    if (stream->scheme == VFS_SCHEME_CDROM)
       return retro_vfs_file_error_cdrom(stream);
@@ -1597,6 +1643,10 @@ int retro_vfs_file_punch_hole_impl(libretro_vfs_implementation_file *stream,
 
 int64_t retro_vfs_file_truncate_impl(libretro_vfs_implementation_file *stream, int64_t len)
 {
+#ifdef HAVE_ROMM
+   if (stream && stream->scheme == VFS_SCHEME_ROMM)
+      return -1;
+#endif
 #ifdef _WIN32
    /* _chsize takes a long and silently truncates lengths > LONG_MAX
     * (2 GiB on Windows) -- present on all Windows CRTs including
@@ -1634,6 +1684,11 @@ int64_t retro_vfs_file_tell_impl(libretro_vfs_implementation_file *stream)
 {
    if (!stream)
       return -1;
+
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+      return retro_vfs_file_tell_romm(stream);
+#endif
 
    if ((stream->hints & RFILE_HINT_UNBUFFERED) == 0)
    {
@@ -1681,6 +1736,11 @@ int64_t retro_vfs_file_read_impl(libretro_vfs_implementation_file *stream,
     * does for its overflow case. */
    if (len > (uint64_t)INT64_MAX)
       return -1;
+
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+      return retro_vfs_file_read_romm(stream, s, len);
+#endif
 
    if ((stream->hints & RFILE_HINT_UNBUFFERED) == 0)
    {
@@ -1785,6 +1845,11 @@ int64_t retro_vfs_file_write_impl(libretro_vfs_implementation_file *stream, cons
    if (!stream)
       return -1;
 
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+      return -1;
+#endif
+
    if ((stream->hints & RFILE_HINT_UNBUFFERED) == 0)
    {
 #ifdef HAVE_NFSCLIENT
@@ -1877,6 +1942,10 @@ int retro_vfs_file_flush_impl(libretro_vfs_implementation_file *stream)
 {
    if (!stream)
       return -1;
+#ifdef HAVE_ROMM
+   if (stream->scheme == VFS_SCHEME_ROMM)
+      return 0;
+#endif
 #ifdef HAVE_CDROM
    if (stream->scheme == VFS_SCHEME_CDROM)
       return 0;
@@ -2488,6 +2557,10 @@ static int retro_vfs_stat_full(const char *path, int64_t *size, int64_t *mtime)
    if (!path || !*path)
       return 0;
 
+#ifdef HAVE_ROMM
+   if (path_is_romm(path))
+      return retro_vfs_stat_romm(path, size);
+#endif
 #ifdef HAVE_SMBCLIENT
    if (path_is_smb(path))
       return retro_vfs_stat_smb(path, size);

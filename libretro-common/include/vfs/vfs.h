@@ -122,7 +122,8 @@ enum vfs_scheme
    VFS_SCHEME_CDROM,
    VFS_SCHEME_SAF,
    VFS_SCHEME_SMB,
-   VFS_SCHEME_NFS
+   VFS_SCHEME_NFS,
+   VFS_SCHEME_ROMM
 };
 
 #if !(defined(__WINRT__) && defined(__cplusplus_winrt))
@@ -172,6 +173,10 @@ struct libretro_vfs_implementation_file
    intptr_t nfs_fh;
    intptr_t nfs_ctx;
    intptr_t nfs_prefetch; /* struct nfs_prefetch *, read-only opens with threads */
+#endif
+#ifdef HAVE_ROMM
+   void *romm_file;       /* the in-memory file a romm:// handle reads */
+   int64_t romm_pos;
 #endif
 #if defined(HAVE_CDROM) && defined(__APPLE__)
    void *iokit_plugin;   /* IOCFPlugInInterface ** */
