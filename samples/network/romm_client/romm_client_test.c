@@ -8,8 +8,8 @@
  * of device pairing: the request RomM gets, and the code and approval
  * link read from its reply. The token check (whose user a token acts
  * for, and a token RomM turns down). The platform and game lists, read
- * from trimmed RomM replies, a platform's ordered game ids, and file
- * downloads. Then the wait for approval, with the
+ * from trimmed RomM replies, a platform's ordered game ids, a game's
+ * files, and file downloads. Then the wait for approval, with the
  * stubs' clock standing in for time: the poll schedule, slowing down
  * when told, and how approval, denial, expiry and cancellation end it.
  *
@@ -178,6 +178,12 @@ static void test_json(void)
          "key inside a top-level array found");
    CHECK(!romm_json_get("<html>", 6, "VERSION", s, sizeof(s)),
          "HTML parsed as JSON");
+   CHECK(romm_json_get("{\"a\": true, \"b\": false}", 24, "a", s, sizeof(s))
+         && !strcmp(s, "true"), "true: %s", s);
+   CHECK(romm_json_get("{\"a\": true, \"b\": false}", 24, "b", s, sizeof(s))
+         && !strcmp(s, "false"), "false: %s", s);
+   CHECK(!romm_json_get("{\"a\": null}", 11, "a", s, sizeof(s)),
+         "null read as a value");
 }
 
 /* Records what romm_json_items() reports as "key=value;" per member and
@@ -764,6 +770,120 @@ static void test_rom_ids(void)
          "id list started without a platform or token");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_rom;
+   romm_rom_t rom;
+   size_t count;
+   romm_file_t files[4];
+} rom_files_result_t;
+
+static void on_rom_files(void *user_data, enum romm_status status,
+      int http_status, const romm_rom_t *rom, const romm_file_t *files,
+      size_t count)
+{
+   rom_files_result_t *r = (rom_files_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_rom     = rom != NULL;
+   if (rom)
+      r->rom = *rom;
+   r->count = count;
+   for (i = 0; i < count && i < 4; i++)
+      r->files[i] = files[i];
+}
+
+static void rom_files(rom_files_result_t *r, unsigned id)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_rom_files("http://romm.local:8090", "rmm_0123abcd", id,
+         on_rom_files, r), "game not requested");
+}
+
+static void test_rom_files(void)
+{
+   rom_files_result_t r;
+
+   /* One file; what's inside the zip carries names and sizes too. */
+   rom_files(&r, 3335);
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/roms/3335")
+         && strstr(stub_req.headers, "Bearer rmm_0123abcd"), "request %s",
+         stub_req.url);
+   answer(200, "{\"id\": 3335, \"platform_id\": 15,"
+         " \"fs_name\": \"Final Fight CD (USA).zip\","
+         " \"fs_name_no_ext\": \"Final Fight CD (USA)\","
+         " \"fs_path\": \"roms/segacd/roms\", \"name\": \"Final Fight CD\","
+         " \"has_simple_single_file\": true, \"crc_hash\": \"0beca6fd\","
+         " \"files\": [{\"id\": 3613, \"rom_id\": 3335,"
+         " \"file_name\": \"Final Fight CD (USA).zip\","
+         " \"file_path\": \"roms/segacd/roms\","
+         " \"file_size_bytes\": 383484647,"
+         " \"full_path\": \"roms/segacd/roms/Final Fight CD (USA).zip\","
+         " \"crc_hash\": \"0beca6fd\", \"archive_members\": [{\"name\":"
+         " \"Track 01.bin\", \"size\": 28209888}]}],"
+         " \"rom_user\": {\"id\": 9}}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_rom && r.count == 1,
+         "single: status %d count %u", r.status, (unsigned)r.count);
+   CHECK(r.rom.id == 3335 && r.rom.platform_id == 15 && r.rom.single_file
+         && !strcmp(r.rom.fs_name, "Final Fight CD (USA).zip")
+         && !strcmp(r.rom.name, "Final Fight CD"),
+         "game: %u %u %d [%s] [%s]", r.rom.id, r.rom.platform_id,
+         r.rom.single_file, r.rom.fs_name, r.rom.name);
+   CHECK(r.files[0].id == 3613 && r.files[0].size == 383484647ULL
+         && !strcmp(r.files[0].crc, "0beca6fd")
+         && !strcmp(r.files[0].name, "Final Fight CD (USA).zip")
+         && !strcmp(r.files[0].path, "Final Fight CD (USA).zip"),
+         "file: %u %llu %s [%s] [%s]", r.files[0].id,
+         (unsigned long long)r.files[0].size, r.files[0].crc,
+         r.files[0].name, r.files[0].path);
+
+   /* A folder with discs in folders of their own, and a file over 4 GB. */
+   rom_files(&r, 4930);
+   answer(200, "{\"id\": 4930, \"platform_id\": 28,"
+         " \"fs_name\": \"D2 (2000)(Sega)[!]\", \"fs_path\": \"roms/dc/roms\","
+         " \"name\": \"D2\", \"has_simple_single_file\": false,"
+         " \"files\": ["
+         "{\"id\": 1, \"file_name\": \"D2 Disc 1.gdi\","
+         " \"full_path\": \"roms/dc/roms/D2 (2000)(Sega)[!]/D2 Disc 1/D2 Disc 1.gdi\","
+         " \"file_size_bytes\": 87},"
+         "{\"id\": 2, \"file_name\": \"track03.bin\","
+         " \"full_path\": \"roms/dc/roms/D2 (2000)(Sega)[!]/D2 Disc 1/track03.bin\","
+         " \"file_size_bytes\": 4500000000},"
+         "{\"id\": 3, \"file_name\": \"D2.m3u\","
+         " \"full_path\": \"roms/dc/roms/D2 (2000)(Sega)[!]/D2.m3u\","
+         " \"file_size_bytes\": 408}]}");
+   CHECK(r.status == ROMM_OK && !r.rom.single_file && r.count == 3,
+         "folder: status %d single %d count %u", r.status,
+         r.rom.single_file, (unsigned)r.count);
+   CHECK(!strcmp(r.files[0].path, "D2 Disc 1/D2 Disc 1.gdi")
+         && !strcmp(r.files[2].path, "D2.m3u"), "paths [%s] [%s]",
+         r.files[0].path, r.files[2].path);
+   CHECK(r.files[1].size == 4500000000ULL, "large size %llu",
+         (unsigned long long)r.files[1].size);
+
+   rom_files(&r, 9);
+   answer(404, "{\"detail\": \"Rom with ID 9 not found\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 404 && !r.has_rom,
+         "deleted: status %d HTTP %d", r.status, r.http_status);
+
+   rom_files(&r, 9);
+   answer(200, "{\"id\": 9, \"fs_name\": \"a.zip\"}");
+   CHECK(r.status == ROMM_ERR_RESPONSE, "no files: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_rom_files("http://h", "t", 0, on_rom_files, &r)
+         && !romm_client_rom_files("http://h", "", 5, on_rom_files, &r)
+         && r.calls == 0 && stub_req.count == 0,
+         "game requested without an id or token");
+}
+
 static void pair_start(pair_start_result_t *r, const char *web)
 {
    memset(r, 0, sizeof(*r));
@@ -1050,6 +1170,7 @@ int main(void)
    test_platforms();
    test_roms();
    test_rom_ids();
+   test_rom_files();
    test_download();
    test_pair_start();
    test_pair_wait();

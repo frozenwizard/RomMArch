@@ -16,6 +16,7 @@
 #define __ROMM_CLIENT_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <boolean.h>
 #include <retro_common_api.h>
 
@@ -88,6 +89,21 @@ typedef struct
    char updated_at[32];
 } romm_rom_t;
 
+/* One of a game's files in RomM. */
+typedef struct
+{
+   unsigned id;
+   uint64_t size;
+   /* CRC32 in hex; empty when RomM has none. */
+   char crc[9];
+   /* The name RomM serves it under. */
+   char name[256];
+   /* Where it sits in the game's folder, such as "Disc 1/track01.bin":
+    * what cue sheets and disc lists inside the game refer to it by.
+    * Just its name for a game that is one file. */
+   char path[512];
+} romm_file_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
@@ -123,6 +139,12 @@ typedef void (*romm_roms_cb_t)(void *user_data,
 typedef void (*romm_rom_ids_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const unsigned *ids, size_t count);
+
+/* @rom and its @count @files are valid only during the call; NULL
+ * unless @status is ROMM_OK. */
+typedef void (*romm_rom_files_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_rom_t *rom, const romm_file_t *files, size_t count);
 
 /* @data holds @len bytes, valid only during the call; NULL unless
  * @status is ROMM_OK. */
@@ -181,6 +203,12 @@ bool romm_client_roms(const char *server, const char *token,
  * main thread. */
 bool romm_client_rom_ids(const char *server, const char *token,
       unsigned platform_id, romm_rom_ids_cb_t cb, void *user_data);
+
+/* Fetches game @rom_id with its files; a game RomM deleted, or that
+ * the user may no longer see, answers HTTP 404 or 403. @cb runs on
+ * the main thread. */
+bool romm_client_rom_files(const char *server, const char *token,
+      unsigned rom_id, romm_rom_files_cb_t cb, void *user_data);
 
 /* Fetches the file at @path on @server, such as a cover, into memory.
  * @path goes into the URL as is. @cb runs on the main thread. */

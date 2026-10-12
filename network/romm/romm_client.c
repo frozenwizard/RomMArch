@@ -106,6 +106,12 @@ typedef struct
    void *user_data;
 } romm_rom_ids_ctx_t;
 
+typedef struct
+{
+   romm_rom_files_cb_t cb;
+   void *user_data;
+} romm_rom_files_ctx_t;
+
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)
 {
@@ -907,6 +913,147 @@ bool romm_client_rom_ids(const char *server, const char *token,
    ctx->user_data = user_data;
 
    if (!romm_get(server, token, path, romm_rom_ids_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+typedef struct
+{
+   romm_file_t *list;
+   romm_file_t cur;
+   char full_path[1024];
+   /* The game's folder in RomM's library, with a trailing slash */
+   char base[1024];
+} romm_rom_files_parse_t;
+
+static void romm_rom_files_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_rom_files_parse_t *parse = (romm_rom_files_parse_t*)ctx;
+   romm_file_t *f                = &parse->cur;
+
+   if (type != RJSON_STRING && type != RJSON_NUMBER)
+      return;
+   if (string_is_equal(key, "id"))
+      f->id = romm_json_uint(value);
+   else if (string_is_equal(key, "file_size_bytes"))
+      f->size = (uint64_t)strtoull(value, NULL, 10);
+   else if (string_is_equal(key, "crc_hash"))
+      strlcpy(f->crc, value, sizeof(f->crc));
+   else if (string_is_equal(key, "file_name"))
+      strlcpy(f->name, value, sizeof(f->name));
+   else if (string_is_equal(key, "full_path"))
+      strlcpy(parse->full_path, value, sizeof(parse->full_path));
+}
+
+static void romm_rom_files_item_end(void *ctx)
+{
+   romm_rom_files_parse_t *parse = (romm_rom_files_parse_t*)ctx;
+   romm_file_t *f                = &parse->cur;
+
+   if (f->id && *f->name)
+   {
+      if (     *parse->base
+            && string_starts_with(parse->full_path, parse->base)
+            && parse->full_path[strlen(parse->base)])
+         strlcpy(f->path, parse->full_path + strlen(parse->base),
+               sizeof(f->path));
+      else
+         strlcpy(f->path, f->name, sizeof(f->path));
+      RBUF_PUSH(parse->list, *f);
+   }
+   memset(f, 0, sizeof(*f));
+   parse->full_path[0] = '\0';
+}
+
+static void romm_rom_files_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_rom_files_ctx_t *ctx  = (romm_rom_files_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_rom_files_parse_t *parse;
+   romm_rom_t rom;
+   char value[32];
+   char fs_path[512];
+
+   memset(&rom, 0, sizeof(rom));
+   fs_path[0] = '\0';
+   if (!(parse = (romm_rom_files_parse_t*)calloc(1, sizeof(*parse))))
+      status = ROMM_ERR_RESPONSE;
+   else if (status == ROMM_OK)
+   {
+      if (romm_json_get(data->data, data->len, "id", value, sizeof(value)))
+         rom.id = romm_json_uint(value);
+      if (romm_json_get(data->data, data->len, "platform_id",
+            value, sizeof(value)))
+         rom.platform_id = romm_json_uint(value);
+      if (romm_json_get(data->data, data->len, "has_simple_single_file",
+            value, sizeof(value)))
+         rom.single_file = string_is_equal(value, "true");
+      romm_json_get(data->data, data->len, "fs_name",
+            rom.fs_name, sizeof(rom.fs_name));
+      romm_json_get(data->data, data->len, "fs_name_no_ext",
+            rom.fs_name_no_ext, sizeof(rom.fs_name_no_ext));
+      romm_json_get(data->data, data->len, "name", rom.name,
+            sizeof(rom.name));
+      romm_json_get(data->data, data->len, "crc_hash", rom.crc,
+            sizeof(rom.crc));
+      romm_json_get(data->data, data->len, "updated_at", rom.updated_at,
+            sizeof(rom.updated_at));
+      romm_json_get(data->data, data->len, "fs_path", fs_path,
+            sizeof(fs_path));
+      if (!*rom.name)
+         strlcpy(rom.name, rom.fs_name_no_ext, sizeof(rom.name));
+      if (*fs_path && *rom.fs_name)
+         snprintf(parse->base, sizeof(parse->base), "%s/%s/", fs_path,
+               rom.fs_name);
+
+      if (     !rom.id || !*rom.fs_name
+            || !romm_json_items(data->data, data->len, "files",
+                  romm_rom_files_member, romm_rom_files_item_end, parse))
+         status = ROMM_ERR_RESPONSE;
+   }
+
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "Game %u has %u files.\n", rom.id,
+            (unsigned)RBUF_LEN(parse->list));
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't get the game (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? &rom : NULL,
+         status == ROMM_OK ? parse->list : NULL,
+         status == ROMM_OK ? RBUF_LEN(parse->list) : 0);
+   if (parse)
+   {
+      RBUF_FREE(parse->list);
+      free(parse);
+   }
+   free(ctx);
+}
+
+bool romm_client_rom_files(const char *server, const char *token,
+      unsigned rom_id, romm_rom_files_cb_t cb, void *user_data)
+{
+   char path[64];
+   romm_rom_files_ctx_t *ctx;
+
+   if (!rom_id)
+      return false;
+   snprintf(path, sizeof(path), "/api/roms/%u", rom_id);
+   if (!(ctx = (romm_rom_files_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!romm_get(server, token, path, romm_rom_files_cb, ctx))
    {
       free(ctx);
       return false;

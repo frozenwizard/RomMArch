@@ -22,8 +22,8 @@
 
 RETRO_BEGIN_DECLS
 
-/* Copies the string or number at @path, object keys joined by '.'
- * such as "SYSTEM.VERSION". */
+/* Copies the string, number or boolean ("true" or "false") at @path,
+ * object keys joined by '.' such as "SYSTEM.VERSION". */
 bool romm_json_get(const char *data, size_t len, const char *path,
       char *s, size_t s_len);
 

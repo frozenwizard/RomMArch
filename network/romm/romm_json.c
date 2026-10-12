@@ -70,6 +70,12 @@ bool romm_json_get(const char *data, size_t len, const char *path,
             strlcpy(s, str, s_len);
             found = true;
          }
+         else if ((type == RJSON_TRUE || type == RJSON_FALSE)
+               && matched + 1 == num_keys)
+         {
+            strlcpy(s, type == RJSON_TRUE ? "true" : "false", s_len);
+            found = true;
+         }
       }
       else if (type == RJSON_STRING
             && depth == matched + 1
