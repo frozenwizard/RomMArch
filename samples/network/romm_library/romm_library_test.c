@@ -201,6 +201,59 @@ static void test_write_playlist(void)
          NULL, roms, 1), "write into a missing folder reported done");
 }
 
+/* A core the user sets for one game survives the playlist being
+ * rewritten, a rename in RomM included. */
+static void test_game_core_kept(void)
+{
+   const char *path = "romm_library_test_cores.lpl";
+   romm_rom_t roms[3];
+   char *doc   = NULL;
+   int64_t len = 0;
+   char s[256];
+
+   roms[0] = rom(3335, true, "Final Fight CD (USA).zip", "Final Fight CD", "");
+   roms[1] = rom(2810, false, "Lunar (USA)", "Lunar", "");
+   roms[2] = rom(7, true, "a.md", "A", "");
+   CHECK(romm_library_write_playlist(path, "x.lpl", NULL, NULL, roms, 3),
+         "playlist not written");
+
+   /* Set Core Association on Lunar. */
+   if (filestream_read_file(path, (void**)&doc, &len) && doc)
+   {
+      char *lunar = strstr(doc, "romm://2810/");
+      char *core  = lunar ? strstr(lunar, "\"core_path\": \"DETECT\",") : NULL;
+      if (core)
+      {
+         char edited[4096];
+         snprintf(edited, sizeof(edited), "%.*s\"core_path\": \"/cores/x.dylib\","
+               " \"core_name\": \"X\",%s", (int)(core - doc), doc,
+               strstr(core, "\"core_name\": \"DETECT\",") + 24);
+         filestream_write_file(path, edited, (int64_t)strlen(edited));
+      }
+      free(doc);
+      doc = NULL;
+   }
+
+   strlcpy(roms[1].fs_name, "Lunar - The Silver Star (USA)",
+         sizeof(roms[1].fs_name));
+   CHECK(romm_library_write_playlist(path, "x.lpl", NULL, NULL, roms, 2),
+         "playlist not rewritten");
+   if (filestream_read_file(path, (void**)&doc, &len) && doc)
+   {
+      CHECK(lpl_get(doc, len, 1, "path", s, sizeof(s))
+            && !strcmp(s, "romm://2810/Lunar - The Silver Star (USA).m3u"),
+            "renamed: %s", s);
+      CHECK(lpl_get(doc, len, 1, "core_path", s, sizeof(s))
+            && !strcmp(s, "/cores/x.dylib"), "game's core: %s", s);
+      CHECK(lpl_get(doc, len, 1, "core_name", s, sizeof(s))
+            && !strcmp(s, "X"), "game's core name: %s", s);
+      CHECK(lpl_get(doc, len, 0, "core_path", s, sizeof(s))
+            && !strcmp(s, "DETECT"), "other game's core: %s", s);
+      free(doc);
+   }
+   filestream_delete(path);
+}
+
 static romm_library_platform_t lib_platform(unsigned id, const char *slug,
       const char *libretro_slug, const char *playlist)
 {
@@ -1262,6 +1315,7 @@ int main(void)
    test_content_path();
    test_playlist_name();
    test_write_playlist();
+   test_game_core_kept();
    test_manifest();
    test_sync();
    test_sync_reconcile();

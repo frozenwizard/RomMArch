@@ -251,10 +251,106 @@ static void romm_lib_json_member_int(rjsonwriter_t *writer,
    rjsonwriter_rawf(writer, ": %d,\n", value);
 }
 
+/* A core the user set for one game, by RomM game id. */
+typedef struct
+{
+   unsigned id;
+   char *core_path;
+   char *core_name;
+} romm_lib_game_core_t;
+
+typedef struct
+{
+   romm_lib_game_core_t *list;
+   unsigned id;
+   char *core_path;
+   char *core_name;
+} romm_lib_game_cores_t;
+
+static void romm_lib_game_core_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_lib_game_cores_t *cores = (romm_lib_game_cores_t*)ctx;
+
+   if (string_is_equal(key, "path")
+         && string_starts_with(value, ROMM_SCHEME))
+      cores->id = (unsigned)strtoul(value + STRLEN_CONST(ROMM_SCHEME),
+            NULL, 10);
+   else if (string_is_equal(key, "core_path") && !cores->core_path)
+      cores->core_path = strdup(value);
+   else if (string_is_equal(key, "core_name") && !cores->core_name)
+      cores->core_name = strdup(value);
+}
+
+static void romm_lib_game_core_end(void *ctx)
+{
+   romm_lib_game_cores_t *cores = (romm_lib_game_cores_t*)ctx;
+
+   if (     cores->id && cores->core_path && cores->core_name
+         && *cores->core_path
+         && !string_is_equal(cores->core_path, FILE_PATH_DETECT))
+   {
+      romm_lib_game_core_t core;
+      core.id        = cores->id;
+      core.core_path = cores->core_path;
+      core.core_name = cores->core_name;
+      RBUF_PUSH(cores->list, core);
+   }
+   else
+   {
+      free(cores->core_path);
+      free(cores->core_name);
+   }
+   cores->id        = 0;
+   cores->core_path = NULL;
+   cores->core_name = NULL;
+}
+
+static int romm_lib_cmp_game_core(const void *a, const void *b)
+{
+   unsigned x = ((const romm_lib_game_core_t*)a)->id;
+   unsigned y = ((const romm_lib_game_core_t*)b)->id;
+   return x < y ? -1 : x > y;
+}
+
+/* The cores the user set for single games in the playlist at @path. */
+static romm_lib_game_core_t *romm_lib_read_game_cores(const char *path)
+{
+   romm_lib_game_cores_t cores;
+   char *doc   = NULL;
+   int64_t len = 0;
+
+   memset(&cores, 0, sizeof(cores));
+   if (     !path_is_valid(path)
+         || !filestream_read_file(path, (void**)&doc, &len) || !doc)
+      return NULL;
+   romm_json_items(doc, (size_t)len, "items", romm_lib_game_core_member,
+         romm_lib_game_core_end, &cores);
+   free(cores.core_path);
+   free(cores.core_name);
+   free(doc);
+   if (cores.list)
+      qsort(cores.list, RBUF_LEN(cores.list), sizeof(*cores.list),
+            romm_lib_cmp_game_core);
+   return cores.list;
+}
+
+static void romm_lib_free_game_cores(romm_lib_game_core_t *list)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(list); i++)
+   {
+      free(list[i].core_path);
+      free(list[i].core_name);
+   }
+   RBUF_FREE(list);
+}
+
 bool romm_library_write_playlist(const char *path, const char *db_name,
       const char *default_core_path, const char *default_core_name,
       const romm_rom_t *roms, size_t count)
 {
+   romm_lib_game_core_t *game_cores = romm_lib_read_game_cores(path);
    rjsonwriter_t *writer;
    const char *buf;
    int buf_len    = 0;
@@ -263,7 +359,10 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    size_t i;
 
    if (!(writer = rjsonwriter_open_memory()))
+   {
+      romm_lib_free_game_cores(game_cores);
       return false;
+   }
 
    /* The format playlist_write_file() writes, version 1.5. Covers are
     * named after the file, and RomM's title order is kept. */
@@ -290,10 +389,17 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    {
       char content_path[PATH_MAX_LENGTH];
       char crc32[16];
+      romm_lib_game_core_t key;
+      const romm_lib_game_core_t *core = NULL;
 
       if (!romm_library_content_path(content_path, sizeof(content_path),
             &roms[i]))
          continue;
+      key.id = roms[i].id;
+      if (game_cores)
+         core = (const romm_lib_game_core_t*)bsearch(&key, game_cores,
+               RBUF_LEN(game_cores), sizeof(*game_cores),
+               romm_lib_cmp_game_core);
       crc32[0] = '\0';
       if (roms[i].single_file && *roms[i].crc)
       {
@@ -308,8 +414,10 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
       rjsonwriter_raw(writer, "{\n", 2);
       romm_lib_json_member(writer, 6, "path", content_path, false);
       romm_lib_json_member(writer, 6, "label", roms[i].name, false);
-      romm_lib_json_member(writer, 6, "core_path", FILE_PATH_DETECT, false);
-      romm_lib_json_member(writer, 6, "core_name", FILE_PATH_DETECT, false);
+      romm_lib_json_member(writer, 6, "core_path",
+            core ? core->core_path : FILE_PATH_DETECT, false);
+      romm_lib_json_member(writer, 6, "core_name",
+            core ? core->core_name : FILE_PATH_DETECT, false);
       romm_lib_json_member(writer, 6, "crc32", crc32, false);
       romm_lib_json_member(writer, 6, "db_name", db_name, true);
       rjsonwriter_add_spaces(writer, 4);
@@ -321,6 +429,7 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    if ((buf = rjsonwriter_get_memory_buffer(writer, &buf_len)))
       ok = filestream_write_file_atomic(path, buf, buf_len);
    rjsonwriter_free(writer);
+   romm_lib_free_game_cores(game_cores);
    return ok;
 }
 
