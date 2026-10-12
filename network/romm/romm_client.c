@@ -112,6 +112,14 @@ typedef struct
    void *user_data;
 } romm_rom_files_ctx_t;
 
+typedef struct
+{
+   romm_content_cb_t cb;
+   void *user_data;
+   uint64_t offset;
+   uint64_t length;
+} romm_content_ctx_t;
+
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)
 {
@@ -159,22 +167,53 @@ bool romm_client_url(char *s, size_t len, const char *server,
    return true;
 }
 
-static bool romm_get_with_headers(const char *server, const char *token,
+/* Returns the transfer's task, or NULL. */
+static void *romm_get_with_headers(const char *server, const char *token,
       const char *path, const char *extra_headers,
       retro_task_callback_t cb, void *ctx)
 {
-   char url[1024];
+   char url[2048];
    char headers[512];
 
    if (     string_is_empty(token)
          || !romm_client_url(url, sizeof(url), server, path))
-      return false;
+      return NULL;
    if ((size_t)snprintf(headers, sizeof(headers),
          "Authorization: Bearer %s\r\n%s", token, extra_headers)
          >= sizeof(headers))
-      return false;
+      return NULL;
    return task_push_http_transfer_with_headers(url, true, NULL,
-         headers, cb, ctx) != NULL;
+         headers, cb, ctx);
+}
+
+/* Percent-encodes @src for one segment of a URL path. */
+static bool romm_url_escape(char *s, size_t len, const char *src)
+{
+   static const char hex[] = "0123456789ABCDEF";
+   size_t pos              = 0;
+
+   for (; *src; src++)
+   {
+      unsigned char c = (unsigned char)*src;
+      if (ISALNUM(c) || c == '-' || c == '.' || c == '_' || c == '~')
+      {
+         if (pos + 1 >= len)
+            return false;
+         s[pos++] = (char)c;
+      }
+      else
+      {
+         if (pos + 3 >= len)
+            return false;
+         s[pos++] = '%';
+         s[pos++] = hex[c >> 4];
+         s[pos++] = hex[c & 15];
+      }
+   }
+   if (pos >= len)
+      return false;
+   s[pos] = '\0';
+   return true;
 }
 
 /* Starts GET @path on @server with @token's Bearer authorization,
@@ -183,7 +222,7 @@ static bool romm_get(const char *server, const char *token,
       const char *path, retro_task_callback_t cb, void *ctx)
 {
    return romm_get_with_headers(server, token, path, ROMM_HEADERS_JSON,
-         cb, ctx);
+         cb, ctx) != NULL;
 }
 
 static void romm_heartbeat_cb(retro_task_t *task, void *task_data,
@@ -1059,4 +1098,86 @@ bool romm_client_rom_files(const char *server, const char *token,
       return false;
    }
    return true;
+}
+
+
+static void romm_content_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_content_ctx_t *ctx    = (romm_content_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data,
+         ctx->length ? 206 : 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   void *body                 = NULL;
+   size_t len                 = 0;
+
+   /* A range from the start may come back whole from a server that
+    * ignores ranges; fine as long as it fits. */
+   if (     status == ROMM_ERR_HTTP && data->status == 200
+         && !ctx->offset && data->len <= ctx->length)
+      status = ROMM_OK;
+   if (status == ROMM_OK && ctx->length && data->len > ctx->length)
+      status = ROMM_ERR_RESPONSE;
+
+   /* Taken over rather than copied: a disc image runs to hundreds of
+    * MB. The transfer's cleanup frees only what is left in @data. */
+   if (status == ROMM_OK)
+   {
+      body       = data->data;
+      len        = data->len;
+      data->data = NULL;
+      data->len  = 0;
+   }
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't download a game file (status %d, "
+            "HTTP %d).\n", status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status, body, len);
+   free(ctx);
+}
+
+void *romm_client_rom_content(const char *server, const char *token,
+      unsigned rom_id, unsigned file_id, const char *file_name,
+      uint64_t offset, uint64_t length,
+      romm_content_cb_t cb, void *user_data)
+{
+   char name[768];
+   char path[1024];
+   char range[64];
+   size_t _len;
+   romm_content_ctx_t *ctx;
+   void *transfer;
+
+   /* The HTTP task refuses a GET to a URL already in the queue, and the
+    * range just fetched is still there while its callback starts the
+    * next; RomM ignores the extra parameter. */
+   if (     !rom_id || !file_id || string_is_empty(file_name)
+         || !romm_url_escape(name, sizeof(name), file_name))
+      return NULL;
+   _len = (size_t)snprintf(path, sizeof(path),
+         "/api/roms/%u/content/%s?file_ids=%u&purpose=play",
+         rom_id, name, file_id);
+   if (length && _len < sizeof(path))
+      _len += (size_t)snprintf(path + _len, sizeof(path) - _len,
+            "&range_start=%llu", (unsigned long long)offset);
+   if (_len >= sizeof(path))
+      return NULL;
+   range[0] = '\0';
+   if (length)
+      snprintf(range, sizeof(range), "Range: bytes=%llu-%llu\r\n",
+            (unsigned long long)offset,
+            (unsigned long long)(offset + length - 1));
+   if (!(ctx = (romm_content_ctx_t*)malloc(sizeof(*ctx))))
+      return NULL;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   ctx->offset    = offset;
+   ctx->length    = length;
+
+   if (!(transfer = romm_get_with_headers(server, token, path, range,
+         romm_content_cb, ctx)))
+      free(ctx);
+   return transfer;
 }

@@ -9,7 +9,7 @@
  * link read from its reply. The token check (whose user a token acts
  * for, and a token RomM turns down). The platform and game lists, read
  * from trimmed RomM replies, a platform's ordered game ids, a game's
- * files, and file downloads. Then the wait for approval, with the
+ * files, a game file downloaded into memory, and file downloads. Then the wait for approval, with the
  * stubs' clock standing in for time: the poll schedule, slowing down
  * when told, and how approval, denial, expiry and cancellation end it.
  *
@@ -884,6 +884,138 @@ static void test_rom_files(void)
          "game requested without an id or token");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   void *data;
+   size_t len;
+} content_result_t;
+
+static void on_content(void *user_data, enum romm_status status,
+      int http_status, void *data, size_t len)
+{
+   content_result_t *r = (content_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->data        = data;
+   r->len         = len;
+}
+
+static void test_rom_content(void)
+{
+   http_transfer_data_t resp;
+   content_result_t r;
+   char *body;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_rom_content("http://romm.local:8090", "rmm_0123abcd",
+         3335, 3613, "Final Fight CD (USA) [!] & Co+.zip", 0, 0, on_content, &r)
+         != NULL, "download not started");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/roms/3335/"
+         "content/Final%20Fight%20CD%20%28USA%29%20%5B%21%5D%20%26%20Co%2B.zip"
+         "?file_ids=3613&purpose=play"), "URL %s", stub_req.url);
+   CHECK(strstr(stub_req.headers, "Bearer rmm_0123abcd")
+         && !strstr(stub_req.headers, "application/json")
+         && !strstr(stub_req.headers, "Range:"),
+         "headers %s", stub_req.headers);
+
+   /* The body is handed over, not copied, and not freed by the
+    * transfer afterwards. */
+   body = (char*)malloc(6);
+   memcpy(body, "ROM\0\1\2", 6);
+   memset(&resp, 0, sizeof(resp));
+   resp.status = 200;
+   resp.data   = body;
+   resp.len    = 6;
+   stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.data == body && r.len == 6
+         && !resp.data && !resp.len, "ownership: status %d data %p len %u",
+         r.status, r.data, (unsigned)r.len);
+   free(r.data);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_content("http://h", "t", 4, 5, "Pok\xc3\xa9mon/x.gb",
+         0, 0, on_content, &r);
+   CHECK(strstr(stub_req.url, "/content/Pok%C3%A9mon%2Fx.gb?") != NULL,
+         "UTF-8 and slash: %s", stub_req.url);
+   answer(404, "{\"detail\": \"Not Found\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 404 && !r.data,
+         "404: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_content("http://h", "t", 4, 5, "x.gb", 0, 0, on_content, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && !r.data, "no response: %d",
+         r.status);
+
+   /* A range: asked for with Range, answered 206. */
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_content("http://h", "t", 4, 5, "big.bin",
+         67108864ULL, 67108864ULL, on_content, &r);
+   CHECK(strstr(stub_req.headers, "Range: bytes=67108864-134217727\r\n")
+         != NULL, "range header %s", stub_req.headers);
+   /* Each range its own URL, or the HTTP task refuses the next one
+    * while the last is still queued. */
+   CHECK(!strcmp(stub_req.url, "http://h/api/roms/4/content/big.bin"
+         "?file_ids=5&purpose=play&range_start=67108864"), "range URL %s",
+         stub_req.url);
+   body = (char*)malloc(4);
+   memset(&resp, 0, sizeof(resp));
+   resp.status = 206;
+   resp.data   = body;
+   resp.len    = 4;
+   stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   CHECK(r.status == ROMM_OK && r.data == body && r.len == 4,
+         "206: status %d", r.status);
+   free(r.data);
+
+   /* A 200 for a later range would be the whole file, not the part. */
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_content("http://h", "t", 4, 5, "big.bin", 64, 64,
+         on_content, &r);
+   answer(200, "whole file");
+   CHECK(r.status == ROMM_ERR_HTTP && !r.data, "200 for a later range: %d",
+         r.status);
+
+   /* A 200 for the first range of a small file is the file. */
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_content("http://h", "t", 4, 5, "small.bin", 0, 64,
+         on_content, &r);
+   body = (char*)malloc(5);
+   memcpy(body, "small", 5);
+   memset(&resp, 0, sizeof(resp));
+   resp.status = 200;
+   resp.data   = body;
+   resp.len    = 5;
+   stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   CHECK(r.status == ROMM_OK && r.len == 5, "200 for a first range: %d",
+         r.status);
+   free(r.data);
+
+   /* More than asked for is not the range. */
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_content("http://h", "t", 4, 5, "big.bin", 0, 2,
+         on_content, &r);
+   answer(206, "too long");
+   CHECK(r.status == ROMM_ERR_RESPONSE && !r.data, "too long: %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_rom_content("http://h", "t", 0, 5, "x", 0, 0, on_content, &r)
+         && !romm_client_rom_content("http://h", "t", 4, 0, "x", 0, 0, on_content, &r)
+         && !romm_client_rom_content("http://h", "t", 4, 5, "", 0, 0, on_content, &r)
+         && !romm_client_rom_content("http://h", "", 4, 5, "x", 0, 0, on_content, &r),
+         "download started without a game, file, name or token");
+   stub_req.refuse = true;
+   CHECK(!romm_client_rom_content("http://h", "t", 4, 5, "x", 0, 0, on_content, &r),
+         "download reported started when the request wasn't");
+   CHECK(r.calls == 0, "callback for a download never started");
+}
+
 static void pair_start(pair_start_result_t *r, const char *web)
 {
    memset(r, 0, sizeof(*r));
@@ -1171,6 +1303,7 @@ int main(void)
    test_roms();
    test_rom_ids();
    test_rom_files();
+   test_rom_content();
    test_download();
    test_pair_start();
    test_pair_wait();

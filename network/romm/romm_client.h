@@ -146,6 +146,12 @@ typedef void (*romm_rom_files_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_rom_t *rom, const romm_file_t *files, size_t count);
 
+/* @data holds @len bytes, from malloc and now the callback's to free;
+ * NULL unless @status is ROMM_OK, and possibly NULL for an empty
+ * file. */
+typedef void (*romm_content_cb_t)(void *user_data,
+      enum romm_status status, int http_status, void *data, size_t len);
+
 /* @data holds @len bytes, valid only during the call; NULL unless
  * @status is ROMM_OK. */
 typedef void (*romm_download_cb_t)(void *user_data,
@@ -209,6 +215,18 @@ bool romm_client_rom_ids(const char *server, const char *token,
  * the main thread. */
 bool romm_client_rom_files(const char *server, const char *token,
       unsigned rom_id, romm_rom_files_cb_t cb, void *user_data);
+
+/* Downloads @length bytes from @offset of file @file_id, named
+ * @file_name, of game @rom_id into memory; RomM records it as played
+ * rather than downloaded. A @length of 0 asks for the whole file.
+ * RetroArch's HTTP client refuses replies over 256 MB, so larger files
+ * are fetched a range at a time. Returns the transfer's task, whose
+ * progress shows how far it has got and which can be cancelled, or
+ * NULL. @cb runs on the main thread. */
+void *romm_client_rom_content(const char *server, const char *token,
+      unsigned rom_id, unsigned file_id, const char *file_name,
+      uint64_t offset, uint64_t length,
+      romm_content_cb_t cb, void *user_data);
 
 /* Fetches the file at @path on @server, such as a cover, into memory.
  * @path goes into the URL as is. @cb runs on the main thread. */
