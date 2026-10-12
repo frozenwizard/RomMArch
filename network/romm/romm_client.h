@@ -118,6 +118,12 @@ typedef void (*romm_roms_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_rom_t *roms, size_t count);
 
+/* @ids holds @count game ids, valid only during the call; NULL unless
+ * @status is ROMM_OK. */
+typedef void (*romm_rom_ids_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const unsigned *ids, size_t count);
+
 /* @data holds @len bytes, valid only during the call; NULL unless
  * @status is ROMM_OK. */
 typedef void (*romm_download_cb_t)(void *user_data,
@@ -169,6 +175,12 @@ bool romm_client_roms(const char *server, const char *token,
       unsigned platform_id, const char *updated_after,
       unsigned offset, unsigned limit,
       romm_roms_cb_t cb, void *user_data);
+
+/* Lists the ids of every game romm_client_roms() would return for
+ * @platform_id, in the same order, in one request. @cb runs on the
+ * main thread. */
+bool romm_client_rom_ids(const char *server, const char *token,
+      unsigned platform_id, romm_rom_ids_cb_t cb, void *user_data);
 
 /* Fetches the file at @path on @server, such as a cover, into memory.
  * @path goes into the URL as is. @cb runs on the main thread. */

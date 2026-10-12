@@ -175,3 +175,66 @@ bool romm_json_items(const char *data, size_t len,
    rjson_free(json);
    return complete;
 }
+
+bool romm_json_values(const char *data, size_t len,
+      const char *array_key, romm_json_value_cb_t value, void *ctx)
+{
+   bool in_array    = false;
+   bool key_matched = false;
+   bool complete    = false;
+   rjson_t *json;
+   enum rjson_type type;
+
+   if (!data || !len || !(json = rjson_open_buffer(data, len)))
+      return false;
+
+   while ((type = rjson_next(json)) != RJSON_DONE && type != RJSON_ERROR)
+   {
+      unsigned depth = rjson_get_context_depth(json);
+      const char *str;
+      size_t _len;
+
+      if (!in_array)
+      {
+         if (type == RJSON_ARRAY && depth == 2 && key_matched)
+            in_array = true;
+         else if (depth == 1)
+         {
+            key_matched = false;
+            if (     type == RJSON_STRING
+                  && (rjson_get_context_count(json) & 1))
+            {
+               str         = rjson_get_string(json, &_len);
+               key_matched = string_is_equal(str, array_key);
+            }
+         }
+         continue;
+      }
+
+      if (depth < 2)
+      {
+         complete = true;
+         break;
+      }
+      if (depth > 2)
+         continue;
+      switch (type)
+      {
+         case RJSON_STRING:
+         case RJSON_NUMBER:
+            str = rjson_get_string(json, &_len);
+            value(ctx, type, str, _len);
+            break;
+         case RJSON_TRUE:
+         case RJSON_FALSE:
+         case RJSON_NULL:
+            value(ctx, type, "", 0);
+            break;
+         default:
+            break;
+      }
+   }
+
+   rjson_free(json);
+   return complete;
+}

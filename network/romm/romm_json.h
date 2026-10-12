@@ -41,6 +41,16 @@ bool romm_json_items(const char *data, size_t len,
       const char *array_key, romm_json_member_cb_t member,
       romm_json_item_end_cb_t item_end, void *ctx);
 
+/* A scalar item in the array being walked. */
+typedef void (*romm_json_value_cb_t)(void *ctx, enum rjson_type type,
+      const char *value, size_t len);
+
+/* Walks the strings, numbers, true, false and null directly in the
+ * array at @array_key of the top-level object. False unless that
+ * array is there and complete. */
+bool romm_json_values(const char *data, size_t len,
+      const char *array_key, romm_json_value_cb_t value, void *ctx);
+
 RETRO_END_DECLS
 
 #endif

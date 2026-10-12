@@ -100,6 +100,12 @@ typedef struct
    void *user_data;
 } romm_download_ctx_t;
 
+typedef struct
+{
+   romm_rom_ids_cb_t cb;
+   void *user_data;
+} romm_rom_ids_ctx_t;
+
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)
 {
@@ -837,6 +843,70 @@ bool romm_client_download(const char *server, const char *token,
 
    if (!romm_get_with_headers(server, token, path, "", romm_download_cb,
          ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+static void romm_rom_ids_value(void *ctx, enum rjson_type type,
+      const char *value, size_t len)
+{
+   unsigned **ids = (unsigned**)ctx;
+   unsigned id;
+
+   if (type == RJSON_NUMBER && (id = romm_json_uint(value)))
+      RBUF_PUSH(*ids, id);
+}
+
+static void romm_rom_ids_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_rom_ids_ctx_t *ctx    = (romm_rom_ids_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   unsigned *ids              = NULL;
+
+   if (     status == ROMM_OK
+         && !romm_json_values(data->data, data->len, "rom_id_index",
+               romm_rom_ids_value, &ids))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status != ROMM_OK)
+      RARCH_WARN(ROMM_PFX "Couldn't list game ids (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? ids : NULL,
+         status == ROMM_OK ? RBUF_LEN(ids) : 0);
+   RBUF_FREE(ids);
+   free(ctx);
+}
+
+bool romm_client_rom_ids(const char *server, const char *token,
+      unsigned platform_id, romm_rom_ids_cb_t cb, void *user_data)
+{
+   char path[384];
+   romm_rom_ids_ctx_t *ctx;
+
+   /* The index comes with one page of games, so ask for the smallest;
+    * filters and order match romm_client_roms(). */
+   if (     !platform_id
+         || (size_t)snprintf(path, sizeof(path),
+            "/api/roms?platform_ids=%u&missing=false&order_by=name"
+            "&order_dir=asc&with_char_index=false&with_filter_values=false"
+            "&with_rom_id_index=true&with_total=false&limit=1&offset=0",
+            platform_id) >= sizeof(path))
+      return false;
+   if (!(ctx = (romm_rom_ids_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!romm_get(server, token, path, romm_rom_ids_cb, ctx))
    {
       free(ctx);
       return false;

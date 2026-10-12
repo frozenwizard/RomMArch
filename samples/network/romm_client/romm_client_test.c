@@ -8,7 +8,8 @@
  * of device pairing: the request RomM gets, and the code and approval
  * link read from its reply. The token check (whose user a token acts
  * for, and a token RomM turns down). The platform and game lists, read
- * from trimmed RomM replies, and file downloads. Then the wait for approval, with the
+ * from trimmed RomM replies, a platform's ordered game ids, and file
+ * downloads. Then the wait for approval, with the
  * stubs' clock standing in for time: the poll schedule, slowing down
  * when told, and how approval, denial, expiry and cancellation end it.
  *
@@ -232,6 +233,37 @@ static void test_json_items(void)
    CHECK(!items("[{\"id\": 1}, {\"id\": 2", NULL, &l),
          "truncated array reported complete");
    CHECK(!items("<html>", NULL, &l), "HTML walked as JSON");
+}
+
+static void values_value(void *ctx, enum rjson_type type,
+      const char *value, size_t len)
+{
+   items_log_t *l = (items_log_t*)ctx;
+   strlcat(l->log, type == RJSON_NULL ? "null" : value, sizeof(l->log));
+   strlcat(l->log, ";", sizeof(l->log));
+}
+
+static bool values(const char *doc, const char *key, items_log_t *l)
+{
+   memset(l, 0, sizeof(*l));
+   return romm_json_values(doc, strlen(doc), key, values_value, l);
+}
+
+static void test_json_values(void)
+{
+   items_log_t l;
+
+   CHECK(values("{\"items\": [{\"rom_id_index\": [9]}],"
+            " \"x\": {\"rom_id_index\": [8]},"
+            " \"rom_id_index\": [3, 1, [7], {\"a\": 6}, \"s\", null, 2],"
+            " \"total\": 3}", "rom_id_index", &l)
+         && !strcmp(l.log, "3;1;s;null;2;"), "values: %s", l.log);
+   CHECK(values("{\"rom_id_index\": []}", "rom_id_index", &l) && !*l.log,
+         "empty: %s", l.log);
+   CHECK(!values("{\"rom_id_index\": 5}", "rom_id_index", &l),
+         "not an array");
+   CHECK(!values("{\"rom_id_index\": [1, 2", "rom_id_index", &l),
+         "truncated array reported complete");
 }
 
 static void heartbeat(heartbeat_result_t *r)
@@ -661,6 +693,77 @@ static void test_download(void)
          "download started without a token");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   bool has_list;
+   size_t count;
+   unsigned ids[8];
+} rom_ids_result_t;
+
+static void on_rom_ids(void *user_data, enum romm_status status,
+      int http_status, const unsigned *ids, size_t count)
+{
+   rom_ids_result_t *r = (rom_ids_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status   = status;
+   r->has_list = ids != NULL;
+   r->count    = count;
+   for (i = 0; i < count && i < 8; i++)
+      r->ids[i] = ids[i];
+}
+
+static void test_rom_ids(void)
+{
+   rom_ids_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_rom_ids("http://romm.local:8090", "rmm_0123abcd", 15,
+         on_rom_ids, &r), "id list not started");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/roms"
+            "?platform_ids=15&missing=false&order_by=name&order_dir=asc"
+            "&with_char_index=false&with_filter_values=false"
+            "&with_rom_id_index=true&with_total=false&limit=1&offset=0"),
+         "URL %s", stub_req.url);
+   CHECK(strstr(stub_req.headers, "Bearer rmm_0123abcd") != NULL,
+         "headers %s", stub_req.headers);
+   /* The page's one game carries ids of its own. */
+   answer(200, "{\"items\": [{\"id\": 3335, \"files\": [{\"id\": 3613}]}],"
+         " \"total\": 3, \"limit\": 1, \"offset\": 0,"
+         " \"char_index\": {}, \"rom_id_index\": [3335, 2810, 41],"
+         " \"filter_values\": {}}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.count == 3
+         && r.ids[0] == 3335 && r.ids[1] == 2810 && r.ids[2] == 41,
+         "ids: status %d count %u", r.status, (unsigned)r.count);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_ids("http://h", "t", 15, on_rom_ids, &r);
+   answer(200, "{\"items\": [], \"rom_id_index\": []}");
+   CHECK(r.status == ROMM_OK && r.has_list == false && r.count == 0,
+         "all hidden: status %d count %u", r.status, (unsigned)r.count);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_ids("http://h", "t", 15, on_rom_ids, &r);
+   answer(200, "{\"items\": []}");
+   CHECK(r.status == ROMM_ERR_RESPONSE, "no index: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_ids("http://h", "t", 15, on_rom_ids, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE, "no response: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_rom_ids("http://h", "t", 0, on_rom_ids, &r)
+         && !romm_client_rom_ids("http://h", "", 15, on_rom_ids, &r)
+         && stub_req.count == 0 && r.calls == 0,
+         "id list started without a platform or token");
+}
+
 static void pair_start(pair_start_result_t *r, const char *web)
 {
    memset(r, 0, sizeof(*r));
@@ -941,10 +1044,12 @@ int main(void)
    test_url();
    test_json();
    test_json_items();
+   test_json_values();
    test_heartbeat();
    test_whoami();
    test_platforms();
    test_roms();
+   test_rom_ids();
    test_download();
    test_pair_start();
    test_pair_wait();
