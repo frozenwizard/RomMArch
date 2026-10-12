@@ -1807,7 +1807,12 @@
 
 #define DEFAULT_PLAYLIST_USE_FILENAME false
 
+#ifdef HAVE_ROMM
+/* Most of RomM's covers are JPEG. */
+#define DEFAULT_PLAYLIST_ALLOW_NON_PNG true
+#else
 #define DEFAULT_PLAYLIST_ALLOW_NON_PNG false
+#endif
 
 /* Show Menu start-up screen on boot. */
 #define DEFAULT_MENU_SHOW_START_SCREEN true
