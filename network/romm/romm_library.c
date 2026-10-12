@@ -106,6 +106,7 @@ typedef struct
    bool finished;
    /* Covers the sync found missing or changed, for the covers task */
    romm_lib_cover_t *covers;
+   romm_library_find_core_t find_core;
    char *token;
    char *covers_title;
    char server[NAME_MAX_LENGTH];
@@ -113,6 +114,57 @@ typedef struct
    char thumbnails_dir[PATH_MAX_LENGTH];
    char manifest[PATH_MAX_LENGTH];
 } romm_lib_sync_t;
+
+/* D10: emulators that read games through RetroArch's file layer. */
+typedef struct
+{
+   const char *libretro_slug;
+   const char *cores[3];
+} romm_lib_system_cores_t;
+
+static const romm_lib_system_cores_t romm_lib_system_cores[] = {
+   { "Nintendo - Nintendo Entertainment System", { "mesen", "fceumm" } },
+   { "Nintendo - Family Computer Disk System",   { "mesen", "fceumm" } },
+   { "Nintendo - Super Nintendo Entertainment System", { "snes9x" } },
+   { "Nintendo - Game Boy",                      { "gambatte", "sameboy" } },
+   { "Nintendo - Game Boy Color",                { "gambatte", "sameboy" } },
+   { "Nintendo - Game Boy Advance",              { "mgba" } },
+   { "Nintendo - Nintendo 64",                   { "mupen64plus_next" } },
+   { "Nintendo - Nintendo DS",                   { "melondsds" } },
+   { "Nintendo - Virtual Boy",                   { "mednafen_vb" } },
+   { "Sega - Mega Drive - Genesis",              { "genesis_plus_gx" } },
+   { "Sega - Master System - Mark III",          { "genesis_plus_gx" } },
+   { "Sega - Game Gear",                         { "genesis_plus_gx" } },
+   { "Sega - Mega-CD - Sega CD",                 { "genesis_plus_gx" } },
+   { "Sega - 32X",                               { "picodrive" } },
+   { "Sega - Saturn",                            { "mednafen_saturn" } },
+   { "Sega - Dreamcast",                         { "flycast" } },
+   { "Sony - PlayStation",                       { "mednafen_psx_hw", "swanstation" } },
+   { "NEC - PC Engine - TurboGrafx 16",          { "mednafen_pce_fast" } },
+   { "NEC - PC Engine CD - TurboGrafx-CD",       { "mednafen_pce_fast" } },
+   { "SNK - Neo Geo CD",                         { "neocd" } },
+   { "SNK - Neo Geo Pocket",                     { "mednafen_ngp" } },
+   { "SNK - Neo Geo Pocket Color",               { "mednafen_ngp" } },
+   { "The 3DO Company - 3DO",                    { "opera" } },
+   { "Bandai - WonderSwan",                      { "mednafen_wswan" } },
+   { "Bandai - WonderSwan Color",                { "mednafen_wswan" } },
+   { "Atari - Lynx",                             { "handy" } },
+   { "Atari - 2600",                             { "stella" } },
+   { "Atari - 7800",                             { "prosystem" } },
+   { "Coleco - ColecoVision",                    { "gearcoleco" } },
+   { "GCE - Vectrex",                            { "vecx" } }
+};
+
+const char *const *romm_library_preferred_cores(const char *libretro_slug)
+{
+   size_t i;
+   if (!string_is_empty(libretro_slug))
+      for (i = 0; i < ARRAY_SIZE(romm_lib_system_cores); i++)
+         if (string_is_equal(romm_lib_system_cores[i].libretro_slug,
+               libretro_slug))
+            return romm_lib_system_cores[i].cores;
+   return NULL;
+}
 
 /* Characters a file name can't hold on some system RetroArch runs on. */
 static void romm_lib_scrub_file_name(char *s)
@@ -525,7 +577,8 @@ void romm_library_free(romm_library_t *lib)
  * two platforms with one libretro name, such as Genesis and Mega
  * Drive. */
 static bool romm_lib_write_named_playlist(const romm_library_t *lib,
-      const char *playlist_dir, const char *name)
+      const char *playlist_dir, const char *name,
+      const char *core_path, const char *core_name)
 {
    char path[PATH_MAX_LENGTH];
    const romm_library_platform_t *only = NULL;
@@ -554,9 +607,9 @@ static bool romm_lib_write_named_playlist(const romm_library_t *lib,
 
    fill_pathname_join(path, playlist_dir, name, sizeof(path));
    ok = merged
-      ? romm_library_write_playlist(path, name, NULL, NULL,
+      ? romm_library_write_playlist(path, name, core_path, core_name,
             merged, RBUF_LEN(merged))
-      : romm_library_write_playlist(path, name, NULL, NULL,
+      : romm_library_write_playlist(path, name, core_path, core_name,
             only->roms, RBUF_LEN(only->roms));
    RBUF_FREE(merged);
    return ok;
@@ -1123,6 +1176,48 @@ static void romm_lib_sync_roms_cb(void *user_data,
       sync->state = ROMM_LIB_SYNC_WRITE;
 }
 
+/* The default core the playlist at @path should have: the one it has,
+ * which the user may have picked, or else the first installed of the
+ * system's preferred cores. @changed is set when that differs from
+ * the file's. */
+static void romm_lib_default_core(romm_lib_sync_t *sync, const char *path,
+      const romm_platform_t *platform, char *core_path, size_t path_len,
+      char *core_name, size_t name_len, bool *changed)
+{
+   const char *const *cores = romm_library_preferred_cores(
+         platform->libretro_slug);
+   char file_path[PATH_MAX_LENGTH];
+   char *doc   = NULL;
+   int64_t len = 0;
+
+   file_path[0] = '\0';
+   core_path[0] = '\0';
+   core_name[0] = '\0';
+   if (     path_is_valid(path)
+         && filestream_read_file(path, (void**)&doc, &len) && doc)
+   {
+      romm_json_get(doc, (size_t)len, "default_core_path",
+            file_path, sizeof(file_path));
+      if (*file_path && !string_is_equal(file_path, FILE_PATH_DETECT))
+      {
+         strlcpy(core_path, file_path, path_len);
+         romm_json_get(doc, (size_t)len, "default_core_name",
+               core_name, name_len);
+      }
+   }
+   free(doc);
+
+   if (!*core_path && cores && sync->find_core
+         && !sync->find_core(cores, core_path, path_len,
+               core_name, name_len))
+   {
+      core_path[0] = '\0';
+      core_name[0] = '\0';
+   }
+   *changed = !string_is_equal(core_path, file_path)
+      && !(!*core_path && string_is_equal(file_path, FILE_PATH_DETECT));
+}
+
 /* Moves the fetched games into the library and, unless it would come
  * out as it is, writes their playlist; a platform with none the user
  * can see gets no playlist. */
@@ -1131,6 +1226,9 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    const romm_library_platform_t *old = sync->old_platform;
    romm_library_platform_t entry;
    char path[PATH_MAX_LENGTH];
+   char core_path[PATH_MAX_LENGTH];
+   char core_name[NAME_MAX_LENGTH];
+   bool core_changed;
    bool write;
    size_t i;
 
@@ -1146,7 +1244,11 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    }
    fill_pathname_join(path, sync->playlist_dir, entry.playlist,
          sizeof(path));
+   romm_lib_default_core(sync, path, &entry.platform,
+         core_path, sizeof(core_path), core_name, sizeof(core_name),
+         &core_changed);
    write = !old
+      || core_changed
       || !string_is_equal(old->playlist, entry.playlist)
       || !romm_lib_same_roms(old->roms, sync->roms)
       || !path_is_valid(path);
@@ -1164,7 +1266,7 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
       return true;
    sync->rewritten++;
    return romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
-         entry.playlist);
+         entry.playlist, core_path, core_name);
 }
 
 /* The last sync's entry for platform @id, if it wrote one. */
@@ -1344,11 +1446,15 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
    task->state = NULL;
 }
 
-bool romm_library_sync(const char *server, const char *token,
-      const char *playlist_dir, const char *thumbnails_dir,
-      const char *title, const char *covers_title,
+bool romm_library_sync(const romm_library_sync_params_t *params,
       romm_library_sync_cb_t cb, void *user_data)
 {
+   const char *server         = params->server;
+   const char *token          = params->token;
+   const char *playlist_dir   = params->playlist_dir;
+   const char *thumbnails_dir = params->thumbnails_dir;
+   const char *title          = params->title;
+   const char *covers_title   = params->covers_title;
    romm_lib_sync_t *sync;
    retro_task_t *task;
 
@@ -1367,6 +1473,7 @@ bool romm_library_sync(const char *server, const char *token,
    sync->cb        = cb;
    sync->user_data = user_data;
    sync->task      = task;
+   sync->find_core = params->find_core;
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));

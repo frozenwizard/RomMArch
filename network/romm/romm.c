@@ -27,6 +27,7 @@
 #include "romm_platform.h"
 #include "../../command.h"
 #include "../../configuration.h"
+#include "../../core_info.h"
 #include "../../msg_hash.h"
 #include "../../playlist.h"
 #include "../../runloop.h"
@@ -265,6 +266,35 @@ static void romm_reload_playlists(const romm_library_t *lib)
 #endif
 }
 
+static bool romm_find_core(const char *const *cores, char *path,
+      size_t path_len, char *name, size_t name_len)
+{
+   core_info_list_t *list = NULL;
+   size_t i, j;
+
+   if (!core_info_get_list(&list) || !list)
+      return false;
+   for (i = 0; cores[i]; i++)
+   {
+      char file_name[NAME_MAX_LENGTH];
+      size_t _len = strlcpy(file_name, cores[i], sizeof(file_name));
+      strlcpy(file_name + _len, "_libretro.", sizeof(file_name) - _len);
+      for (j = 0; j < list->count; j++)
+      {
+         const core_info_t *info = &list->list[j];
+         if (     info->path
+               && string_starts_with(path_basename(info->path), file_name))
+         {
+            strlcpy(path, info->path, path_len);
+            strlcpy(name, info->display_name ? info->display_name
+                  : cores[i], name_len);
+            return true;
+         }
+      }
+   }
+   return false;
+}
+
 static void romm_on_library_synced(void *user_data, enum romm_status status,
       int http_status, const romm_library_t *lib)
 {
@@ -292,6 +322,7 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
 void romm_refresh_library(void)
 {
    settings_t *settings = config_get_ptr();
+   romm_library_sync_params_t params;
 
    if (romm_syncing)
    {
@@ -312,12 +343,14 @@ void romm_refresh_library(void)
       return;
    }
 
-   if (!romm_library_sync(settings->arrays.romm_server_url,
-         settings->arrays.romm_token, settings->paths.directory_playlist,
-         settings->paths.directory_thumbnails,
-         msg_hash_to_str(MSG_ROMM_SYNCING),
-         msg_hash_to_str(MSG_ROMM_FETCHING_COVERS),
-         romm_on_library_synced, NULL))
+   params.server         = settings->arrays.romm_server_url;
+   params.token          = settings->arrays.romm_token;
+   params.playlist_dir   = settings->paths.directory_playlist;
+   params.thumbnails_dir = settings->paths.directory_thumbnails;
+   params.title          = msg_hash_to_str(MSG_ROMM_SYNCING);
+   params.covers_title   = msg_hash_to_str(MSG_ROMM_FETCHING_COVERS);
+   params.find_core      = romm_find_core;
+   if (!romm_library_sync(&params, romm_on_library_synced, NULL))
    {
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
       return;

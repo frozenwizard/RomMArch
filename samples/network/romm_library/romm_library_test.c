@@ -5,7 +5,8 @@
  * request stubs: the requests made, paging, the playlists and manifest
  * written, and how a failed request or a cancel ends it; playlists of
  * platforms gone from RomM removed, others' left alone, and the
- * manifest after a sync that stopped part way. Covers: where they go,
+ * manifest after a sync that stopped part way; incremental syncs and
+ * the default core each playlist gets. Covers: where they go,
  * which a sync fetches (new or changed in RomM, not already on disk),
  * and which it deletes.
  *
@@ -329,6 +330,25 @@ static void test_manifest(void)
 
 #define TEST_DIR "romm_library_test_dir"
 
+/* What sync_start() passes as the installed-core finder. */
+static romm_library_find_core_t test_find_core;
+
+static bool sync_start(const char *server, const char *token,
+      const char *playlist_dir, const char *thumbnails_dir,
+      const char *title, const char *covers_title,
+      romm_library_sync_cb_t cb, void *user_data)
+{
+   romm_library_sync_params_t params;
+   params.server         = server;
+   params.token          = token;
+   params.playlist_dir   = playlist_dir;
+   params.thumbnails_dir = thumbnails_dir;
+   params.title          = title;
+   params.covers_title   = covers_title;
+   params.find_core      = test_find_core;
+   return romm_library_sync(&params, cb, user_data);
+}
+
 typedef struct
 {
    unsigned calls;
@@ -464,7 +484,7 @@ static void test_sync(void)
    memset(&r, 0, sizeof(r));
    stub_reset();
    stub_task = NULL;
-   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+   CHECK(sync_start("http://romm.local:8090", "rmm_tok", TEST_DIR,
          NULL, "Syncing", NULL, on_sync, &r) && stub_task, "sync not started");
    CHECK(stub_task && (stub_task->flags & RETRO_TASK_FLG_MAIN_THREAD)
          && !strcmp(stub_task->title, "Syncing"), "task flags or title");
@@ -538,7 +558,7 @@ static void test_sync(void)
 
    /* No response part way: reported, the manifest left as it was. */
    memset(&r, 0, sizeof(r));
-   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+   CHECK(sync_start("http://romm.local:8090", "rmm_tok", TEST_DIR,
          NULL, NULL, NULL, on_sync, &r), "second sync not started");
    CHECK(stub_task && (stub_task->flags & RETRO_TASK_FLG_MUTE),
          "untitled sync not muted");
@@ -553,7 +573,7 @@ static void test_sync(void)
    /* Cancelled while a request is out: it waits for the answer, then
     * stops without another. */
    memset(&r, 0, sizeof(r));
-   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+   CHECK(sync_start("http://romm.local:8090", "rmm_tok", TEST_DIR,
          NULL, NULL, NULL, on_sync, &r), "third sync not started");
    sync_step();
    CHECK(stub_req.count == 9, "%u requests", stub_req.count);
@@ -574,21 +594,21 @@ static void test_sync(void)
    /* A request that can't start ends the sync. */
    memset(&r, 0, sizeof(r));
    stub_req.refuse = true;
-   CHECK(romm_library_sync("http://romm.local:8090", "rmm_tok", TEST_DIR,
+   CHECK(sync_start("http://romm.local:8090", "rmm_tok", TEST_DIR,
          NULL, NULL, NULL, on_sync, &r), "fourth sync not started");
    CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE,
          "refused: calls %u status %d", r.calls, r.status);
    stub_req.refuse = false;
 
-   CHECK(!romm_library_sync("http://h", "", TEST_DIR, NULL, NULL, NULL,
+   CHECK(!sync_start("http://h", "", TEST_DIR, NULL, NULL, NULL,
             on_sync, &r)
-         && !romm_library_sync("", "t", TEST_DIR, NULL, NULL, NULL,
+         && !sync_start("", "t", TEST_DIR, NULL, NULL, NULL,
             on_sync, &r)
-         && !romm_library_sync("http://h", "t", "", NULL, NULL, NULL,
+         && !sync_start("http://h", "t", "", NULL, NULL, NULL,
             on_sync, &r),
          "sync started without a server, token or folder");
    stub_refuse_task = true;
-   CHECK(!romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   CHECK(!sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r),
          "sync reported started when its task wasn't");
    stub_refuse_task = false;
@@ -629,7 +649,7 @@ static void test_sync_reconcile(void)
    filestream_write_file(TEST_DIR "/Mine.lpl", "{}", 2);
 
    memset(&r, 0, sizeof(r));
-   CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR, NULL,
+   CHECK(sync_start("http://romm.local:8090", "t", TEST_DIR, NULL,
          NULL, NULL, on_sync, &r), "sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 2,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
@@ -657,7 +677,7 @@ static void test_sync_reconcile(void)
    /* Stopped after rewriting Sega CD: SNES stays as the last sync left
     * it, and the sync time doesn't move, so a refresh is still due. */
    memset(&r, 0, sizeof(r));
-   CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR, NULL,
+   CHECK(sync_start("http://romm.local:8090", "t", TEST_DIR, NULL,
          NULL, NULL, on_sync, &r), "second sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
@@ -749,7 +769,7 @@ static char *covers_page(const char *cover1, const char *cover2,
 static void covers_sync(sync_result_t *r, const char *ids, const char *page)
 {
    memset(r, 0, sizeof(*r));
-   CHECK(romm_library_sync("http://romm.local:8090", "t", TEST_DIR,
+   CHECK(sync_start("http://romm.local:8090", "t", TEST_DIR,
          TEST_DIR "/thumbs", NULL, "Covers", on_sync, r), "sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"}]");
@@ -951,7 +971,7 @@ static void test_sync_incremental(void)
 
    /* First sync: everything. */
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
@@ -968,7 +988,7 @@ static void test_sync_incremental(void)
     * since a minute before the newest game, and no rewrite. */
    filestream_write_file(pl, "untouched", 9);
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
@@ -988,7 +1008,7 @@ static void test_sync_incremental(void)
 
    /* A game added first in RomM's order, one renamed, one removed. */
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
@@ -1016,7 +1036,7 @@ static void test_sync_incremental(void)
    /* A game the last sync didn't have and that hasn't changed, such as
     * one shown again: the platform is fetched in full. */
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, "[{\"id\": 8, \"rom_count\": 4,"
          " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
@@ -1042,7 +1062,7 @@ static void test_sync_incremental(void)
    /* The playlist deleted by hand is written again. */
    filestream_delete(pl);
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, "[{\"id\": 8, \"rom_count\": 4,"
          " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
@@ -1074,7 +1094,7 @@ static void test_sync_shared_playlist(void)
    romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
 
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, platforms);
    strlcpy(page, "{\"items\": [", sizeof(page));
@@ -1090,7 +1110,7 @@ static void test_sync_shared_playlist(void)
 
    /* Genesis gains a game; Mega Drive is unchanged. */
    memset(&r, 0, sizeof(r));
-   romm_library_sync("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
    sync_answer(200, platforms);
    sync_answer(200, "{\"rom_id_index\": [1, 3]}");
@@ -1109,6 +1129,134 @@ static void test_sync_shared_playlist(void)
    filestream_delete(TEST_DIR);
 }
 
+static void test_preferred_cores(void)
+{
+   const char *const *c = romm_library_preferred_cores("Sony - PlayStation");
+   CHECK(c && !strcmp(c[0], "mednafen_psx_hw") && !strcmp(c[1], "swanstation")
+         && !c[2], "PlayStation cores");
+   c = romm_library_preferred_cores("Sega - Mega-CD - Sega CD");
+   CHECK(c && !strcmp(c[0], "genesis_plus_gx") && !c[1], "Sega CD cores");
+   CHECK(!romm_library_preferred_cores("Sony - PlayStation 2")
+         && !romm_library_preferred_cores("")
+         && !romm_library_preferred_cores(NULL), "cores for a system without");
+}
+
+static bool genesis_installed;
+
+static bool find_core(const char *const *cores, char *path,
+      size_t path_len, char *name, size_t name_len)
+{
+   size_t i;
+   for (i = 0; cores[i]; i++)
+      if (genesis_installed && !strcmp(cores[i], "genesis_plus_gx"))
+      {
+         strlcpy(path, "/cores/genesis_plus_gx_libretro.dylib", path_len);
+         strlcpy(name, "Sega - MS/GG/MD/CD (Genesis Plus GX)", name_len);
+         return true;
+      }
+   return false;
+}
+
+/* Syncs Genesis: a full fetch of @page the first time, else its ids
+ * and @page as the changes. */
+static void genesis_sync(sync_result_t *r, const char *ids, const char *page)
+{
+   memset(r, 0, sizeof(*r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   if (ids)
+      sync_answer(200, ids);
+   sync_answer(200, page);
+   CHECK(sync_run_out() && r->status == ROMM_OK, "sync: status %d",
+         r->status);
+}
+
+static void test_sync_default_core(void)
+{
+   const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   sync_result_t r;
+   char manifest[256];
+   char page[1024];
+   char s[256];
+   char *doc   = NULL;
+   int64_t len = 0;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   test_find_core    = find_core;
+   genesis_installed = false;
+
+   /* No preferred core installed: the playlist leaves it to RetroArch. */
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 1, "A", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 2, "B", "2026-10-02T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   genesis_sync(&r, NULL, page);
+   CHECK(filestream_read_file(pl, (void**)&doc, &len) && doc
+         && lpl_get(doc, len, -1, "default_core_path", s, sizeof(s)) && !*s,
+         "default core without one installed: %s", s);
+   free(doc);
+   doc = NULL;
+
+   /* Genesis Plus GX installed: the next sync sets it, though no game
+    * changed. */
+   genesis_installed = true;
+   genesis_sync(&r, "{\"rom_id_index\": [1, 2]}", "{\"items\": []}");
+   if (filestream_read_file(pl, (void**)&doc, &len) && doc)
+   {
+      CHECK(lpl_get(doc, len, -1, "default_core_path", s, sizeof(s))
+            && !strcmp(s, "/cores/genesis_plus_gx_libretro.dylib"),
+            "default core path %s", s);
+      CHECK(lpl_get(doc, len, -1, "default_core_name", s, sizeof(s))
+            && !strcmp(s, "Sega - MS/GG/MD/CD (Genesis Plus GX)"),
+            "default core name %s", s);
+      CHECK(count_entries(pl) == 2, "entries lost");
+      free(doc);
+      doc = NULL;
+   }
+
+   /* The user picks PicoDrive for the playlist; a game changing in
+    * RomM rewrites it with their choice kept. */
+   if (filestream_read_file(pl, (void**)&doc, &len) && doc)
+   {
+      char *p = strstr(doc, "genesis_plus_gx_libretro.dylib");
+      char *n = strstr(doc, "Sega - MS/GG/MD/CD (Genesis Plus GX)");
+      if (p && n)
+      {
+         char edited[4096];
+         snprintf(edited, sizeof(edited), "%.*spicodrive_libretro.dylib%.*s"
+               "PicoDrive%s", (int)(p - doc), doc,
+               (int)(n - (p + 30)), p + 30, n + 36);
+         filestream_write_file(pl, edited, (int64_t)strlen(edited));
+      }
+      free(doc);
+      doc = NULL;
+   }
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 2, "B Renamed", "2026-10-09T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   genesis_sync(&r, "{\"rom_id_index\": [1, 2]}", page);
+   if (filestream_read_file(pl, (void**)&doc, &len) && doc)
+   {
+      CHECK(lpl_get(doc, len, -1, "default_core_path", s, sizeof(s))
+            && !strcmp(s, "/cores/picodrive_libretro.dylib"),
+            "user's core replaced: %s", s);
+      CHECK(lpl_get(doc, len, -1, "default_core_name", s, sizeof(s))
+            && !strcmp(s, "PicoDrive"), "user's core name %s", s);
+      CHECK(lpl_get(doc, len, 1, "label", s, sizeof(s))
+            && !strcmp(s, "B Renamed"), "not rewritten: %s", s);
+      free(doc);
+      doc = NULL;
+   }
+
+   test_find_core = NULL;
+   filestream_delete(pl);
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -1120,6 +1268,8 @@ int main(void)
    test_cursor();
    test_sync_incremental();
    test_sync_shared_playlist();
+   test_preferred_cores();
+   test_sync_default_core();
    test_cover_path();
    test_covers();
 
