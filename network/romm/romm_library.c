@@ -18,6 +18,7 @@
 #include <time.h>
 
 #include <array/rbuf.h>
+#include <compat/posix_string.h>
 #include <compat/strl.h>
 #include <features/features_cpu.h>
 #include <file/file_path.h>
@@ -431,6 +432,41 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    rjsonwriter_free(writer);
    romm_lib_free_game_cores(game_cores);
    return ok;
+}
+
+static int romm_lib_cmp_save_name(const void *a, const void *b)
+{
+   const romm_rom_t *x = *(const romm_rom_t* const*)a;
+   const romm_rom_t *y = *(const romm_rom_t* const*)b;
+   return strcasecmp(x->fs_name_no_ext, y->fs_name_no_ext);
+}
+
+size_t romm_library_save_name_clashes(const romm_library_t *lib)
+{
+   const romm_rom_t **all = NULL;
+   size_t clashes         = 0;
+   size_t i, j;
+
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      for (j = 0; j < RBUF_LEN(lib->platforms[i].roms); j++)
+         if (*lib->platforms[i].roms[j].fs_name_no_ext)
+            RBUF_PUSH(all, &lib->platforms[i].roms[j]);
+   if (!all)
+      return 0;
+   qsort(all, RBUF_LEN(all), sizeof(*all), romm_lib_cmp_save_name);
+   for (i = 0; i < RBUF_LEN(all); i = j)
+   {
+      for (j = i + 1; j < RBUF_LEN(all)
+            && !romm_lib_cmp_save_name(&all[i], &all[j]); j++);
+      if (j - i > 1)
+      {
+         RARCH_DBG(ROMM_LIB_PFX "%u games share the save name \"%s\".\n",
+               (unsigned)(j - i), all[i]->fs_name_no_ext);
+         clashes += j - i;
+      }
+   }
+   RBUF_FREE(all);
+   return clashes;
 }
 
 size_t romm_library_manifest_path(char *s, size_t len,

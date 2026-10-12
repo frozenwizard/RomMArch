@@ -33693,6 +33693,10 @@ MSG_HASH(
    "Fetching RomM covers"
    )
 MSG_HASH(
+   MSG_ROMM_SAVE_NAME_CLASHES,
+   "%u games share a save name with another game, so RomM may file their saves under the wrong one."
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

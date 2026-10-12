@@ -254,6 +254,46 @@ static void test_game_core_kept(void)
    filestream_delete(path);
 }
 
+static void test_save_name_clashes(void)
+{
+   romm_library_t lib;
+   romm_library_platform_t p;
+   romm_rom_t r;
+
+   memset(&lib, 0, sizeof(lib));
+   CHECK(romm_library_save_name_clashes(&lib) == 0, "empty library");
+
+   memset(&p, 0, sizeof(p));
+   r = rom(1, true, "Addams Family, The.zip", "", "");
+   strlcpy(r.fs_name_no_ext, "Addams Family, The", sizeof(r.fs_name_no_ext));
+   RBUF_PUSH(p.roms, r);
+   r = rom(2, true, "Zelda.zip", "", "");
+   strlcpy(r.fs_name_no_ext, "Zelda", sizeof(r.fs_name_no_ext));
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+
+   memset(&p, 0, sizeof(p));
+   r = rom(3, true, "addams family, the.sfc", "", "");
+   strlcpy(r.fs_name_no_ext, "addams family, the", sizeof(r.fs_name_no_ext));
+   RBUF_PUSH(p.roms, r);
+   r = rom(4, false, "Alundra (USA)", "", "");
+   strlcpy(r.fs_name_no_ext, "Alundra (USA)", sizeof(r.fs_name_no_ext));
+   RBUF_PUSH(p.roms, r);
+   r = rom(5, true, "Alundra (USA).rar", "", "");
+   strlcpy(r.fs_name_no_ext, "Alundra (USA)", sizeof(r.fs_name_no_ext));
+   RBUF_PUSH(p.roms, r);
+   r = rom(6, true, "x", "", "");
+   RBUF_PUSH(p.roms, r);
+   r = rom(7, true, "y", "", "");
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+
+   /* Across platforms and case; games without the name don't count. */
+   CHECK(romm_library_save_name_clashes(&lib) == 4, "%u clashes",
+         (unsigned)romm_library_save_name_clashes(&lib));
+   romm_library_free(&lib);
+}
+
 static romm_library_platform_t lib_platform(unsigned id, const char *slug,
       const char *libretro_slug, const char *playlist)
 {
@@ -1316,6 +1356,7 @@ int main(void)
    test_playlist_name();
    test_write_playlist();
    test_game_core_kept();
+   test_save_name_clashes();
    test_manifest();
    test_sync();
    test_sync_reconcile();
