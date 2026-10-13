@@ -1702,6 +1702,18 @@ static void test_upload(void)
          " sync\"}");
    CHECK(r.status == ROMM_ERR_CONFLICT && r.http_status == 409
          && !r.has_save, "409: status %d", r.status);
+   /* Sent over it anyway, the user having chosen this device's. */
+   up.overwrite = true;
+   stub_reset();
+   CHECK(romm_client_save_upload(&up, on_upload, &r)
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/saves"
+            "?rom_id=3335&emulator=Snes9x&slot=autosave"
+            "&device_id=e409ecd7-f8f1-458e-bf82-09c5f8604113"
+            "&content_hash=0f343b0931126a20f133d67c2b018a3b"
+            "&autocleanup=true&autocleanup_limit=10&overwrite=true"),
+         "overwrite %s", stub_req.url);
+   answer(200, "{\"id\": 22, \"rom_id\": 3335, \"file_name\": \"x.srm\"}");
+   up.overwrite = false;
 
    /* A token paired without assets.write or devices.write. */
    memset(&r, 0, sizeof(r));

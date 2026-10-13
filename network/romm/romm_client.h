@@ -160,12 +160,14 @@ typedef struct
     * is a new version, RomM keeping the latest @keep; with no slot it
     * replaces the game's save of that name. With @device_id, RomM's id
     * for this device, RomM refuses it when the slot or save changed
-    * since this device last synced it. @content_hash, the MD5 of
-    * @data in hex, is recorded as what the device holds. */
+    * since this device last synced it, unless @overwrite.
+    * @content_hash, the MD5 of @data in hex, is recorded as what the
+    * device holds. */
    const char *slot;
    unsigned keep;
    const char *device_id;
    const char *content_hash;
+   bool overwrite;
 } romm_upload_t;
 
 /* @version is RomM's version string, empty unless @status is ROMM_OK.

@@ -1637,6 +1637,13 @@ static bool romm_upload(const romm_upload_t *up, bool is_state,
             "&autocleanup=true&autocleanup_limit=%u", up->keep);
       if (n >= sizeof(path) - _len)
          return false;
+      _len += n;
+   }
+   if (!is_state && up->overwrite)
+   {
+      if (_len + STRLEN_CONST("&overwrite=true") >= sizeof(path))
+         return false;
+      _len += strlcpy(path + _len, "&overwrite=true", sizeof(path) - _len);
    }
    if (     !romm_client_url(url, sizeof(url), up->server, path)
          || (size_t)snprintf(headers, sizeof(headers),
