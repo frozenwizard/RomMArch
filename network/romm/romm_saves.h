@@ -112,6 +112,21 @@ typedef struct
    size_t remote_states_count;
 } romm_saves_plan_params_t;
 
+/* What a sync before launch does with a file changed on both sides
+ * since the last sync. Either way the copy not chosen is kept in
+ * RomM, apart from what syncs use: a save as "<base> (conflict)
+ * <suffix>" in the "conflict" slot, a state as "<base> (conflict
+ * <time>)<suffix>". */
+enum romm_saves_resolve
+{
+   /* Neither copy is touched; the file is counted as a conflict. */
+   ROMM_SAVES_RESOLVE_NONE = 0,
+   /* RomM's copy replaces this device's. */
+   ROMM_SAVES_RESOLVE_REMOTE,
+   /* This device's copy goes up over RomM's. */
+   ROMM_SAVES_RESOLVE_LOCAL
+};
+
 /* A sync of one game's saves and states with RomM. */
 typedef struct
 {
@@ -133,6 +148,8 @@ typedef struct
    /* Send what changed here (after the game closed), rather than fetch
     * what RomM has newer (before it starts). */
    bool push;
+   /* Before launch, what to do with a file changed on both sides. */
+   enum romm_saves_resolve resolve;
    /* Whether a running core owns the file at @path, which a download
     * then mustn't replace; NULL if none can. */
    bool (*is_live)(const char *path);
@@ -199,8 +216,8 @@ romm_saves_local_t *romm_saves_list_local(const char *dir,
 /* What to do to bring a game's files here and in RomM in line, one
  * step per file that needs one; an RBUF for the caller to free. For
  * each kind of save (".srm", ".brm", ...), RomM's copy is the newest
- * of that kind from any client and slot; for each save state, the one
- * of the same name the same emulator made. */
+ * of that kind from any client and slot but the "conflict" slot; for
+ * each save state, the one of the same name the same emulator made. */
 romm_saves_step_t *romm_saves_plan(const romm_saves_plan_params_t *p);
 
 /* Syncs one game's files with RomM per @p: before it starts, fetches

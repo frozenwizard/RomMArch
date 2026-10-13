@@ -6,7 +6,8 @@
  * Last, syncs run against RomM played through the client harness's
  * request stubs: fetching before a game starts, sending after it
  * closes, a conflict, a failed listing, a file in use, and syncs
- * queued behind one another.
+ * queued behind one another; then conflicts resolved each way, the
+ * copy not chosen kept in RomM.
  *
  * Includes the module's translation unit so its statics are tested as
  * shipped. Files go to a folder under the current directory, removed
@@ -729,6 +730,182 @@ static void test_sync(void)
    filestream_delete(p.record_path);
 }
 
+static void test_resolve(void)
+{
+   romm_saves_sync_params_t p;
+   romm_saves_record_t rec;
+   romm_saves_game_t *g;
+   romm_saves_step_t *st;
+   romm_saves_local_t l[1];
+   romm_save_t rs[3];
+   sync_result_t r;
+   char md5[33];
+   char url[512];
+
+   /* Kept copies are never RomM's current copy. */
+   l[0]  = local(".srm", MD5_A);
+   rs[0] = remote(21, "Super Metroid (USA).srm", "Snes9x", MD5_A, T1);
+   rs[1] = remote(22, "Super Metroid (USA) [2026-10-12_23-00-00].srm",
+         "Snes9x", MD5_B, T3);
+   strlcpy(rs[1].slot, "conflict", sizeof(rs[1].slot));
+   rs[2] = remote(52, "Super Metroid (USA) (conflict 2026-10-13 01-02-03)"
+         ".state1", "Snes9x", "", T3);
+   st = plan(NULL, l, 1, NULL, 0, rs, 2, rs + 2, 1);
+   CHECK(RBUF_LEN(st) == 1 && step_is(st, 0, ROMM_SAVES_MATCH, ".srm", 21),
+         "kept copies: %u steps", (unsigned)RBUF_LEN(st));
+   RBUF_FREE(st);
+
+   path_mkdir(DIR);
+   path_mkdir(DIR "/saves");
+   path_mkdir(DIR "/saves/Snes9x");
+   path_mkdir(DIR "/states");
+   path_mkdir(DIR "/states/Snes9x");
+
+   /* RomM's copy chosen: this device's goes to the conflict slot
+    * first, then RomM's is fetched as this device. */
+   filestream_write_file(SRM, "MINE", 4);
+   memset(&r, 0, sizeof(r));
+   sync_params(&p, false);
+   p.resolve = ROMM_SAVES_RESOLVE_REMOTE;
+   stub_reset();
+   CHECK(romm_saves_sync(&p, on_sync, &r), "resolve not started");
+   answer(200, "[{\"id\": 32, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (U) [2026-10-12_23-00-00].srm\","
+         " \"emulator\": \"snes9x\", \"slot\": \"autosave\","
+         " \"updated_at\": \"2026-10-13T04:00:00+00:00\"}]");
+   answer(200, "[]");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/saves"
+         "?rom_id=3335&emulator=Snes9x&slot=conflict")
+         && strstr(stub_req.body,
+            "filename=\"Super Metroid (USA) (conflict).srm\"")
+         && strstr(stub_req.body, "\r\n\r\nMINE\r\n"),
+         "kept upload %s", stub_req.url);
+   answer(200, "{\"id\": 40, \"rom_id\": 3335, \"slot\": \"conflict\","
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_01-00-00].srm\"}");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/saves/32/"
+         "content?device_id=e409"), "fetch %s", stub_req.url);
+   answer(200, "THEIRS");
+   CHECK(r.calls == 1 && r.result.downloaded == 1 && !r.result.conflicts
+         && !r.result.failed && read_is(SRM, "THEIRS"),
+         "RomM's chosen: down %u conflicts %u failed %u",
+         r.result.downloaded, r.result.conflicts, r.result.failed);
+
+   /* This device's chosen: RomM's goes to the conflict slot, then
+    * this device's over it. */
+   filestream_write_file(SRM, "MINE2", 5);
+   memset(&r, 0, sizeof(r));
+   p.resolve = ROMM_SAVES_RESOLVE_LOCAL;
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, "[{\"id\": 33, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (U) [2026-10-13_00-00-00].srm\","
+         " \"emulator\": \"snes9x\", \"slot\": \"autosave\","
+         " \"updated_at\": \"2026-10-13T05:00:00+00:00\"}]");
+   answer(200, "[]");
+   CHECK(!strcmp(stub_req.url,
+         "http://romm.local:8090/api/saves/33/content"), "fetch %s",
+         stub_req.url);
+   answer(200, "THEIRS2");
+   CHECK(strstr(stub_req.url, "slot=conflict")
+         && strstr(stub_req.body, "(conflict).srm\"")
+         && strstr(stub_req.body, "\r\n\r\nTHEIRS2\r\n"), "kept %s",
+         stub_req.url);
+   answer(200, "{\"id\": 41, \"rom_id\": 3335, \"slot\": \"conflict\","
+         " \"file_name\": \"x.srm\"}");
+   romm_saves_md5_file(SRM, md5);
+   snprintf(url, sizeof(url), "http://romm.local:8090/api/saves"
+         "?rom_id=3335&emulator=Snes9x&slot=autosave&device_id=e409"
+         "&content_hash=%s&autocleanup=true&autocleanup_limit=10"
+         "&overwrite=true", md5);
+   CHECK(!strcmp(stub_req.url, url)
+         && strstr(stub_req.body, "\r\n\r\nMINE2\r\n"), "over %s",
+         stub_req.url);
+   answer(200, "{\"id\": 42, \"rom_id\": 3335, \"slot\": \"autosave\","
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_01-00-01].srm\","
+         " \"updated_at\": \"2026-10-13T06:00:01+00:00\"}");
+   CHECK(r.calls == 1 && r.result.uploaded == 1 && !r.result.conflicts
+         && read_is(SRM, "MINE2"), "this device's chosen: up %u",
+         r.result.uploaded);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && romm_saves_game_file(g, ".srm", false)->remote_id == 42,
+         "record after keeping this device's");
+   romm_saves_record_free(&rec);
+
+   /* A state: RomM's is kept under a name of its own. */
+   filestream_write_file(STATE1, "MYSTATE", 7);
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, "[]");
+   answer(200, "[{\"id\": 60, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA).state1\","
+         " \"emulator\": \"Snes9x\","
+         " \"updated_at\": \"2026-10-13T05:00:00+00:00\"}]");
+   CHECK(!strcmp(stub_req.url,
+         "http://romm.local:8090/api/states/60/content"), "fetch %s",
+         stub_req.url);
+   answer(200, "STATE60");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/states"
+         "?rom_id=3335&emulator=Snes9x")
+         && strstr(stub_req.body,
+            "filename=\"Super Metroid (USA) (conflict ")
+         && strstr(stub_req.body, ").state1\"")
+         && strstr(stub_req.body, "\r\n\r\nSTATE60\r\n"), "kept state %s",
+         stub_req.body);
+   answer(200, "{\"id\": 61, \"rom_id\": 3335, \"file_name\": \"k\"}");
+   CHECK(strstr(stub_req.body, "filename=\"Super Metroid (USA).state1\"")
+         && strstr(stub_req.body, "\r\n\r\nMYSTATE\r\n"), "state over %s",
+         stub_req.body);
+   answer(200, "{\"id\": 60, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA).state1\","
+         " \"updated_at\": \"2026-10-13T06:00:02+00:00\"}");
+   CHECK(r.calls == 1 && r.result.uploaded == 1, "state: up %u",
+         r.result.uploaded);
+
+   /* Keeping fails: nothing else moves. */
+   filestream_write_file(SRM, "MINE3", 5);
+   memset(&r, 0, sizeof(r));
+   p.resolve = ROMM_SAVES_RESOLVE_REMOTE;
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, "[{\"id\": 43, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (U) [2026-10-13_02-00-00].srm\","
+         " \"emulator\": \"snes9x\", \"slot\": \"autosave\","
+         " \"updated_at\": \"2026-10-13T07:00:00+00:00\"}]");
+   answer(200, "[{\"id\": 60, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA).state1\","
+         " \"emulator\": \"Snes9x\","
+         " \"updated_at\": \"2026-10-13T06:00:02+00:00\"}]");
+   answer(500, "Internal Server Error");
+   CHECK(r.calls == 1 && r.result.failed == 1 && !r.result.downloaded
+         && read_is(SRM, "MINE3"), "failed keep: failed %u down %u",
+         r.result.failed, r.result.downloaded);
+
+   /* After play, nothing is resolved. */
+   sync_params(&p, true);
+   p.resolve = ROMM_SAVES_RESOLVE_REMOTE;
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, "[{\"id\": 43, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (U) [2026-10-13_02-00-00].srm\","
+         " \"emulator\": \"snes9x\", \"slot\": \"autosave\","
+         " \"updated_at\": \"2026-10-13T07:00:00+00:00\"}]");
+   answer(200, "[]");
+   CHECK(r.calls == 1 && r.result.conflicts == 1 && stub_req.count == 2,
+         "push resolved: conflicts %u requests %u", r.result.conflicts,
+         stub_req.count);
+
+   filestream_delete(SRM);
+   filestream_delete(STATE1);
+   filestream_delete(DIR "/saves/Snes9x");
+   filestream_delete(DIR "/saves");
+   filestream_delete(DIR "/states/Snes9x");
+   filestream_delete(DIR "/states");
+   filestream_delete(p.record_path);
+}
+
 int main(void)
 {
    test_time();
@@ -737,6 +914,7 @@ int main(void)
    test_record();
    test_plan();
    test_sync();
+   test_resolve();
    filestream_delete(DIR);
 
    if (failures)

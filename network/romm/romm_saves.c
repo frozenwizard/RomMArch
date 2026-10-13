@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <array/rbuf.h>
 #include <compat/posix_string.h>
@@ -25,6 +26,7 @@
 #include <retro_dirent.h>
 #include <streams/file_stream.h>
 #include <string/stdstring.h>
+#include <time/rtime.h>
 
 #include "romm_json.h"
 #include "romm_saves.h"
@@ -36,6 +38,8 @@
  * and Argosy use, and how many versions RomM keeps there. */
 #define ROMM_SAVES_SLOT "autosave"
 #define ROMM_SAVES_KEEP 10
+/* Where a save not chosen in a conflict is kept; syncs pass it over. */
+#define ROMM_SAVES_KEPT_SLOT "conflict"
 
 size_t romm_saves_record_path(char *s, size_t len, const char *save_dir)
 {
@@ -410,11 +414,11 @@ static void romm_saves_strip_tag(char *s, size_t len, const char *name)
 }
 
 /* The kind of file RomM's @name is: its suffix after @base or
- * @rom_base, else the longest of @known it ends with, else its
- * extension. */
+ * @rom_base, else (unless @by_name) the longest of @known it ends
+ * with, else its extension. */
 static void romm_saves_remote_suffix(char *s, size_t len,
       const char *name, const char *base, const char *rom_base,
-      const char *const *known)
+      const char *const *known, bool by_name)
 {
    char plain[512];
    const char *suffix;
@@ -427,6 +431,9 @@ static void romm_saves_remote_suffix(char *s, size_t len,
       strlcpy(s, suffix, len);
       return;
    }
+   *s = '\0';
+   if (by_name)
+      return;
    plain_len = strlen(plain);
    for (i = 0; i < RBUF_LEN(known); i++)
    {
@@ -530,10 +537,12 @@ static void romm_saves_plan_kind(romm_saves_step_t **steps,
       remote_count = 0;
    for (i = 0; i < remote_count; i++)
    {
-      if (is_state && !string_is_equal(remote[i].emulator, p->emulator))
+      if (     is_state
+            ? !string_is_equal(remote[i].emulator, p->emulator)
+            : string_is_equal(remote[i].slot, ROMM_SAVES_KEPT_SLOT))
          continue;
       romm_saves_remote_suffix(kinds[i], sizeof(kinds[i]),
-            remote[i].file_name, p->base, p->rom_base, known);
+            remote[i].file_name, p->base, p->rom_base, known, is_state);
       if (     !*kinds[i]
             || string_starts_with(kinds[i], ".state") != is_state)
          continue;
@@ -590,6 +599,7 @@ struct romm_saves_sync
    romm_saves_sync_cb_t cb;
    void *user_data;
    bool push;
+   enum romm_saves_resolve resolve;
    bool (*is_live)(const char *path);
    unsigned rom_id;
    enum romm_status status;
@@ -750,8 +760,9 @@ static void romm_saves_sync_uploaded(void *user_data,
    romm_saves_sync_step(sync);
 }
 
+/* Sends @step's file; @overwrite sends a save over a newer one. */
 static bool romm_saves_sync_upload(romm_saves_sync_t *sync,
-      romm_saves_step_t *step)
+      romm_saves_step_t *step, bool overwrite)
 {
    romm_upload_t up;
    void *buf   = NULL;
@@ -784,9 +795,121 @@ static bool romm_saves_sync_upload(romm_saves_sync_t *sync,
       up.keep         = ROMM_SAVES_KEEP;
       up.device_id    = sync->device_id;
       up.content_hash = md5;
+      up.overwrite    = overwrite;
       started = romm_client_save_upload(&up, romm_saves_sync_uploaded,
             sync);
    }
+   free(buf);
+   return started;
+}
+
+static bool romm_saves_sync_fetch(romm_saves_sync_t *sync,
+      const romm_saves_step_t *step)
+{
+   return step->is_state
+      ? romm_client_state_content(sync->server, sync->token,
+            step->remote.id, romm_saves_sync_downloaded, sync)
+      : romm_client_save_content(sync->server, sync->token,
+            step->remote.id, sync->device_id, romm_saves_sync_downloaded,
+            sync);
+}
+
+/* The copy not chosen is in RomM, kept apart: now the chosen one. */
+static void romm_saves_sync_kept(void *user_data, enum romm_status status,
+      int http_status, const romm_save_t *save)
+{
+   romm_saves_sync_t *sync = (romm_saves_sync_t*)user_data;
+   romm_saves_step_t *step = &sync->steps[sync->next - 1];
+
+   if (status != ROMM_OK)
+      sync->result.failed++;
+   else
+   {
+      RARCH_LOG(ROMM_SAVES_PFX "Kept the other copy of %s%s in RomM as "
+            "%s.\n", sync->base, step->suffix, save->file_name);
+      if (sync->resolve == ROMM_SAVES_RESOLVE_REMOTE
+            ? romm_saves_sync_fetch(sync, step)
+            : romm_saves_sync_upload(sync, step, true))
+         return;
+      sync->result.failed++;
+   }
+   romm_saves_sync_step(sync);
+}
+
+/* Sends @len bytes of @data, the copy of @step's file not chosen, to
+ * RomM to be kept apart from what syncs use. */
+static bool romm_saves_sync_keep(romm_saves_sync_t *sync,
+      const romm_saves_step_t *step, const void *data, size_t len)
+{
+   romm_upload_t up;
+   char name[512];
+
+   memset(&up, 0, sizeof(up));
+   up.server    = sync->server;
+   up.token     = sync->token;
+   up.rom_id    = sync->rom_id;
+   up.data      = data;
+   up.len       = len;
+   up.emulator  = sync->emulator;
+   up.file_name = name;
+   if (step->is_state)
+   {
+      char stamp[32];
+      struct tm tm_;
+      time_t now = time(NULL);
+      rtime_localtime(&now, &tm_);
+      strftime(stamp, sizeof(stamp), "%Y-%m-%d %H-%M-%S", &tm_);
+      snprintf(name, sizeof(name), "%s (conflict %s)%s", sync->base,
+            stamp, step->suffix);
+      return romm_client_state_upload(&up, romm_saves_sync_kept, sync);
+   }
+   /* Named apart too: RomM files a slotted upload under its name and
+    * second, whatever the slot, so an upload to the autosave slot in
+    * the same second would take the place of a kept copy of the same
+    * name. */
+   snprintf(name, sizeof(name), "%s (conflict)%s", sync->base,
+         step->suffix);
+   up.slot = ROMM_SAVES_KEPT_SLOT;
+   return romm_client_save_upload(&up, romm_saves_sync_kept, sync);
+}
+
+/* RomM's copy, to keep apart before this device's goes up over it. */
+static void romm_saves_sync_loser_fetched(void *user_data,
+      enum romm_status status, int http_status, const void *data,
+      size_t len)
+{
+   romm_saves_sync_t *sync       = (romm_saves_sync_t*)user_data;
+   const romm_saves_step_t *step = &sync->steps[sync->next - 1];
+
+   if (status == ROMM_OK && romm_saves_sync_keep(sync, step, data, len))
+      return;
+   sync->result.failed++;
+   romm_saves_sync_step(sync);
+}
+
+/* Starts resolving @step's conflict as asked. */
+static bool romm_saves_sync_resolve(romm_saves_sync_t *sync,
+      const romm_saves_step_t *step)
+{
+   void *buf   = NULL;
+   int64_t len = 0;
+   char path[2048];
+   bool started;
+
+   RARCH_LOG(ROMM_SAVES_PFX "%s%s changed both here and in RomM; using "
+         "%s.\n", sync->base, step->suffix,
+         sync->resolve == ROMM_SAVES_RESOLVE_REMOTE ? "RomM's"
+         : "this device's");
+   if (sync->resolve == ROMM_SAVES_RESOLVE_LOCAL)
+      return step->is_state
+         ? romm_client_state_content(sync->server, sync->token,
+               step->remote.id, romm_saves_sync_loser_fetched, sync)
+         : romm_client_save_content(sync->server, sync->token,
+               step->remote.id, NULL, romm_saves_sync_loser_fetched, sync);
+   romm_saves_sync_path(sync, step, path, sizeof(path));
+   if (!filestream_read_file(path, &buf, &len))
+      return false;
+   started = romm_saves_sync_keep(sync, step, buf, (size_t)len);
    free(buf);
    return started;
 }
@@ -804,6 +927,13 @@ static void romm_saves_sync_step(romm_saves_sync_t *sync)
             romm_saves_sync_record(sync, step, &step->remote, step->md5);
             break;
          case ROMM_SAVES_CONFLICT:
+            if (sync->resolve != ROMM_SAVES_RESOLVE_NONE)
+            {
+               if (romm_saves_sync_resolve(sync, step))
+                  return;
+               sync->result.failed++;
+               break;
+            }
             RARCH_WARN(ROMM_SAVES_PFX "%s%s changed both here and in "
                   "RomM.\n", sync->base, step->suffix);
             sync->result.conflicts++;
@@ -811,19 +941,14 @@ static void romm_saves_sync_step(romm_saves_sync_t *sync)
          case ROMM_SAVES_DOWNLOAD:
             if (sync->push)
                break;
-            if (step->is_state
-                  ? romm_client_state_content(sync->server, sync->token,
-                        step->remote.id, romm_saves_sync_downloaded, sync)
-                  : romm_client_save_content(sync->server, sync->token,
-                        step->remote.id, sync->device_id,
-                        romm_saves_sync_downloaded, sync))
+            if (romm_saves_sync_fetch(sync, step))
                return;
             sync->result.failed++;
             break;
          case ROMM_SAVES_UPLOAD:
             if (!sync->push)
                break;
-            if (romm_saves_sync_upload(sync, step))
+            if (romm_saves_sync_upload(sync, step, false))
                return;
             sync->result.failed++;
             break;
@@ -924,6 +1049,7 @@ bool romm_saves_sync(const romm_saves_sync_params_t *p,
    sync->cb        = cb;
    sync->user_data = user_data;
    sync->push      = p->push;
+   sync->resolve   = p->push ? ROMM_SAVES_RESOLVE_NONE : p->resolve;
    sync->is_live   = p->is_live;
    sync->rom_id    = p->rom_id;
    strlcpy(sync->server, p->server, sizeof(sync->server));
