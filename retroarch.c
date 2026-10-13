@@ -6989,6 +6989,7 @@ int rarch_main(int argc, char *argv[], void *data)
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
    if (settings->bools.romm_refresh_on_start)
       romm_refresh_library_at_start();
+   romm_sync_owed_saves();
 #endif
 #ifdef HAVE_LAKKA
    sd_notify(0, "READY=1");

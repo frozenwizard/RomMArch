@@ -33765,6 +33765,10 @@ MSG_HASH(
    "RomM got a newer save for this game while you played. This device's stays here; RomM's is kept."
    )
 MSG_HASH(
+   MSG_ROMM_SAVES_OWED_CONFLICTS,
+   "Saves of %u game(s) changed both here and in RomM; they weren't sent."
+   )
+MSG_HASH(
    MSG_ROMM_SAVE_NAME_CLASHES,
    "%u games share a save name with another game, so RomM may file their saves under the wrong one."
    )

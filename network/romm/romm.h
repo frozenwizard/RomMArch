@@ -59,6 +59,10 @@ void romm_content_unloaded(const char *next_content);
  * game, sends what changed of its saves and states to RomM. */
 void romm_content_closed(void);
 
+/* Sends the saves of games that changed since their last sync but
+ * didn't go up: played offline, left running at quit, or refused. */
+void romm_sync_owed_saves(void);
+
 RETRO_END_DECLS
 
 #endif

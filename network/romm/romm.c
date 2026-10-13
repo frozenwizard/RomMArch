@@ -349,6 +349,7 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNCED),
          (unsigned)games, (unsigned)RBUF_LEN(lib->platforms));
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   romm_sync_owed_saves();
 
    if ((clashes = romm_library_save_name_clashes(lib)))
    {
@@ -595,6 +596,66 @@ static bool romm_played_is_live(const romm_played_t *game)
    strlcat(name, FILE_PATH_SRM_EXTENSION, sizeof(name));
    fill_pathname_join(path, game->save_dir, name, sizeof(path));
    return content_savefile_is_live(path);
+}
+
+/* Owed syncs still out, and how many games ended in a conflict */
+static unsigned romm_owed_pending   = 0;
+static unsigned romm_owed_conflicts = 0;
+
+static void romm_on_owed_pushed(void *user_data, enum romm_status status,
+      int http_status, const romm_saves_result_t *result)
+{
+   char msg[256];
+
+   if (status == ROMM_OK && result->conflicts)
+      romm_owed_conflicts++;
+   if (--romm_owed_pending || !romm_owed_conflicts)
+      return;
+   snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SAVES_OWED_CONFLICTS),
+         romm_owed_conflicts);
+   romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
+}
+
+void romm_sync_owed_saves(void)
+{
+   settings_t *settings = config_get_ptr();
+   romm_saves_record_t rec;
+   char record[PATH_MAX_LENGTH];
+   size_t i;
+
+   if (     romm_owed_pending
+         || string_is_empty(settings->arrays.romm_token)
+         || string_is_empty(dir_get_ptr(RARCH_DIR_SAVEFILE)))
+      return;
+   romm_saves_record_path(record, sizeof(record),
+         dir_get_ptr(RARCH_DIR_SAVEFILE));
+   if (!romm_saves_record_load(&rec, record))
+      return;
+   romm_owed_conflicts = 0;
+   for (i = 0; i < RBUF_LEN(rec.games); i++)
+   {
+      const romm_saves_game_t *g = &rec.games[i];
+      romm_played_t game;
+
+      if (!g->pending || !*g->save_dir || !*g->state_dir || !*g->base)
+         continue;
+      /* Still being played: it goes up when it closes. */
+      if (     (romm_running.rom_id == g->rom_id
+               && string_is_equal(romm_running.emulator, g->emulator))
+            || (romm_played.rom_id == g->rom_id && romm_launching))
+         continue;
+      memset(&game, 0, sizeof(game));
+      game.rom_id = g->rom_id;
+      strlcpy(game.emulator, g->emulator, sizeof(game.emulator));
+      strlcpy(game.base, g->base, sizeof(game.base));
+      strlcpy(game.save_dir, g->save_dir, sizeof(game.save_dir));
+      strlcpy(game.state_dir, g->state_dir, sizeof(game.state_dir));
+      RARCH_LOG("[RomM] Sending saves owed for game %u (%s).\n",
+            game.rom_id, game.emulator);
+      if (romm_sync_played(&game, true, romm_on_owed_pushed))
+         romm_owed_pending++;
+   }
+   romm_saves_record_free(&rec);
 }
 
 void romm_content_closed(void)
