@@ -29,6 +29,9 @@
 #include "core_option_manager.h"
 #include "msg_hash.h"
 #include "verbosity.h"
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "network/romm/romm_library.h"
+#endif
 
 /*********************/
 /* Option Conversion */
@@ -1030,6 +1033,21 @@ static bool core_option_manager_parse_option(
          }
       }
    }
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* Rommarch's own default, where it has one */
+   {
+      const char *romm_default = romm_library_core_option_default(
+            option->key);
+      for (i = 0; romm_default && i < option->vals->size; i++)
+         if (string_is_equal(option->vals->elems[i].data, romm_default))
+         {
+            option->default_index = i;
+            option->index         = i;
+            break;
+         }
+   }
+#endif
 
    if (config_src)
       entry              = config_get_entry(config_src, option->key);

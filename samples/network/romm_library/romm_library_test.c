@@ -1310,9 +1310,22 @@ static void test_sync_default_core(void)
    filestream_delete(TEST_DIR);
 }
 
+static void test_core_option_defaults(void)
+{
+   const char *v = romm_library_core_option_default(
+         "genesis_plus_gx_system_bram");
+   CHECK(v && !strcmp(v, "per game"), "GPGX BRAM: %s", v ? v : "NULL");
+   v = romm_library_core_option_default("reicast_per_content_vmus");
+   CHECK(v && !strcmp(v, "VMU A1"), "Flycast VMU: %s", v ? v : "NULL");
+   CHECK(!romm_library_core_option_default("genesis_plus_gx_cart_bram")
+         && !romm_library_core_option_default("")
+         && !romm_library_core_option_default(NULL), "other options");
+}
+
 int main(void)
 {
    test_content_path();
+   test_core_option_defaults();
    test_playlist_name();
    test_write_playlist();
    test_game_core_kept();

@@ -166,6 +166,25 @@ const char *const *romm_library_preferred_cores(const char *libretro_slug)
    return NULL;
 }
 
+/* Core options whose default saves one file for every game: per game,
+ * each game's saves go up to RomM under that game (plan D11). */
+static const char *const romm_lib_option_defaults[][2] = {
+   /* Sega CD backup RAM: <game>.brm rather than scd_<region>.brm */
+   { "genesis_plus_gx_system_bram", "per game" },
+   /* Flycast's memory card A1: <game>.A1.bin rather than a shared one */
+   { "reicast_per_content_vmus",    "VMU A1" }
+};
+
+const char *romm_library_core_option_default(const char *key)
+{
+   size_t i;
+   if (!string_is_empty(key))
+      for (i = 0; i < ARRAY_SIZE(romm_lib_option_defaults); i++)
+         if (string_is_equal(romm_lib_option_defaults[i][0], key))
+            return romm_lib_option_defaults[i][1];
+   return NULL;
+}
+
 /* Characters a file name can't hold on some system RetroArch runs on. */
 static void romm_lib_scrub_file_name(char *s)
 {

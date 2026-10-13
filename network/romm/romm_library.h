@@ -106,6 +106,11 @@ size_t romm_library_cover_path(char *s, size_t len,
  * when there are none for the system. */
 const char *const *romm_library_preferred_cores(const char *libretro_slug);
 
+/* Rommarch's default for core option @key, where it differs from the
+ * core's so each game's saves are a file of its own; NULL for the
+ * core's own. */
+const char *romm_library_core_option_default(const char *key);
+
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,
       const char *playlist_dir);
