@@ -7,6 +7,7 @@
  * game, a folder with nothing to launch, a bad CRC32 and a cancel end
  * it. Zips holding disc images are unpacked (one disc, two discs, the
  * disc a history entry names, a bad CRC32), zipped cartridges are not.
+ * BIOS files the core lacks are fetched into the system folder first.
  * Also that the previous game is released, and that unloading
  * releases every game but the one loading next.
  */
@@ -25,6 +26,8 @@
 #include "../romm_client/stubs_retroarch.h"
 
 static unsigned failures = 0;
+
+#define TEST_SYSTEM_DIR "romm_launch_test_system"
 
 #define CHECK(cond, ...) \
    do { \
@@ -129,14 +132,29 @@ static bool vfs_file_is(const char *path, const void *data, size_t len)
    return same;
 }
 
-static void start(launch_result_t *r, const char *content_path)
+static void start_with(launch_result_t *r, const char *content_path,
+      const char *const *firmware, size_t firmware_count)
 {
+   romm_launch_params_t params;
+
+   memset(&params, 0, sizeof(params));
+   params.server         = "http://romm.local:8090";
+   params.token          = "rmm_tok";
+   params.content_path   = content_path;
+   params.title          = "Downloading";
+   params.unpack_title   = "Unpacking";
+   params.system_dir     = TEST_SYSTEM_DIR;
+   params.firmware       = firmware;
+   params.firmware_count = firmware_count;
    memset(r, 0, sizeof(*r));
    stub_reset();
-   CHECK(romm_launch_prepare("http://romm.local:8090", "rmm_tok",
-         content_path, "Downloading", "Unpacking", on_launch, r)
-         && stub_task,
+   CHECK(romm_launch_prepare(&params, on_launch, r) && stub_task,
          "prepare not started for %s", content_path);
+}
+
+static void start(launch_result_t *r, const char *content_path)
+{
+   start_with(r, content_path, NULL, 0);
 }
 
 static void test_rom_id(void)
@@ -536,10 +554,96 @@ static void test_zipped_discs(void)
    free(zip);
 }
 
+static void remove_test_system(void)
+{
+   filestream_delete(TEST_SYSTEM_DIR "/scph5501.bin");
+   filestream_delete(TEST_SYSTEM_DIR "/PS1_ROM.BIN");
+   filestream_delete(TEST_SYSTEM_DIR "/dc/dc_boot.bin");
+   filestream_delete(TEST_SYSTEM_DIR "/dc");
+   filestream_delete(TEST_SYSTEM_DIR);
+}
+
+static void answer_psx_game(void)
+{
+   answer_str(200, "{\"id\": 5, \"platform_id\": 22, \"fs_name\": \"Game.bin\","
+         " \"fs_path\": \"roms/psx/roms\", \"has_simple_single_file\": true,"
+         " \"files\": [{\"id\": 1, \"file_name\": \"Game.bin\","
+         " \"full_path\": \"roms/psx/roms/Game.bin\","
+         " \"file_size_bytes\": 4}]}");
+}
+
+/* The BIOS files the core lacks that RomM has for the platform go to
+ * the system folder first, under the core's names, a verified copy
+ * preferred. One RomM lacks, one with the wrong CRC32, and a list
+ * RomM refuses don't stop the game. */
+static void test_firmware(void)
+{
+   static const char *const wanted[] = {
+      "scph5501.bin", "dc/dc_boot.bin", "PS1_ROM.BIN", "missing.bin" };
+   launch_result_t r;
+   char reply[1024];
+
+   remove_test_system();
+   start_with(&r, "romm://5/Game.bin", wanted, ARRAY_SIZE(wanted));
+   answer_psx_game();
+   snprintf(reply, sizeof(reply), "["
+         "{\"id\": 1, \"file_name\": \"scph5501.bin\", \"is_verified\": false,"
+         " \"file_size_bytes\": 4, \"crc_hash\": \"%08x\"},"
+         "{\"id\": 2, \"file_name\": \"SCPH5501.BIN\", \"is_verified\": true,"
+         " \"file_size_bytes\": 4, \"crc_hash\": \"%08x\"},"
+         "{\"id\": 3, \"file_name\": \"dc_boot.bin\", \"is_verified\": true,"
+         " \"file_size_bytes\": 4, \"crc_hash\": \"%08x\"},"
+         "{\"id\": 4, \"file_name\": \"ps1_rom.bin\", \"is_verified\": false,"
+         " \"file_size_bytes\": 4, \"crc_hash\": \"deadbeef\"}]",
+         encoding_crc32(0, (const uint8_t*)"5500", 4),
+         encoding_crc32(0, (const uint8_t*)"5501", 4),
+         encoding_crc32(0, (const uint8_t*)"dcbt", 4));
+   answer_str(200, reply);
+   CHECK(!strcmp(stub_req.url,
+         "http://romm.local:8090/api/firmware?platform_id=22"),
+         "firmware list %s", stub_req.url);
+   answer_str(200, "5501");
+   CHECK(!strcmp(stub_req.url,
+         "http://romm.local:8090/api/firmware/2/content/SCPH5501.BIN"),
+         "verified copy not preferred: %s", stub_req.url);
+   answer_str(200, "dcbt");
+   CHECK(strstr(stub_req.url, "/api/firmware/3/content/dc_boot.bin") != NULL,
+         "BIOS in a folder %s", stub_req.url);
+   answer_str(200, "ps1r");
+   answer_str(206, "game");
+   CHECK(strstr(stub_req.url, "/api/roms/5/content/Game.bin") != NULL,
+         "game after BIOS %s", stub_req.url);
+   CHECK(run_out() && r.status == ROMM_OK, "BIOS: status %d", r.status);
+   CHECK(vfs_file_is(TEST_SYSTEM_DIR "/scph5501.bin", "5501", 4)
+         && vfs_file_is(TEST_SYSTEM_DIR "/dc/dc_boot.bin", "dcbt", 4),
+         "BIOS not written");
+   CHECK(!path_is_valid(TEST_SYSTEM_DIR "/PS1_ROM.BIN"),
+         "BIOS with the wrong CRC32 written");
+   remove_test_system();
+
+   /* A token paired without firmware.read. */
+   start_with(&r, "romm://5/Game.bin", wanted, 1);
+   answer_psx_game();
+   answer_str(403, "{\"detail\": \"Forbidden\"}");
+   answer_str(206, "game");
+   CHECK(run_out() && r.status == ROMM_OK
+         && !path_is_valid(TEST_SYSTEM_DIR "/scph5501.bin"),
+         "BIOS list refused: status %d", r.status);
+
+   /* Nothing missing: no list asked for. */
+   start_with(&r, "romm://5/Game.bin", NULL, 0);
+   answer_psx_game();
+   answer_str(206, "game");
+   CHECK(strstr(stub_req.url, "/api/roms/5/content/") && run_out()
+         && r.status == ROMM_OK, "no BIOS wanted: %s", stub_req.url);
+}
+
 static void test_refused(void)
 {
+   romm_launch_params_t params;
    launch_result_t r;
    unsigned before;
+   bool no_game, no_token;
 
    /* RAR: nothing is downloaded. */
    start(&r, "romm://4318/Alundra (USA) (v1.1).rar");
@@ -592,12 +696,18 @@ static void test_refused(void)
          "cancel: status %d", r.status);
 
    memset(&r, 0, sizeof(r));
-   CHECK(!romm_launch_prepare("http://h", "t", "/games/a.gb", NULL, NULL,
-            on_launch, &r)
-         && !romm_launch_prepare("http://h", "", "romm://1/a.gb", NULL, NULL,
-            on_launch, &r)
-         && !romm_launch_prepare("", "t", "romm://1/a.gb", NULL, NULL,
-            on_launch, &r), "prepared without a game, token or server");
+   memset(&params, 0, sizeof(params));
+   params.server       = "http://h";
+   params.token        = "t";
+   params.content_path = "/games/a.gb";
+   no_game             = romm_launch_prepare(&params, on_launch, &r);
+   params.content_path = "romm://1/a.gb";
+   params.token        = "";
+   no_token            = romm_launch_prepare(&params, on_launch, &r);
+   params.token        = "t";
+   params.server       = "";
+   CHECK(!no_game && !no_token && !romm_launch_prepare(&params, on_launch, &r),
+         "prepared without a game, token or server");
 }
 
 int main(void)
@@ -609,6 +719,7 @@ int main(void)
    test_romm_m3u();
    test_zipped_disc();
    test_zipped_discs();
+   test_firmware();
    test_refused();
    retro_vfs_romm_remove_prefix(ROMM_SCHEME);
 

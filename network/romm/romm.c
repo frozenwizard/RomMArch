@@ -398,6 +398,37 @@ static char romm_launch_core[PATH_MAX_LENGTH];
 static char romm_launch_content[PATH_MAX_LENGTH];
 static char romm_launch_label[NAME_MAX_LENGTH];
 
+/* The BIOS files the core at @core_path wants that the system folder
+ * lacks, as the core's info names them; with @required_only, those
+ * it can't do without. None when cores look beside the content, as
+ * that is in memory. */
+static const char **romm_missing_firmware(const char *core_path,
+      bool required_only)
+{
+   settings_t *settings   = config_get_ptr();
+   const char *system_dir = settings->paths.directory_system;
+   core_info_t *info      = NULL;
+   const char **missing   = NULL;
+   size_t i;
+
+   if (     string_is_empty(system_dir)
+         || settings->bools.systemfiles_in_content_dir
+         || !core_info_find(core_path, &info))
+      return NULL;
+   for (i = 0; i < info->firmware_count; i++)
+   {
+      const core_info_firmware_t *fw = &info->firmware[i];
+      char path[PATH_MAX_LENGTH];
+
+      if (string_is_empty(fw->path) || (required_only && fw->optional))
+         continue;
+      fill_pathname_join_special(path, system_dir, fw->path, sizeof(path));
+      if (!path_is_valid(path))
+         RBUF_PUSH(missing, fw->path);
+   }
+   return missing;
+}
+
 static int romm_load_content(const char *core_path,
       const char *content_path, const char *label)
 {
@@ -421,6 +452,18 @@ static void romm_on_launch_prepared(void *user_data,
    switch (status)
    {
       case ROMM_OK:
+         {
+            const char **missing = romm_missing_firmware(romm_launch_core,
+                  true);
+            if (RBUF_LEN(missing))
+            {
+               char text[NAME_MAX_LENGTH];
+               snprintf(text, sizeof(text),
+                     msg_hash_to_str(MSG_ROMM_FIRMWARE_MISSING), missing[0]);
+               romm_notify(text, MESSAGE_QUEUE_CATEGORY_WARNING);
+            }
+            RBUF_FREE(missing);
+         }
          romm_load_content(romm_launch_core, launch_path,
                romm_launch_label);
          return;
@@ -454,7 +497,10 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
       const char *label)
 {
    settings_t *settings = config_get_ptr();
+   romm_launch_params_t params;
+   const char **firmware;
    const char *name;
+   bool started;
    char title[NAME_MAX_LENGTH];
    char unpack_title[NAME_MAX_LENGTH];
 
@@ -482,9 +528,19 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
          name);
    snprintf(unpack_title, sizeof(unpack_title),
          msg_hash_to_str(MSG_ROMM_UNPACKING), name);
-   if (!romm_launch_prepare(settings->arrays.romm_server_url,
-         settings->arrays.romm_token, content_path, title, unpack_title,
-         romm_on_launch_prepared, NULL))
+   firmware = romm_missing_firmware(core_path, false);
+   memset(&params, 0, sizeof(params));
+   params.server         = settings->arrays.romm_server_url;
+   params.token          = settings->arrays.romm_token;
+   params.content_path   = content_path;
+   params.title          = title;
+   params.unpack_title   = unpack_title;
+   params.system_dir     = settings->paths.directory_system;
+   params.firmware       = firmware;
+   params.firmware_count = RBUF_LEN(firmware);
+   started = romm_launch_prepare(&params, romm_on_launch_prepared, NULL);
+   RBUF_FREE(firmware);
+   if (!started)
    {
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
       return -1;

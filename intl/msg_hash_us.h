@@ -33705,6 +33705,10 @@ MSG_HASH(
    "Unpacking %s"
    )
 MSG_HASH(
+   MSG_ROMM_FIRMWARE_MISSING,
+   "BIOS %s is missing from the system folder."
+   )
+MSG_HASH(
    MSG_ROMM_LAUNCH_IN_PROGRESS,
    "A game is already downloading."
    )

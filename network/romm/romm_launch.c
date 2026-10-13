@@ -27,6 +27,7 @@
 #include <lists/string_list.h>
 #include <queues/task_queue.h>
 #include <retro_miscellaneous.h>
+#include <streams/file_stream.h>
 #include <string/stdstring.h>
 #include <vfs/vfs_implementation_romm.h>
 
@@ -43,11 +44,24 @@
 enum romm_launch_state
 {
    ROMM_LAUNCH_FILES = 0,
+   /* Fetching the BIOS files the core lacks that RomM has */
+   ROMM_LAUNCH_FIRMWARE,
    /* Fetching the files one after another, a range at a time */
    ROMM_LAUNCH_DOWNLOAD,
    /* Unpacking a zipped disc image, a slice at a time */
    ROMM_LAUNCH_UNZIP
 };
+
+/* A BIOS file to fetch: where it goes in the system folder and, once
+ * matched, RomM's copy. */
+typedef struct
+{
+   unsigned id;
+   uint64_t size;
+   char crc[9];
+   char name[256];
+   char path[256];
+} romm_launch_bios_t;
 
 typedef struct
 {
@@ -56,6 +70,10 @@ typedef struct
    retro_task_t *task;
    romm_rom_t rom;
    romm_file_t *files;
+   romm_launch_bios_t *bios;
+   /* The next of @bios to fetch, once RomM's list has matched them */
+   size_t bios_next;
+   bool bios_listed;
    /* The file being fetched or unpacked, its bytes so far and their
     * CRC32 */
    size_t file;
@@ -81,6 +99,7 @@ typedef struct
    char *unpack_title;
    file_archive_entry_source_t *unzip;
    char server[NAME_MAX_LENGTH];
+   char system_dir[PATH_MAX_LENGTH];
    char content_path[PATH_MAX_LENGTH];
    /* What the loader is given: @content_path, or what a zip held */
    char launch_path[PATH_MAX_LENGTH];
@@ -260,7 +279,104 @@ static void romm_launch_files_cb(void *user_data, enum romm_status status,
    }
    RARCH_LOG(ROMM_LAUNCH_PFX "Fetching %s: %u files, %llu bytes.\n",
          rom->fs_name, (unsigned)count, (unsigned long long)launch->total);
-   launch->state = ROMM_LAUNCH_DOWNLOAD;
+   launch->state = RBUF_LEN(launch->bios)
+      ? ROMM_LAUNCH_FIRMWARE : ROMM_LAUNCH_DOWNLOAD;
+}
+
+/* Matches each BIOS file wanted to RomM's copy by name, a verified one
+ * if there is one; those RomM lacks are dropped. */
+static void romm_launch_firmware_list_cb(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_firmware_t *firmware, size_t count)
+{
+   romm_launch_t *launch = (romm_launch_t*)user_data;
+   size_t i, j, kept = 0;
+
+   launch->pending     = false;
+   launch->task->when  = 0;
+   launch->bios_listed = true;
+   if (status != ROMM_OK)
+   {
+      RBUF_CLEAR(launch->bios);
+      return;
+   }
+   for (i = 0; i < RBUF_LEN(launch->bios); i++)
+   {
+      romm_launch_bios_t *b    = &launch->bios[i];
+      const romm_firmware_t *f = NULL;
+
+      for (j = 0; j < count; j++)
+         if (     !strcasecmp(firmware[j].name, path_basename(b->path))
+               && (!f || (firmware[j].verified && !f->verified)))
+            f = &firmware[j];
+      if (!f)
+      {
+         RARCH_LOG(ROMM_LAUNCH_PFX "RomM has no %s.\n", b->path);
+         continue;
+      }
+      b->id   = f->id;
+      b->size = f->size;
+      strlcpy(b->crc, f->crc, sizeof(b->crc));
+      strlcpy(b->name, f->name, sizeof(b->name));
+      launch->bios[kept++] = *b;
+   }
+   RBUF_RESIZE(launch->bios, kept);
+}
+
+/* A BIOS file that doesn't match RomM's size or CRC32, or can't be
+ * written, is left out; the core says what it misses. */
+static void romm_launch_firmware_cb(void *user_data, enum romm_status status,
+      int http_status, const void *data, size_t len)
+{
+   romm_launch_t *launch      = (romm_launch_t*)user_data;
+   const romm_launch_bios_t *b = &launch->bios[launch->bios_next++];
+   char path[PATH_MAX_LENGTH];
+   char dir[PATH_MAX_LENGTH];
+
+   launch->pending    = false;
+   launch->task->when = 0;
+   if (     status != ROMM_OK
+         || (b->size && len != b->size)
+         || (*b->crc && strtoul(b->crc, NULL, 16)
+               != (unsigned long)encoding_crc32(0, (const uint8_t*)data, len)))
+   {
+      RARCH_WARN(ROMM_LAUNCH_PFX "Couldn't fetch BIOS %s (status %d).\n",
+            b->path, status);
+      return;
+   }
+   fill_pathname_join_special(path, launch->system_dir, b->path,
+         sizeof(path));
+   fill_pathname_basedir(dir, path, sizeof(dir));
+   if (     (!path_is_directory(dir) && !path_mkdir(dir))
+         || !filestream_write_file(path, data, (int64_t)len))
+   {
+      RARCH_WARN(ROMM_LAUNCH_PFX "Couldn't write %s.\n", path);
+      return;
+   }
+   RARCH_LOG(ROMM_LAUNCH_PFX "Fetched BIOS %s.\n", path);
+}
+
+static void romm_launch_firmware_next(romm_launch_t *launch)
+{
+   bool started;
+
+   if (!launch->bios_listed)
+      started = romm_client_firmware(launch->server, launch->token,
+            launch->rom.platform_id, romm_launch_firmware_list_cb, launch);
+   else if (launch->bios_next < RBUF_LEN(launch->bios))
+      started = romm_client_firmware_content(launch->server, launch->token,
+            launch->bios[launch->bios_next].id,
+            launch->bios[launch->bios_next].name,
+            romm_launch_firmware_cb, launch);
+   else
+   {
+      launch->state = ROMM_LAUNCH_DOWNLOAD;
+      return;
+   }
+   if (started)
+      launch->pending = true;
+   else
+      romm_launch_finish(launch, ROMM_ERR_UNREACHABLE, 0);
 }
 
 /* Hands the file just fetched or unpacked to the VFS. */
@@ -582,6 +698,9 @@ static void romm_launch_handler(retro_task_t *task)
          else
             romm_launch_finish(launch, ROMM_ERR_UNREACHABLE, 0);
          break;
+      case ROMM_LAUNCH_FIRMWARE:
+         romm_launch_firmware_next(launch);
+         break;
       case ROMM_LAUNCH_DOWNLOAD:
          if (launch->total)
             task_set_progress(task, (int8_t)((launch->done + launch->have)
@@ -626,6 +745,7 @@ static void romm_launch_cleanup(retro_task_t *task)
    {
       file_archive_entry_source_close(launch->unzip);
       RBUF_FREE(launch->files);
+      RBUF_FREE(launch->bios);
       free(launch->buf);
       free(launch->list);
       free(launch->unpack_title);
@@ -639,20 +759,23 @@ static void romm_launch_cleanup(retro_task_t *task)
    task->state = NULL;
 }
 
-bool romm_launch_prepare(const char *server, const char *token,
-      const char *content_path, const char *title,
-      const char *unpack_title, romm_launch_cb_t cb, void *user_data)
+bool romm_launch_prepare(const romm_launch_params_t *params,
+      romm_launch_cb_t cb, void *user_data)
 {
    romm_launch_t *launch;
    retro_task_t *task;
-   unsigned rom_id = romm_launch_rom_id(content_path);
+   const char *content_path = params->content_path;
+   unsigned rom_id          = romm_launch_rom_id(content_path);
+   size_t i;
 
-   if (!rom_id || string_is_empty(server) || string_is_empty(token))
+   if (     !rom_id || string_is_empty(params->server)
+         || string_is_empty(params->token))
       return false;
    if (!(launch = (romm_launch_t*)calloc(1, sizeof(*launch))))
       return false;
-   if (     !(launch->token = strdup(token))
-         || (unpack_title && !(launch->unpack_title = strdup(unpack_title)))
+   if (     !(launch->token = strdup(params->token))
+         || (params->unpack_title
+            && !(launch->unpack_title = strdup(params->unpack_title)))
          || !(task = task_init()))
    {
       free(launch->token);
@@ -666,13 +789,25 @@ bool romm_launch_prepare(const char *server, const char *token,
    launch->task      = task;
    launch->m3u_file  = -1;
    launch->started   = cpu_features_get_time_usec();
-   strlcpy(launch->server, server, sizeof(launch->server));
+   strlcpy(launch->server, params->server, sizeof(launch->server));
    strlcpy(launch->content_path, content_path,
          sizeof(launch->content_path));
    strlcpy(launch->launch_path, content_path,
          sizeof(launch->launch_path));
    snprintf(launch->prefix, sizeof(launch->prefix), ROMM_SCHEME "%u/",
          rom_id);
+   if (!string_is_empty(params->system_dir))
+   {
+      strlcpy(launch->system_dir, params->system_dir,
+            sizeof(launch->system_dir));
+      for (i = 0; i < params->firmware_count; i++)
+      {
+         romm_launch_bios_t b;
+         memset(&b, 0, sizeof(b));
+         strlcpy(b.path, params->firmware[i], sizeof(b.path));
+         RBUF_PUSH(launch->bios, b);
+      }
+   }
 
    task->handler   = romm_launch_handler;
    task->callback  = romm_launch_cb;
@@ -680,9 +815,9 @@ bool romm_launch_prepare(const char *server, const char *token,
    task->state     = launch;
    task->user_data = launch;
    task->flags    |= RETRO_TASK_FLG_MAIN_THREAD;
-   if (title)
+   if (params->title)
    {
-      task->title    = strdup(title);
+      task->title    = strdup(params->title);
       task->progress = 0;
    }
    else
@@ -692,6 +827,7 @@ bool romm_launch_prepare(const char *server, const char *token,
    {
       free(task->title);
       free(task);
+      RBUF_FREE(launch->bios);
       free(launch->token);
       free(launch->unpack_title);
       free(launch);

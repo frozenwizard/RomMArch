@@ -23,6 +23,24 @@
 
 RETRO_BEGIN_DECLS
 
+typedef struct
+{
+   const char *server;
+   const char *token;
+   /* The game's playlist path, romm://<id>/<name> */
+   const char *content_path;
+   /* Shown while downloading, then while unpacking a zipped disc; no
+    * @title mutes the task. */
+   const char *title;
+   const char *unpack_title;
+   /* BIOS files the core wants that @system_dir lacks, as paths in it
+    * such as "dc/dc_boot.bin": those RomM has for the game's platform
+    * are fetched there first. */
+   const char *system_dir;
+   const char *const *firmware;
+   size_t firmware_count;
+} romm_launch_params_t;
+
 /* @http_status is that of a failed request, or 0. On success
  * @launch_path is what to load: the playlist path, or for a zipped
  * disc image, the disc or disc list unpacked from it. */
@@ -44,12 +62,10 @@ void romm_launch_release(const char *keep_path);
  * loader and cores read through the VFS. A folder game also gets the
  * disc list @content_path names (romm://<id>/<folder>.m3u). A zip
  * holding a disc image is unpacked into its members. The game fetched
- * before is released first. Runs as a task showing @title, then
- * @unpack_title while unpacking, and its progress; @cb runs on the
- * main thread when it ends. */
-bool romm_launch_prepare(const char *server, const char *token,
-      const char *content_path, const char *title,
-      const char *unpack_title, romm_launch_cb_t cb, void *user_data);
+ * before is released first. Runs as a task showing its progress; @cb
+ * runs on the main thread when it ends. */
+bool romm_launch_prepare(const romm_launch_params_t *params,
+      romm_launch_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 

@@ -68,5 +68,6 @@ check: $(TARGET)
 clean:
 	rm -f $(OBJS)
 	rm -f $(TARGET)
+	rm -rf romm_launch_test_system
 
 .PHONY: clean all check
