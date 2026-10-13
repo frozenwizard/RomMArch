@@ -33701,6 +33701,10 @@ MSG_HASH(
    "Downloading %s"
    )
 MSG_HASH(
+   MSG_ROMM_UNPACKING,
+   "Unpacking %s"
+   )
+MSG_HASH(
    MSG_ROMM_LAUNCH_IN_PROGRESS,
    "A game is already downloading."
    )

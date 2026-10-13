@@ -413,7 +413,7 @@ static int romm_load_content(const char *core_path,
 }
 
 static void romm_on_launch_prepared(void *user_data,
-      enum romm_status status, int http_status)
+      enum romm_status status, int http_status, const char *launch_path)
 {
    enum msg_hash_enums msg = MSG_UNKNOWN;
 
@@ -421,7 +421,7 @@ static void romm_on_launch_prepared(void *user_data,
    switch (status)
    {
       case ROMM_OK:
-         romm_load_content(romm_launch_core, romm_launch_content,
+         romm_load_content(romm_launch_core, launch_path,
                romm_launch_label);
          return;
       case ROMM_ERR_CANCELLED:
@@ -454,7 +454,9 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
       const char *label)
 {
    settings_t *settings = config_get_ptr();
+   const char *name;
    char title[NAME_MAX_LENGTH];
+   char unpack_title[NAME_MAX_LENGTH];
 
    if (romm_launch_is_ready(content_path))
       return romm_load_content(core_path, content_path, label ? label : "");
@@ -474,11 +476,14 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    strlcpy(romm_launch_core, core_path, sizeof(romm_launch_core));
    strlcpy(romm_launch_content, content_path, sizeof(romm_launch_content));
    strlcpy(romm_launch_label, label ? label : "", sizeof(romm_launch_label));
+   name = *romm_launch_label ? romm_launch_label
+      : path_basename(content_path);
    snprintf(title, sizeof(title), msg_hash_to_str(MSG_ROMM_DOWNLOADING),
-         *romm_launch_label ? romm_launch_label
-         : path_basename(content_path));
+         name);
+   snprintf(unpack_title, sizeof(unpack_title),
+         msg_hash_to_str(MSG_ROMM_UNPACKING), name);
    if (!romm_launch_prepare(settings->arrays.romm_server_url,
-         settings->arrays.romm_token, content_path, title,
+         settings->arrays.romm_token, content_path, title, unpack_title,
          romm_on_launch_prepared, NULL))
    {
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);

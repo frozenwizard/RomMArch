@@ -5,7 +5,9 @@
  * is made from its cue sheet (one file over a 64 MB range), one with
  * RomM's own .m3u and discs in subfolders, and how a RAR, a deleted
  * game, a folder with nothing to launch, a bad CRC32 and a cancel end
- * it. Also that the previous game is released, and that unloading
+ * it. Zips holding disc images are unpacked (one disc, two discs, the
+ * disc a history entry names, a bad CRC32), zipped cartridges are not.
+ * Also that the previous game is released, and that unloading
  * releases every game but the one loading next.
  */
 
@@ -15,6 +17,7 @@
 
 #include <boolean.h>
 #include <encodings/crc32.h>
+#include <encodings/deflate.h>
 #include <streams/file_stream.h>
 
 #include "../../../network/romm/romm_launch.c"
@@ -39,15 +42,18 @@ typedef struct
    unsigned calls;
    enum romm_status status;
    int http_status;
+   char launch_path[256];
 } launch_result_t;
 
 static void on_launch(void *user_data, enum romm_status status,
-      int http_status)
+      int http_status, const char *launch_path)
 {
    launch_result_t *r = (launch_result_t*)user_data;
    r->calls++;
    r->status      = status;
    r->http_status = http_status;
+   strlcpy(r->launch_path, launch_path ? launch_path : "",
+         sizeof(r->launch_path));
 }
 
 static bool step(void)
@@ -128,7 +134,8 @@ static void start(launch_result_t *r, const char *content_path)
    memset(r, 0, sizeof(*r));
    stub_reset();
    CHECK(romm_launch_prepare("http://romm.local:8090", "rmm_tok",
-         content_path, "Downloading", on_launch, r) && stub_task,
+         content_path, "Downloading", "Unpacking", on_launch, r)
+         && stub_task,
          "prepare not started for %s", content_path);
 }
 
@@ -182,8 +189,10 @@ static void test_single_file(void)
          "%20%5B%21%5D.zip?file_ids=313&purpose=play&range_start=0")
          && strstr(stub_req.headers, "Range: bytes=0-9\r\n"),
          "download %s %s", stub_req.url, stub_req.headers);
-   CHECK(run_out() && r.calls == 1 && r.status == ROMM_OK,
-         "single: calls %u status %d", r.calls, r.status);
+   CHECK(run_out() && r.calls == 1 && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://314/Double Dragon (U) [!].zip"),
+         "single: calls %u status %d path %s", r.calls, r.status,
+         r.launch_path);
    CHECK(romm_launch_is_ready("romm://314/Double Dragon (U) [!].zip")
          && vfs_file_is("romm://314/Double Dragon (U) [!].zip",
             "PK\3\4zipped", 10), "game not in memory");
@@ -290,6 +299,243 @@ static void test_romm_m3u(void)
          "RomM's disc list not used");
 }
 
+typedef struct
+{
+   const char *name;
+   const uint8_t *data;
+   size_t len;
+   bool deflate;
+} zip_member_t;
+
+static void put16(uint8_t *p, unsigned v)
+{
+   p[0] = (uint8_t)v;
+   p[1] = (uint8_t)(v >> 8);
+}
+
+static void put32(uint8_t *p, uint32_t v)
+{
+   put16(p, v & 0xffff);
+   put16(p + 2, v >> 16);
+}
+
+/* Raw deflate, as a zip member holds it. */
+static uint8_t *deflate_raw(const uint8_t *data, size_t len, size_t *out_len)
+{
+   size_t cap   = len + len / 8 + 1024;
+   uint8_t *out = (uint8_t*)malloc(cap);
+   void *z      = rdeflate_new(6, -15);
+
+   *out_len = 0;
+   rdeflate_set_in(z, data, len);
+   rdeflate_set_out(z, out, cap);
+   rdeflate_finish(z);
+   for (;;)
+   {
+      size_t rd = 0, wr = 0;
+      int st    = rdeflate_process(z, &rd, &wr);
+      *out_len += wr;
+      if (st == RDEFLATE_PROCESS_END)
+         break;
+      if (st == RDEFLATE_PROCESS_ERROR || (!rd && !wr))
+      {
+         *out_len = 0;
+         break;
+      }
+   }
+   rdeflate_free(z);
+   return out;
+}
+
+/* A zip of @count members; with @bad_crc its directory gives the last
+ * member a wrong CRC32. */
+static uint8_t *make_zip(const zip_member_t *m, size_t count, bool bad_crc,
+      size_t *zip_len)
+{
+   uint8_t *packed[8];
+   size_t plen[8];
+   uint32_t crc[8], offset[8];
+   size_t i, len = 22, pos = 0, dir;
+   uint8_t *zip;
+
+   for (i = 0; i < count; i++)
+   {
+      crc[i] = encoding_crc32(0, m[i].data, m[i].len);
+      if (bad_crc && i == count - 1)
+         crc[i] ^= 1;
+      if (m[i].deflate)
+         packed[i] = deflate_raw(m[i].data, m[i].len, &plen[i]);
+      else
+      {
+         packed[i] = (uint8_t*)malloc(m[i].len + 1);
+         memcpy(packed[i], m[i].data, m[i].len);
+         plen[i]   = m[i].len;
+      }
+      len += 30 + 46 + 2 * strlen(m[i].name) + plen[i];
+   }
+   zip = (uint8_t*)calloc(1, len);
+   for (i = 0; i < count; i++)
+   {
+      size_t nl = strlen(m[i].name);
+      offset[i] = (uint32_t)pos;
+      put32(zip + pos, 0x04034b50);
+      put16(zip + pos + 4, 20);
+      put16(zip + pos + 8, m[i].deflate ? 8 : 0);
+      put32(zip + pos + 14, crc[i]);
+      put32(zip + pos + 18, (uint32_t)plen[i]);
+      put32(zip + pos + 22, (uint32_t)m[i].len);
+      put16(zip + pos + 26, (unsigned)nl);
+      memcpy(zip + pos + 30, m[i].name, nl);
+      memcpy(zip + pos + 30 + nl, packed[i], plen[i]);
+      pos += 30 + nl + plen[i];
+      free(packed[i]);
+   }
+   dir = pos;
+   for (i = 0; i < count; i++)
+   {
+      size_t nl = strlen(m[i].name);
+      put32(zip + pos, 0x02014b50);
+      put16(zip + pos + 4, 20);
+      put16(zip + pos + 6, 20);
+      put16(zip + pos + 10, m[i].deflate ? 8 : 0);
+      put32(zip + pos + 16, crc[i]);
+      put32(zip + pos + 20, (uint32_t)plen[i]);
+      put32(zip + pos + 24, (uint32_t)m[i].len);
+      put16(zip + pos + 28, (unsigned)nl);
+      put32(zip + pos + 42, offset[i]);
+      memcpy(zip + pos + 46, m[i].name, nl);
+      pos += 46 + nl;
+   }
+   put32(zip + pos, 0x06054b50);
+   put16(zip + pos + 8, (unsigned)count);
+   put16(zip + pos + 10, (unsigned)count);
+   put32(zip + pos + 12, (uint32_t)(pos - dir));
+   put32(zip + pos + 16, (uint32_t)dir);
+   *zip_len = pos + 22;
+   return zip;
+}
+
+/* RomM's answer for game @id, one zip of @size bytes. */
+static void answer_zip_game(unsigned id, const char *zip_name, size_t size)
+{
+   char reply[1024];
+   snprintf(reply, sizeof(reply), "{\"id\": %u, \"platform_id\": 15,"
+         " \"fs_name\": \"%s\", \"fs_path\": \"roms/segacd/roms\","
+         " \"has_simple_single_file\": true, \"files\": [{\"id\": 7,"
+         " \"file_name\": \"%s\", \"full_path\": \"roms/segacd/roms/%s\","
+         " \"file_size_bytes\": %u, \"crc_hash\": \"0beca6fd\"}]}",
+         id, zip_name, zip_name, zip_name, (unsigned)size);
+   answer_str(200, reply);
+}
+
+/* Sega CD: a zip holding a .cue and its tracks, one of them over more
+ * than one unpacking slice, is unpacked and the .cue launched. */
+static void test_zipped_disc(void)
+{
+   const char *cue      = "FILE \"Game (Track 01).bin\" BINARY\n"
+      "FILE \"Game (Track 02).bin\" BINARY\n";
+   const size_t t1_size = ROMM_LAUNCH_UNZIP_SLICE + 1000;
+   uint8_t *t1          = (uint8_t*)malloc(t1_size);
+   zip_member_t m[3];
+   launch_result_t r;
+   uint8_t *zip;
+   size_t zip_len, i;
+
+   for (i = 0; i < t1_size; i++)
+      t1[i] = (uint8_t)((i * 13) ^ (i >> 9));
+   m[0].name = "Game (Track 01).bin";
+   m[0].data = t1;
+   m[0].len  = t1_size;
+   m[0].deflate = true;
+   m[1].name = "Game (Track 02).bin";
+   m[1].data = (const uint8_t*)"audio";
+   m[1].len  = 5;
+   m[1].deflate = false;
+   m[2].name = "Game.cue";
+   m[2].data = (const uint8_t*)cue;
+   m[2].len  = strlen(cue);
+   m[2].deflate = true;
+   zip = make_zip(m, 3, false, &zip_len);
+
+   start(&r, "romm://3335/Game.zip");
+   answer_zip_game(3335, "Game.zip", zip_len);
+   answer(206, zip, zip_len);
+   step();
+   CHECK(stub_task && stub_task->title
+         && !strcmp(stub_task->title, "Unpacking"), "unpacking title");
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://3335/Game.cue"),
+         "zipped disc: status %d path %s", r.status, r.launch_path);
+   CHECK(vfs_file_is("romm://3335/Game (Track 01).bin", t1, t1_size)
+         && vfs_file_is("romm://3335/Game (Track 02).bin", "audio", 5)
+         && vfs_file_is("romm://3335/Game.cue", cue, strlen(cue)),
+         "members not unpacked");
+   CHECK(!path_is_valid("romm://3335/Game.zip"), "zip kept");
+
+   /* History names the .cue it launched; the zip comes again. */
+   start(&r, "romm://3335/Game.cue");
+   answer_zip_game(3335, "Game.zip", zip_len);
+   answer(206, zip, zip_len);
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://3335/Game.cue")
+         && vfs_file_is("romm://3335/Game.cue", cue, strlen(cue)),
+         "from history: status %d path %s", r.status, r.launch_path);
+   free(zip);
+
+   /* A member that doesn't match its CRC32: nothing is left. */
+   zip = make_zip(m, 3, true, &zip_len);
+   start(&r, "romm://3335/Game.zip");
+   answer_zip_game(3335, "Game.zip", zip_len);
+   answer(206, zip, zip_len);
+   CHECK(run_out() && r.status == ROMM_ERR_CHECKSUM
+         && !path_is_valid("romm://3335/Game (Track 01).bin")
+         && !path_is_valid("romm://3335/Game.zip"),
+         "bad member: status %d", r.status);
+   free(zip);
+   free(t1);
+}
+
+/* Two discs in one zip launch through a disc list; a zipped cartridge
+ * is left zipped. */
+static void test_zipped_discs(void)
+{
+   zip_member_t m[4];
+   launch_result_t r;
+   uint8_t *zip;
+   size_t zip_len;
+
+   m[0].name = "Disc 1.cue";
+   m[1].name = "Disc 1.bin";
+   m[2].name = "Disc 2/Disc 2.cue";
+   m[3].name = "Disc 2/Disc 2.bin";
+   m[0].data = m[1].data = m[2].data = m[3].data = (const uint8_t*)"x";
+   m[0].len  = m[1].len  = m[2].len  = m[3].len  = 1;
+   m[0].deflate = m[1].deflate = m[2].deflate = m[3].deflate = false;
+   zip = make_zip(m, 4, false, &zip_len);
+   start(&r, "romm://3336/Two Discs.zip");
+   answer_zip_game(3336, "Two Discs.zip", zip_len);
+   answer(206, zip, zip_len);
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://3336/Two Discs.m3u")
+         && vfs_file_is("romm://3336/Two Discs.m3u",
+            "Disc 1.cue\nDisc 2/Disc 2.cue\n", 29)
+         && path_is_valid("romm://3336/Disc 2/Disc 2.bin"),
+         "two discs: status %d path %s", r.status, r.launch_path);
+   free(zip);
+
+   m[0].name = "Game.gb";
+   zip = make_zip(m, 1, false, &zip_len);
+   start(&r, "romm://20/Game.zip");
+   answer_zip_game(20, "Game.zip", zip_len);
+   answer(206, zip, zip_len);
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://20/Game.zip")
+         && vfs_file_is("romm://20/Game.zip", zip, zip_len)
+         && !path_is_valid("romm://20/Game.gb"),
+         "cartridge: status %d path %s", r.status, r.launch_path);
+   free(zip);
+}
+
 static void test_refused(void)
 {
    launch_result_t r;
@@ -346,11 +592,11 @@ static void test_refused(void)
          "cancel: status %d", r.status);
 
    memset(&r, 0, sizeof(r));
-   CHECK(!romm_launch_prepare("http://h", "t", "/games/a.gb", NULL,
+   CHECK(!romm_launch_prepare("http://h", "t", "/games/a.gb", NULL, NULL,
             on_launch, &r)
-         && !romm_launch_prepare("http://h", "", "romm://1/a.gb", NULL,
+         && !romm_launch_prepare("http://h", "", "romm://1/a.gb", NULL, NULL,
             on_launch, &r)
-         && !romm_launch_prepare("", "t", "romm://1/a.gb", NULL,
+         && !romm_launch_prepare("", "t", "romm://1/a.gb", NULL, NULL,
             on_launch, &r), "prepared without a game, token or server");
 }
 
@@ -361,6 +607,8 @@ int main(void)
    test_single_file();
    test_cue_bin();
    test_romm_m3u();
+   test_zipped_disc();
+   test_zipped_discs();
    test_refused();
    retro_vfs_romm_remove_prefix(ROMM_SCHEME);
 

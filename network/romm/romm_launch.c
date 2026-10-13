@@ -21,8 +21,10 @@
 #include <compat/strl.h>
 #include <encodings/crc32.h>
 #include <features/features_cpu.h>
+#include <file/archive_file.h>
 #include <file/file_path.h>
 #include <libretro.h>
+#include <lists/string_list.h>
 #include <queues/task_queue.h>
 #include <retro_miscellaneous.h>
 #include <string/stdstring.h>
@@ -34,13 +36,17 @@
 
 /* RetroArch's HTTP client refuses replies over 256 MB. */
 #define ROMM_LAUNCH_RANGE ((uint64_t)64 * 1024 * 1024)
+/* Unpacked per task step, so the menu keeps drawing */
+#define ROMM_LAUNCH_UNZIP_SLICE (4 * 1024 * 1024)
 #define ROMM_LAUNCH_PFX "[RomM] "
 
 enum romm_launch_state
 {
    ROMM_LAUNCH_FILES = 0,
    /* Fetching the files one after another, a range at a time */
-   ROMM_LAUNCH_DOWNLOAD
+   ROMM_LAUNCH_DOWNLOAD,
+   /* Unpacking a zipped disc image, a slice at a time */
+   ROMM_LAUNCH_UNZIP
 };
 
 typedef struct
@@ -50,7 +56,8 @@ typedef struct
    retro_task_t *task;
    romm_rom_t rom;
    romm_file_t *files;
-   /* The file being fetched, its bytes so far and their CRC32 */
+   /* The file being fetched or unpacked, its bytes so far and their
+    * CRC32 */
    size_t file;
    uint8_t *buf;
    uint64_t have;
@@ -71,8 +78,13 @@ typedef struct
    bool pending;
    bool finished;
    char *token;
+   char *unpack_title;
+   file_archive_entry_source_t *unzip;
    char server[NAME_MAX_LENGTH];
    char content_path[PATH_MAX_LENGTH];
+   /* What the loader is given: @content_path, or what a zip held */
+   char launch_path[PATH_MAX_LENGTH];
+   char zip_path[PATH_MAX_LENGTH];
    /* romm://<id>/, which every file of the game is under */
    char prefix[64];
 } romm_launch_t;
@@ -129,6 +141,13 @@ static const char *const romm_launch_archive_exts[] = {
    "zip", "7z", "rar", NULL };
 static const char *const romm_launch_rar_ext[] = { "rar", NULL };
 
+/* Disc descriptors, then disc images, then bare tracks */
+static const char *const romm_launch_disc_tiers[][6] = {
+   { "cue", "gdi", "ccd", "mds", "toc", NULL },
+   { "chd", "cdi", "iso", "pbp", "img", NULL },
+   { "bin", NULL }
+};
+
 static int romm_launch_cmp_path(const void *a, const void *b)
 {
    return strcasecmp((*(const romm_file_t* const*)a)->path,
@@ -142,11 +161,6 @@ static int romm_launch_cmp_path(const void *a, const void *b)
 static bool romm_launch_pick_discs(romm_launch_t *launch)
 {
    static const char *const m3u_ext[] = { "m3u", NULL };
-   static const char *const tiers[][6] = {
-      { "cue", "gdi", "ccd", "mds", "toc", NULL },
-      { "chd", "cdi", "iso", "pbp", "img", NULL },
-      { "bin", NULL }
-   };
    const romm_file_t **picked = NULL;
    size_t count               = RBUF_LEN(launch->files);
    int m3u                    = -1;
@@ -171,9 +185,10 @@ static bool romm_launch_pick_discs(romm_launch_t *launch)
       return true;
    }
 
-   for (t = 0; t < ARRAY_SIZE(tiers) && !picked; t++)
+   for (t = 0; t < ARRAY_SIZE(romm_launch_disc_tiers) && !picked; t++)
       for (i = 0; i < count; i++)
-         if (romm_launch_ext_is(launch->files[i].path, tiers[t]))
+         if (romm_launch_ext_is(launch->files[i].path,
+               romm_launch_disc_tiers[t]))
             RBUF_PUSH(picked, &launch->files[i]);
    if (!picked)
       return false;
@@ -248,8 +263,7 @@ static void romm_launch_files_cb(void *user_data, enum romm_status status,
    launch->state = ROMM_LAUNCH_DOWNLOAD;
 }
 
-/* Hands the file just fetched to the VFS, under the playlist path for
- * a game that is one file. */
+/* Hands the file just fetched or unpacked to the VFS. */
 static bool romm_launch_store_file(romm_launch_t *launch)
 {
    const romm_file_t *f = &launch->files[launch->file];
@@ -263,10 +277,7 @@ static bool romm_launch_store_file(romm_launch_t *launch)
       romm_launch_finish(launch, ROMM_ERR_CHECKSUM, 0);
       return false;
    }
-   if (launch->rom.single_file)
-      strlcpy(path, launch->content_path, sizeof(path));
-   else
-      snprintf(path, sizeof(path), "%s%s", launch->prefix, f->path);
+   snprintf(path, sizeof(path), "%s%s", launch->prefix, f->path);
 
    if ((int)launch->file == launch->m3u_file)
    {
@@ -322,6 +333,168 @@ static void romm_launch_content_cb(void *user_data, enum romm_status status,
       romm_launch_store_file(launch);
 }
 
+/* Given a zip, RetroArch launches its first member, never the .cue
+ * inside; so a zip holding a disc is unpacked, and becomes the game's
+ * files. True when it does. */
+static bool romm_launch_unzip_begin(romm_launch_t *launch)
+{
+   static const char *const zip_ext[] = { "zip", NULL };
+   struct string_list *members;
+   romm_file_t *files = NULL;
+   bool disc          = false;
+   uint64_t total     = 0;
+   size_t i;
+
+   if (!romm_launch_ext_is(launch->files[0].path, zip_ext))
+      return false;
+   snprintf(launch->zip_path, sizeof(launch->zip_path), "%s%s",
+         launch->prefix, launch->files[0].path);
+   if (!(members = file_archive_get_file_list(launch->zip_path, NULL)))
+      return false;
+
+   for (i = 0; i < members->size; i++)
+   {
+      const char *name = members->elems[i].data;
+      size_t len       = strlen(name);
+      char path[PATH_MAX_LENGTH];
+      romm_file_t f;
+
+      if (!len || name[len - 1] == '/' || len >= sizeof(f.path))
+         continue;
+      memset(&f, 0, sizeof(f));
+      strlcpy(f.name, path_basename(name), sizeof(f.name));
+      strlcpy(f.path, name, sizeof(f.path));
+      snprintf(path, sizeof(path), "%s#%s", launch->zip_path, name);
+      snprintf(f.crc, sizeof(f.crc), "%08x", (unsigned)
+            file_archive_get_file_crc32_and_size(path, &f.size));
+      disc = disc
+         || romm_launch_ext_is(name, romm_launch_disc_tiers[0])
+         || romm_launch_ext_is(name, romm_launch_disc_tiers[1]);
+      total += f.size;
+      RBUF_PUSH(files, f);
+   }
+   string_list_free(members);
+   if (!disc)
+   {
+      RBUF_FREE(files);
+      return false;
+   }
+
+   RBUF_FREE(launch->files);
+   launch->files = files;
+   launch->file  = 0;
+   launch->done  = 0;
+   launch->total = total;
+   launch->state = ROMM_LAUNCH_UNZIP;
+   if (launch->unpack_title)
+   {
+      task_free_title(launch->task);
+      task_set_title(launch->task, launch->unpack_title);
+      launch->unpack_title = NULL;
+   }
+   RARCH_LOG(ROMM_LAUNCH_PFX "Unpacking %s: %u files, %llu bytes.\n",
+         path_basename(launch->zip_path), (unsigned)RBUF_LEN(files),
+         (unsigned long long)total);
+   return true;
+}
+
+/* The zip goes; the loader gets the game's .m3u, its one disc, or a
+ * disc list made for it. */
+static void romm_launch_unzip_end(romm_launch_t *launch)
+{
+   char *nl;
+
+   retro_vfs_romm_remove(launch->zip_path);
+   if (!romm_launch_pick_discs(launch))
+   {
+      romm_launch_finish(launch, ROMM_ERR_UNSUPPORTED, 0);
+      return;
+   }
+   if (launch->m3u_file >= 0)
+      snprintf(launch->launch_path, sizeof(launch->launch_path), "%s%s",
+            launch->prefix, launch->files[launch->m3u_file].path);
+   else if ((nl = strchr(launch->list, '\n')) && !nl[1])
+   {
+      *nl = '\0';
+      snprintf(launch->launch_path, sizeof(launch->launch_path), "%s%s",
+            launch->prefix, launch->list);
+   }
+   else
+   {
+      strlcpy(launch->launch_path, launch->zip_path,
+            sizeof(launch->launch_path));
+      path_remove_extension(launch->launch_path);
+      strlcat(launch->launch_path, ".m3u", sizeof(launch->launch_path));
+      if (!retro_vfs_romm_add(launch->launch_path, launch->list,
+            launch->list_len))
+      {
+         romm_launch_finish(launch, ROMM_ERR_MEMORY, 0);
+         return;
+      }
+      launch->list = NULL;
+   }
+   romm_launch_finish(launch, ROMM_OK, 0);
+}
+
+/* Unpacks the next slice of the current member. */
+static void romm_launch_unzip_next(romm_launch_t *launch)
+{
+   const romm_file_t *f;
+   int64_t want, got;
+
+   if (launch->file >= RBUF_LEN(launch->files))
+   {
+      romm_launch_unzip_end(launch);
+      return;
+   }
+
+   f = &launch->files[launch->file];
+   if (!launch->unzip)
+   {
+      char path[PATH_MAX_LENGTH];
+      int64_t size = -1;
+
+      snprintf(path, sizeof(path), "%s#%s", launch->zip_path, f->path);
+      launch->unzip = file_archive_entry_source_open(path, &size);
+      if (!launch->unzip || (uint64_t)size != f->size)
+      {
+         romm_launch_finish(launch, ROMM_ERR_CHECKSUM, 0);
+         return;
+      }
+      launch->have      = 0;
+      launch->crc       = 0;
+      launch->check_crc = true;
+      if (f->size && !(launch->buf = (uint8_t*)malloc((size_t)f->size)))
+      {
+         romm_launch_finish(launch, ROMM_ERR_MEMORY, 0);
+         return;
+      }
+   }
+
+   want = (int64_t)(f->size - launch->have);
+   if (want > ROMM_LAUNCH_UNZIP_SLICE)
+      want = ROMM_LAUNCH_UNZIP_SLICE;
+   if (want)
+   {
+      got = file_archive_entry_source_read(launch->unzip,
+            launch->buf + launch->have, want);
+      if (got <= 0)
+      {
+         romm_launch_finish(launch, ROMM_ERR_CHECKSUM, 0);
+         return;
+      }
+      launch->crc   = encoding_crc32(launch->crc,
+            launch->buf + launch->have, (size_t)got);
+      launch->have += (uint64_t)got;
+   }
+   if (launch->have == f->size)
+   {
+      file_archive_entry_source_close(launch->unzip);
+      launch->unzip = NULL;
+      romm_launch_store_file(launch);
+   }
+}
+
 /* Starts fetching the next range of the current file, or finishes the
  * game once every file is in. */
 static void romm_launch_next(romm_launch_t *launch)
@@ -342,6 +515,8 @@ static void romm_launch_next(romm_launch_t *launch)
          }
          launch->list = NULL;
       }
+      else if (romm_launch_unzip_begin(launch))
+         return;
       romm_launch_finish(launch, ROMM_OK, 0);
       return;
    }
@@ -413,6 +588,12 @@ static void romm_launch_handler(retro_task_t *task)
                   * 100 / launch->total));
          romm_launch_next(launch);
          break;
+      case ROMM_LAUNCH_UNZIP:
+         if (launch->total)
+            task_set_progress(task, (int8_t)((launch->done + launch->have)
+                  * 100 / launch->total));
+         romm_launch_unzip_next(launch);
+         break;
    }
 }
 
@@ -433,7 +614,8 @@ static void romm_launch_cb(retro_task_t *task, void *task_data,
             launch->content_path, launch->status);
    }
    if (launch->cb)
-      launch->cb(launch->user_data, launch->status, launch->http_status);
+      launch->cb(launch->user_data, launch->status, launch->http_status,
+            launch->status == ROMM_OK ? launch->launch_path : NULL);
 }
 
 static void romm_launch_cleanup(retro_task_t *task)
@@ -442,9 +624,11 @@ static void romm_launch_cleanup(retro_task_t *task)
 
    if (launch)
    {
+      file_archive_entry_source_close(launch->unzip);
       RBUF_FREE(launch->files);
       free(launch->buf);
       free(launch->list);
+      free(launch->unpack_title);
       if (launch->token)
       {
          memset(launch->token, 0, strlen(launch->token));
@@ -457,7 +641,7 @@ static void romm_launch_cleanup(retro_task_t *task)
 
 bool romm_launch_prepare(const char *server, const char *token,
       const char *content_path, const char *title,
-      romm_launch_cb_t cb, void *user_data)
+      const char *unpack_title, romm_launch_cb_t cb, void *user_data)
 {
    romm_launch_t *launch;
    retro_task_t *task;
@@ -467,9 +651,12 @@ bool romm_launch_prepare(const char *server, const char *token,
       return false;
    if (!(launch = (romm_launch_t*)calloc(1, sizeof(*launch))))
       return false;
-   if (!(launch->token = strdup(token)) || !(task = task_init()))
+   if (     !(launch->token = strdup(token))
+         || (unpack_title && !(launch->unpack_title = strdup(unpack_title)))
+         || !(task = task_init()))
    {
       free(launch->token);
+      free(launch->unpack_title);
       free(launch);
       return false;
    }
@@ -482,6 +669,8 @@ bool romm_launch_prepare(const char *server, const char *token,
    strlcpy(launch->server, server, sizeof(launch->server));
    strlcpy(launch->content_path, content_path,
          sizeof(launch->content_path));
+   strlcpy(launch->launch_path, content_path,
+         sizeof(launch->launch_path));
    snprintf(launch->prefix, sizeof(launch->prefix), ROMM_SCHEME "%u/",
          rom_id);
 
@@ -504,6 +693,7 @@ bool romm_launch_prepare(const char *server, const char *token,
       free(task->title);
       free(task);
       free(launch->token);
+      free(launch->unpack_title);
       free(launch);
       return false;
    }

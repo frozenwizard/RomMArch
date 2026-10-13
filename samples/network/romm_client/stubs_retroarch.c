@@ -104,6 +104,17 @@ void task_set_progress(retro_task_t *task, int8_t progress)
    task->progress = progress;
 }
 
+void task_set_title(retro_task_t *task, char *title)
+{
+   task->title = title;
+}
+
+void task_free_title(retro_task_t *task)
+{
+   free(task->title);
+   task->title = NULL;
+}
+
 void *task_push_http_transfer_with_headers(const char *url, bool mute,
       const char *type, const char *headers,
       retro_task_callback_t cb, void *user_data)
