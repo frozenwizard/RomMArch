@@ -326,7 +326,6 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
 {
    bool quiet   = romm_syncing_quietly;
    size_t games = 0;
-   size_t clashes;
    size_t i;
    char msg[256];
 
@@ -350,13 +349,6 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
          (unsigned)games, (unsigned)RBUF_LEN(lib->platforms));
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
    romm_sync_owed_saves();
-
-   if ((clashes = romm_library_save_name_clashes(lib)))
-   {
-      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SAVE_NAME_CLASHES),
-            (unsigned)clashes);
-      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
-   }
 }
 
 static bool romm_start_library_sync(bool quiet)

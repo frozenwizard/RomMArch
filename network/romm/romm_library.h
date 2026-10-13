@@ -106,12 +106,6 @@ size_t romm_library_cover_path(char *s, size_t len,
  * when there are none for the system. */
 const char *const *romm_library_preferred_cores(const char *libretro_slug);
 
-/* How many games in @lib share the name RomM matches synced saves by
- * (the file name without extension, ignoring case, across platforms)
- * with another game. RomM files such a save under the first of them,
- * so it can land on the wrong game. */
-size_t romm_library_save_name_clashes(const romm_library_t *lib);
-
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,
       const char *playlist_dir);
