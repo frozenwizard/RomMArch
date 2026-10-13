@@ -33669,6 +33669,10 @@ MSG_HASH(
    "Paired, but RomM left out: %s. Pair again with every permission ticked."
    )
 MSG_HASH(
+   MSG_ROMM_PAIRED_CLOUD_SYNC_ELSEWHERE,
+   "Paired with RomM. Cloud Sync stays with the service it's set up for, so settings won't sync through RomM."
+   )
+MSG_HASH(
    MSG_ROMM_PAIR_DENIED,
    "RomM turned the pairing down."
    )

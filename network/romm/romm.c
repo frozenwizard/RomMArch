@@ -162,15 +162,35 @@ void romm_check_connection(void)
 }
 
 #ifdef HAVE_CLOUDSYNC
+enum romm_cloud_sync_setup
+{
+   ROMM_CLOUD_SYNC_SET_UP = 0,
+   ROMM_CLOUD_SYNC_ELSEWHERE,
+   ROMM_CLOUD_SYNC_FAILED
+};
+
 /* Points Cloud Sync at RomM's WebDAV, which takes the device token, for
- * RetroArch's configs only: saves and states sync per game id instead. */
-static void romm_setup_cloud_sync(settings_t *settings)
+ * RetroArch's configs only: saves and states sync per game id instead.
+ * Cloud Sync the user has on for another service is left as it is. */
+static enum romm_cloud_sync_setup romm_setup_cloud_sync(
+      settings_t *settings)
 {
    char url[sizeof(settings->arrays.webdav_url)];
 
    if (!romm_client_url(url, sizeof(url),
          settings->arrays.romm_server_url, "/api/sync/retroarch/"))
-      return;
+   {
+      RARCH_WARN("[RomM] The server address is too long for Cloud Sync's; Cloud Sync left as it was.\n");
+      return ROMM_CLOUD_SYNC_FAILED;
+   }
+   if (     settings->bools.cloud_sync_enable
+         && !(   string_is_equal(settings->arrays.cloud_sync_driver, "webdav")
+              && string_is_equal(settings->arrays.webdav_url, url)))
+   {
+      RARCH_LOG("[RomM] Cloud Sync is on with the %s driver at another address; left as it is.\n",
+            settings->arrays.cloud_sync_driver);
+      return ROMM_CLOUD_SYNC_ELSEWHERE;
+   }
    configuration_set_string(settings,
          settings->arrays.webdav_url, url);
    configuration_set_string(settings,
@@ -187,6 +207,7 @@ static void romm_setup_cloud_sync(settings_t *settings)
          settings->bools.cloud_sync_sync_system, false);
    /* A new server: forget the last sync, as changing driver does. */
    task_push_cloud_sync_update_driver();
+   return ROMM_CLOUD_SYNC_SET_UP;
 }
 #endif
 
@@ -194,6 +215,9 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
       const char *token, const char *device_id, const char *missing_scopes)
 {
    settings_t *settings = config_get_ptr();
+#ifdef HAVE_CLOUDSYNC
+   enum romm_cloud_sync_setup cloud_sync;
+#endif
    char msg[512];
 
    romm_pairing = false;
@@ -211,12 +235,13 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
    strlcpy(settings->arrays.romm_device_id, device_id,
          sizeof(settings->arrays.romm_device_id));
 #ifdef HAVE_CLOUDSYNC
-   romm_setup_cloud_sync(settings);
+   cloud_sync = romm_setup_cloud_sync(settings);
 #endif
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
 #ifdef HAVE_CLOUDSYNC
-   if (settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
+   if (     cloud_sync == ROMM_CLOUD_SYNC_SET_UP
+         && settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
       task_push_cloud_sync();
 #endif
    if (*missing_scopes)
@@ -225,6 +250,11 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
             msg_hash_to_str(MSG_ROMM_PAIRED_MISSING_SCOPES), missing_scopes);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
    }
+#ifdef HAVE_CLOUDSYNC
+   else if (cloud_sync == ROMM_CLOUD_SYNC_ELSEWHERE)
+      romm_notify(msg_hash_to_str(MSG_ROMM_PAIRED_CLOUD_SYNC_ELSEWHERE),
+            MESSAGE_QUEUE_CATEGORY_SUCCESS);
+#endif
    else
       romm_notify(msg_hash_to_str(MSG_ROMM_PAIRED),
             MESSAGE_QUEUE_CATEGORY_SUCCESS);
