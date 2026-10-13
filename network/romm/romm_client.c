@@ -1451,3 +1451,35 @@ bool romm_client_states(const char *server, const char *token,
    return romm_list_saves(server, token, "/api/states?rom_id=%u",
          "save states", rom_id, cb, user_data);
 }
+
+bool romm_client_save_content(const char *server, const char *token,
+      unsigned save_id, const char *device_id,
+      romm_download_cb_t cb, void *user_data)
+{
+   char id[192];
+   char path[256];
+
+   if (!save_id)
+      return false;
+   if (string_is_empty(device_id))
+      snprintf(path, sizeof(path), "/api/saves/%u/content", save_id);
+   else
+   {
+      if (!romm_url_escape(id, sizeof(id), device_id))
+         return false;
+      snprintf(path, sizeof(path), "/api/saves/%u/content?device_id=%s",
+            save_id, id);
+   }
+   return romm_client_download(server, token, path, cb, user_data);
+}
+
+bool romm_client_state_content(const char *server, const char *token,
+      unsigned state_id, romm_download_cb_t cb, void *user_data)
+{
+   char path[64];
+
+   if (!state_id)
+      return false;
+   snprintf(path, sizeof(path), "/api/states/%u/content", state_id);
+   return romm_client_download(server, token, path, cb, user_data);
+}

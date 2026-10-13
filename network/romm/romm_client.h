@@ -307,6 +307,18 @@ bool romm_client_saves(const char *server, const char *token,
 bool romm_client_states(const char *server, const char *token,
       unsigned rom_id, romm_saves_cb_t cb, void *user_data);
 
+/* Fetches save @save_id into memory. With @device_id, RomM's id for
+ * this device, RomM records that the device now has this version.
+ * @cb runs on the main thread. */
+bool romm_client_save_content(const char *server, const char *token,
+      unsigned save_id, const char *device_id,
+      romm_download_cb_t cb, void *user_data);
+
+/* Fetches save state @state_id into memory. @cb runs on the main
+ * thread. */
+bool romm_client_state_content(const char *server, const char *token,
+      unsigned state_id, romm_download_cb_t cb, void *user_data);
+
 RETRO_END_DECLS
 
 #endif

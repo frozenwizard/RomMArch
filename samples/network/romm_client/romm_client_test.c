@@ -11,9 +11,10 @@
  * from trimmed RomM replies, a platform's ordered game ids, a game's
  * files, a game file downloaded into memory, file downloads, a
  * platform's firmware and its download, and a game's saves and save
- * states. Then the wait for approval, with the stubs' clock standing
- * in for time: the poll schedule, slowing down when told, and how
- * approval, denial, expiry and cancellation end it.
+ * states and their downloads. Then the wait for approval, with the
+ * stubs' clock standing in for time: the poll schedule, slowing down
+ * when told, and how approval, denial, expiry and cancellation end
+ * it.
  *
  * Includes the client's translation unit so its static JSON reader is
  * tested as shipped.
@@ -1446,7 +1447,10 @@ static void on_saves(void *user_data, enum romm_status status,
 
 static void test_saves(void)
 {
+   static const unsigned char sram[] = { 0, 'S', 0, 'M', 0xff };
+   http_transfer_data_t resp;
    saves_result_t r;
+   download_result_t d;
 
    memset(&r, 0, sizeof(r));
    stub_reset();
@@ -1543,13 +1547,47 @@ static void test_saves(void)
          "state: status %d count %u %s", r.status, (unsigned)r.count,
          r.saves[0].file_name);
 
+   /* Contents: a save fetched with this device's id is recorded as
+    * synced by RomM; binary, NULs included. */
+   memset(&d, 0, sizeof(d));
+   stub_reset();
+   CHECK(romm_client_save_content("http://romm.local:8090", "rmm_0123abcd",
+         12, "4e4c54f7-8573-4246-95bf-4f11890b27e6", on_download, &d)
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/saves/12/"
+         "content?device_id=4e4c54f7-8573-4246-95bf-4f11890b27e6")
+         && strstr(stub_req.headers, "Bearer rmm_0123abcd"),
+         "save URL %s", stub_req.url);
+   memset(&resp, 0, sizeof(resp));
+   resp.status = 200;
+   resp.data   = (char*)sram;
+   resp.len    = sizeof(sram);
+   stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   CHECK(d.calls == 1 && d.status == ROMM_OK && d.len == sizeof(sram)
+         && !memcmp(d.data, sram, sizeof(sram)), "save: status %d len %u",
+         d.status, (unsigned)d.len);
+   stub_reset();
+   CHECK(romm_client_save_content("http://h", "t", 12, NULL, on_download, &d)
+         && !strcmp(stub_req.url, "http://h/api/saves/12/content"),
+         "save without a device %s", stub_req.url);
+   memset(&d, 0, sizeof(d));
+   answer(404, "{\"detail\": \"Save file not found on disk\"}");
+   CHECK(d.status == ROMM_ERR_HTTP && d.http_status == 404, "404: status %d",
+         d.status);
+   stub_reset();
+   CHECK(romm_client_state_content("http://h", "t", 40, on_download, &d)
+         && !strcmp(stub_req.url, "http://h/api/states/40/content"),
+         "state URL %s", stub_req.url);
+
    memset(&r, 0, sizeof(r));
    stub_reset();
    CHECK(!romm_client_saves("http://h", "t", 0, on_saves, &r)
+         && !romm_client_save_content("http://h", "t", 0, NULL, on_download,
+               &d)
+         && !romm_client_state_content("http://h", "t", 0, on_download, &d)
          && !romm_client_states("http://h", "t", 0, on_saves, &r)
          && !romm_client_saves("http://h", "", 3335, on_saves, &r)
          && stub_req.count == 0 && r.calls == 0,
-         "listed without a game or a token");
+         "listed or fetched without an id or a token");
 }
 
 int main(void)
