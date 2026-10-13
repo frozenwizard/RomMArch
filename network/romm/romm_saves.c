@@ -371,3 +371,202 @@ romm_saves_local_t *romm_saves_list_local(const char *dir,
    retro_closedir(rdir);
    return list;
 }
+
+/* Copies @name to @s without the time RomM adds to a save uploaded to
+ * a slot, " [2026-10-12_21-18-25]". */
+static void romm_saves_strip_tag(char *s, size_t len, const char *name)
+{
+   static const char pattern[] = " [dddd-dd-dd_dd-dd-dd]";
+   const char *c;
+
+   strlcpy(s, name, len);
+   for (c = name; *c; c++)
+   {
+      size_t i;
+      for (i = 0; pattern[i] && c[i]; i++)
+         if (pattern[i] == 'd' ? !ISDIGIT((unsigned char)c[i])
+               : c[i] != pattern[i])
+            break;
+      if (!pattern[i])
+      {
+         size_t at = (size_t)(c - name);
+         if (at < len)
+            strlcpy(s + at, c + sizeof(pattern) - 1, len - at);
+         return;
+      }
+   }
+}
+
+/* The kind of file RomM's @name is: its suffix after @base or
+ * @rom_base, else the longest of @known it ends with, else its
+ * extension. */
+static void romm_saves_remote_suffix(char *s, size_t len,
+      const char *name, const char *base, const char *rom_base,
+      const char *const *known)
+{
+   char plain[512];
+   const char *suffix;
+   size_t plain_len, best = 0, i;
+
+   romm_saves_strip_tag(plain, sizeof(plain), name);
+   if (     (suffix = romm_saves_suffix(plain, base))
+         || (rom_base && (suffix = romm_saves_suffix(plain, rom_base))))
+   {
+      strlcpy(s, suffix, len);
+      return;
+   }
+   plain_len = strlen(plain);
+   for (i = 0; i < RBUF_LEN(known); i++)
+   {
+      size_t k = strlen(known[i]);
+      if (     k > best && k < plain_len
+            && !strcasecmp(plain + plain_len - k, known[i]))
+         best = k;
+   }
+   if (best)
+      strlcpy(s, plain + plain_len - best, len);
+   else if ((suffix = strrchr(plain, '.')))
+      strlcpy(s, suffix, len);
+   else
+      *s = '\0';
+}
+
+static bool romm_saves_newer(const romm_save_t *a, const romm_save_t *b)
+{
+   int64_t ta = romm_saves_time(a->updated_at);
+   int64_t tb = romm_saves_time(b->updated_at);
+   return ta != tb ? ta > tb : a->id > b->id;
+}
+
+/* Decides one file's step; @local or @remote may be NULL. */
+static void romm_saves_plan_file(romm_saves_step_t **steps,
+      const romm_saves_game_t *game, bool is_state, const char *suffix,
+      const romm_saves_local_t *local, const romm_save_t *remote)
+{
+   const romm_saves_file_t *rec = game
+      ? romm_saves_game_file((romm_saves_game_t*)game, suffix, false)
+      : NULL;
+   bool same           = local && remote && *remote->content_hash
+      && string_is_equal_noncase(local->md5, remote->content_hash);
+   bool local_changed  = local
+      && (!rec || !string_is_equal(local->md5, rec->md5));
+   bool remote_changed = remote
+      && (     !rec || remote->id != rec->remote_id
+            || romm_saves_time(remote->updated_at) > rec->remote_time);
+   romm_saves_step_t step;
+
+   memset(&step, 0, sizeof(step));
+   if (same)
+   {
+      if (!rec || rec->remote_id != remote->id
+            || !string_is_equal(rec->md5, local->md5))
+         step.type = ROMM_SAVES_MATCH;
+      else
+         return;
+   }
+   else if (remote && !local)
+      step.type = ROMM_SAVES_DOWNLOAD;
+   else if (local_changed && remote_changed)
+      step.type = ROMM_SAVES_CONFLICT;
+   else if (remote_changed)
+      step.type = ROMM_SAVES_DOWNLOAD;
+   else if (local_changed)
+      step.type = ROMM_SAVES_UPLOAD;
+   else
+      return;
+
+   step.is_state = is_state;
+   strlcpy(step.suffix, suffix, sizeof(step.suffix));
+   if (local)
+      strlcpy(step.md5, local->md5, sizeof(step.md5));
+   if (remote)
+      step.remote = *remote;
+   RBUF_PUSH(*steps, step);
+}
+
+/* Plans the saves (or the states, with @is_state). */
+static void romm_saves_plan_kind(romm_saves_step_t **steps,
+      const romm_saves_plan_params_t *p, bool is_state)
+{
+   const romm_saves_local_t *local = is_state ? p->states : p->saves;
+   size_t local_count              = is_state ? p->states_count
+      : p->saves_count;
+   const romm_save_t *remote       = is_state ? p->remote_states
+      : p->remote_saves;
+   size_t remote_count             = is_state ? p->remote_states_count
+      : p->remote_saves_count;
+   const char **known              = NULL;
+   /* Per remote entry, its kind; the newest of each kind is chosen. */
+   char (*kinds)[64]               = NULL;
+   bool *chosen                    = NULL;
+   size_t i, j;
+
+   for (i = 0; i < local_count; i++)
+      RBUF_PUSH(known, local[i].suffix);
+   if (p->game)
+      for (i = 0; i < RBUF_LEN(p->game->files); i++)
+         if (string_starts_with(p->game->files[i].suffix, ".state")
+               == is_state)
+            RBUF_PUSH(known, p->game->files[i].suffix);
+
+   if (remote_count)
+   {
+      kinds  = (char(*)[64])calloc(remote_count, sizeof(*kinds));
+      chosen = (bool*)calloc(remote_count, sizeof(*chosen));
+   }
+   if (remote_count && (!kinds || !chosen))
+      remote_count = 0;
+   for (i = 0; i < remote_count; i++)
+   {
+      if (is_state && !string_is_equal(remote[i].emulator, p->emulator))
+         continue;
+      romm_saves_remote_suffix(kinds[i], sizeof(kinds[i]),
+            remote[i].file_name, p->base, p->rom_base, known);
+      if (     !*kinds[i]
+            || string_starts_with(kinds[i], ".state") != is_state)
+         continue;
+      chosen[i] = true;
+      for (j = 0; j < i; j++)
+         if (chosen[j] && string_is_equal_noncase(kinds[j], kinds[i]))
+         {
+            if (romm_saves_newer(&remote[i], &remote[j]))
+               chosen[j] = false;
+            else
+               chosen[i] = false;
+            break;
+         }
+   }
+
+   /* Local files, with RomM's copy of the same kind if any. */
+   for (i = 0; i < local_count; i++)
+   {
+      const romm_save_t *match = NULL;
+      for (j = 0; j < remote_count; j++)
+         if (chosen[j] && string_is_equal_noncase(kinds[j],
+               local[i].suffix))
+         {
+            match     = &remote[j];
+            chosen[j] = false;
+            break;
+         }
+      romm_saves_plan_file(steps, p->game, is_state, local[i].suffix,
+            &local[i], match);
+   }
+   /* RomM's copies of kinds not here. */
+   for (j = 0; j < remote_count; j++)
+      if (chosen[j])
+         romm_saves_plan_file(steps, p->game, is_state, kinds[j], NULL,
+               &remote[j]);
+
+   free(kinds);
+   free(chosen);
+   RBUF_FREE(known);
+}
+
+romm_saves_step_t *romm_saves_plan(const romm_saves_plan_params_t *p)
+{
+   romm_saves_step_t *steps = NULL;
+   romm_saves_plan_kind(&steps, p, false);
+   romm_saves_plan_kind(&steps, p, true);
+   return steps;
+}

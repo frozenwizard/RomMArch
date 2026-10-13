@@ -20,6 +20,8 @@
 #include <boolean.h>
 #include <retro_common_api.h>
 
+#include "romm_client.h"
+
 RETRO_BEGIN_DECLS
 
 /* What was last synced with RomM of one of a game's files. */
@@ -65,6 +67,51 @@ typedef struct
    char md5[33];
 } romm_saves_local_t;
 
+enum romm_saves_step_type
+{
+   /* RomM's copy is newer, or the only one: fetch it. */
+   ROMM_SAVES_DOWNLOAD = 0,
+   /* The local file is newer, or the only one: send it. */
+   ROMM_SAVES_UPLOAD,
+   /* Both changed since the last sync. */
+   ROMM_SAVES_CONFLICT,
+   /* Both hold the same, never recorded: record it. */
+   ROMM_SAVES_MATCH
+};
+
+/* One file to bring in line with RomM. */
+typedef struct
+{
+   enum romm_saves_step_type type;
+   bool is_state;
+   char suffix[64];
+   /* The local file's MD5; empty when there is none. */
+   char md5[33];
+   /* RomM's copy; id 0 when there is none. */
+   romm_save_t remote;
+} romm_saves_step_t;
+
+/* What romm_saves_plan() compares. */
+typedef struct
+{
+   /* What was last synced of the game with this emulator, or NULL. */
+   const romm_saves_game_t *game;
+   const char *emulator;
+   /* The base name of the game's files here, and RomM's file name for
+    * the game without extension (NULL if unknown), which other
+    * clients name their saves after. */
+   const char *base;
+   const char *rom_base;
+   const romm_saves_local_t *saves;
+   size_t saves_count;
+   const romm_saves_local_t *states;
+   size_t states_count;
+   const romm_save_t *remote_saves;
+   size_t remote_saves_count;
+   const romm_save_t *remote_states;
+   size_t remote_states_count;
+} romm_saves_plan_params_t;
+
 /* <@save_dir>/rommarch-saves.json */
 size_t romm_saves_record_path(char *s, size_t len, const char *save_dir);
 
@@ -106,6 +153,13 @@ bool romm_saves_md5_file(const char *path, char *md5);
  * with its MD5; an RBUF for the caller to free. */
 romm_saves_local_t *romm_saves_list_local(const char *dir,
       const char *base, bool states);
+
+/* What to do to bring a game's files here and in RomM in line, one
+ * step per file that needs one; an RBUF for the caller to free. For
+ * each kind of save (".srm", ".brm", ...), RomM's copy is the newest
+ * of that kind from any client and slot; for each save state, the one
+ * of the same name the same emulator made. */
+romm_saves_step_t *romm_saves_plan(const romm_saves_plan_params_t *p);
 
 RETRO_END_DECLS
 
