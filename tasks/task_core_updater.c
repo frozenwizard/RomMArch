@@ -1744,6 +1744,22 @@ static bool task_core_updater_download_finder(retro_task_t *task, void *user_dat
    return false;
 }
 
+bool task_core_updater_list_pending(core_updater_list_t *core_list)
+{
+   task_finder_data_t find_data;
+   find_data.func     = task_core_updater_get_list_finder;
+   find_data.userdata = (void*)core_list;
+   return core_list && task_queue_find(&find_data);
+}
+
+bool task_core_updater_download_pending(const char *filename)
+{
+   task_finder_data_t find_data;
+   find_data.func     = task_core_updater_download_finder;
+   find_data.userdata = (void*)filename;
+   return !string_is_empty(filename) && task_queue_find(&find_data);
+}
+
 static void *task_push_core_updater_download_internal(
       core_updater_list_t* core_list,
       const char *filename, uint32_t crc, bool mute,

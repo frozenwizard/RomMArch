@@ -184,6 +184,10 @@ void task_push_update_installed_cores(
       bool auto_backup, size_t auto_backup_history_size,
       const char *path_dir_libretro,
       const char *path_dir_core_assets);
+/* Is a core list fetch into @core_list, or a download of the core
+ * file @filename (as the list names it), still running? */
+bool task_core_updater_list_pending(core_updater_list_t *core_list);
+bool task_core_updater_download_pending(const char *filename);
 #if defined(ANDROID)
 void *task_push_play_feature_delivery_core_install(
       core_updater_list_t* core_list,

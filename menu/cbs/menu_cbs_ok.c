@@ -3086,8 +3086,18 @@ static int action_ok_playlist_entry_collection(const char *path,
        * to select one */
       if (!core_info)
       {
+         int ret;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         /* A RomM game gets its platform's core instead. */
+         if (romm_launch_without_core(content_path,
+               *content_label ? content_label : NULL,
+               entry->db_name && *entry->db_name
+               ? entry->db_name : menu->db_playlist_file))
+            ret = 0;
+         else
+#endif
          /* TODO: figure out if this should refer to the inner or outer content_path */
-         int ret = action_ok_file_load_with_detect_core_collection(content_path,
+         ret = action_ok_file_load_with_detect_core_collection(content_path,
                label, type, selection_ptr, entry_idx);
 
          if (playlist_initialized && tmp_playlist)
@@ -3193,7 +3203,21 @@ static int action_ok_playlist_entry_collection(const char *path,
    /* Ensure core path is valid */
    if (   !*core_path
        || (!core_is_builtin && !path_is_valid(core_path)))
+   {
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      /* A RomM game's core may have been removed since. */
+      if (romm_launch_without_core(content_path,
+            *content_label ? content_label : NULL,
+            entry->db_name && *entry->db_name
+            ? entry->db_name : menu->db_playlist_file))
+      {
+         if (playlist_initialized && tmp_playlist)
+            playlist_free(tmp_playlist);
+         return 0;
+      }
+#endif
       goto error;
+   }
 
    /* Subsystem codepath */
    if (entry->subsystem_ident && *entry->subsystem_ident)

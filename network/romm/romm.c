@@ -18,7 +18,10 @@
 
 #include <array/rbuf.h>
 #include <compat/strl.h>
+#include <features/features_cpu.h>
+#include <file/config_file.h>
 #include <file/file_path.h>
+#include <queues/task_queue.h>
 #include <string/stdstring.h>
 
 #include "romm.h"
@@ -33,6 +36,11 @@
 #include "../../playlist.h"
 #include "../../runloop.h"
 #include "../../tasks/task_content.h"
+#include "../../verbosity.h"
+#if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
+#include "../../core_updater_list.h"
+#include "../../tasks/tasks_internal.h"
+#endif
 #include "../../version.h"
 #ifdef HAVE_MENU
 #include "../../menu/menu_driver.h"
@@ -547,6 +555,239 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    }
    romm_launching = true;
    return 0;
+}
+
+#if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
+/* How soon a second Run must follow to confirm a core download */
+#define ROMM_CORE_CONFIRM_USEC 10000000
+
+/* A core download, and the game to launch once it's in */
+typedef struct
+{
+   bool listing;
+   bool downloading;
+   bool installed;
+   char core[64];
+   char name[NAME_MAX_LENGTH];
+   char filename[NAME_MAX_LENGTH];
+   char core_path[PATH_MAX_LENGTH];
+   char content[PATH_MAX_LENGTH];
+   char label[NAME_MAX_LENGTH];
+} romm_core_install_t;
+
+static bool romm_installing_core = false;
+static char romm_offered_content[PATH_MAX_LENGTH];
+static retro_time_t romm_offered_at;
+
+/* The core's own name in its info file, such as "Genesis Plus GX";
+ * the info files cover cores not yet installed. */
+static void romm_core_name(const char *core, char *s, size_t len)
+{
+   settings_t *settings = config_get_ptr();
+   config_file_t *conf;
+   char path[PATH_MAX_LENGTH];
+
+   strlcpy(s, core, len);
+   fill_pathname_join_special(path, settings->paths.path_libretro_info,
+         core, sizeof(path));
+   strlcat(path, "_libretro.info", sizeof(path));
+   if ((conf = config_file_new(path)))
+   {
+      config_get_array(conf, "corename", s, len);
+      config_file_free(conf);
+   }
+}
+
+/* Runs on the main thread, polling the core downloader's tasks: the
+ * core list first, if it hasn't been fetched, then the core. */
+static void romm_core_install_handler(retro_task_t *task)
+{
+   romm_core_install_t *ins  = (romm_core_install_t*)task->state;
+   core_updater_list_t *list = core_updater_list_get_cached();
+   settings_t *settings      = config_get_ptr();
+   size_t i, len;
+
+   task->when = cpu_features_get_time_usec() + 250000;
+   if (ins->downloading)
+   {
+      if (task_core_updater_download_pending(ins->filename))
+         return;
+      ins->installed = path_is_valid(ins->core_path);
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+
+   if (!list)
+   {
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+   if (task_core_updater_list_pending(list))
+      return;
+   if (!core_updater_list_size(list))
+   {
+      if (     ins->listing
+            || !task_push_get_core_updater_list(list, false, false))
+         task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      ins->listing = true;
+      return;
+   }
+
+   len = strlen(ins->core);
+   for (i = 0; i < core_updater_list_size(list); i++)
+   {
+      const core_updater_list_entry_t *entry = NULL;
+      if (     core_updater_list_get_index(list, i, &entry)
+            && !strncmp(entry->remote_filename, ins->core, len)
+            && string_starts_with(entry->remote_filename + len, "_libretro."))
+      {
+         strlcpy(ins->filename, entry->remote_filename,
+               sizeof(ins->filename));
+         strlcpy(ins->core_path, entry->local_core_path,
+               sizeof(ins->core_path));
+         break;
+      }
+   }
+   if (     !*ins->filename
+         || !task_push_core_updater_download(list, ins->filename, 0, false,
+               settings->bools.core_updater_auto_backup,
+               (size_t)settings->uints.core_updater_auto_backup_history_size,
+               settings->paths.directory_libretro,
+               settings->paths.directory_core_assets))
+   {
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+   ins->downloading = true;
+}
+
+static void romm_core_install_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_core_install_t *ins = (romm_core_install_t*)task->state;
+   core_info_t *info        = NULL;
+   char msg[NAME_MAX_LENGTH];
+
+   romm_installing_core = false;
+   if (!ins->installed)
+   {
+      snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_ROMM_CORE_INSTALL_FAILED), ins->name);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+   /* The downloader rescans the info files once its task is retired,
+    * which can be after this. */
+   if (!core_info_find(ins->core_path, &info))
+   {
+      bool refresh = true;
+      command_event(CMD_EVENT_CORE_INFO_INIT, &refresh);
+   }
+   romm_launch_from_menu(ins->core_path, ins->content,
+         *ins->label ? ins->label : NULL);
+}
+
+static void romm_core_install_cleanup(retro_task_t *task)
+{
+   free(task->state);
+   task->state = NULL;
+}
+
+static bool romm_install_core(const char *core, const char *name,
+      const char *content_path, const char *label)
+{
+   romm_core_install_t *ins;
+   retro_task_t *task;
+
+   if (!core_updater_list_get_cached())
+      core_updater_list_init_cached();
+   if (!(ins = (romm_core_install_t*)calloc(1, sizeof(*ins))))
+      return false;
+   if (!(task = task_init()))
+   {
+      free(ins);
+      return false;
+   }
+   strlcpy(ins->core, core, sizeof(ins->core));
+   strlcpy(ins->name, name, sizeof(ins->name));
+   strlcpy(ins->content, content_path, sizeof(ins->content));
+   strlcpy(ins->label, label ? label : "", sizeof(ins->label));
+   task->handler  = romm_core_install_handler;
+   task->callback = romm_core_install_cb;
+   task->cleanup  = romm_core_install_cleanup;
+   task->state    = ins;
+   task->flags   |= RETRO_TASK_FLG_MAIN_THREAD | RETRO_TASK_FLG_MUTE;
+   if (!task_queue_push(task))
+   {
+      free(ins);
+      free(task);
+      return false;
+   }
+   romm_installing_core = true;
+   RARCH_LOG("[RomM] Installing %s for %s.\n", core, content_path);
+   return true;
+}
+#endif
+
+bool romm_launch_without_core(const char *content_path, const char *label,
+      const char *playlist_name)
+{
+   const char *const *cores;
+   char slug[NAME_MAX_LENGTH];
+   char path[PATH_MAX_LENGTH];
+   char name[NAME_MAX_LENGTH];
+
+   if (     !string_starts_with(content_path, ROMM_SCHEME)
+         || string_is_empty(playlist_name))
+      return false;
+   fill_pathname(slug, path_basename(playlist_name), "", sizeof(slug));
+   if (!(cores = romm_library_preferred_cores(slug)))
+      return false;
+   if (romm_find_core(cores, path, sizeof(path), name, sizeof(name)))
+   {
+      romm_launch_from_menu(path, content_path, label);
+      return true;
+   }
+
+#if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
+   {
+      settings_t *settings = config_get_ptr();
+      retro_time_t now     = cpu_features_get_time_usec();
+      char msg[NAME_MAX_LENGTH];
+
+      if (     !settings->bools.menu_show_core_updater
+            || settings->bools.kiosk_mode_enable)
+         return false;
+      romm_core_name(cores[0], name, sizeof(name));
+      if (romm_installing_core)
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_ROMM_CORE_INSTALLING), name);
+      /* Asked already: this Run is the go-ahead. */
+      else if (   string_is_equal(romm_offered_content, content_path)
+               && now - romm_offered_at < ROMM_CORE_CONFIRM_USEC)
+      {
+         romm_offered_content[0] = '\0';
+         if (romm_install_core(cores[0], name, content_path, label))
+            return true;
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_ROMM_CORE_INSTALL_FAILED), name);
+      }
+      else
+      {
+         strlcpy(romm_offered_content, content_path,
+               sizeof(romm_offered_content));
+         romm_offered_at = now;
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_ROMM_CORE_MISSING), name);
+         RARCH_LOG("[RomM] %s isn't installed; offered to download it.\n",
+               cores[0]);
+      }
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
+      return true;
+   }
+#else
+   return false;
+#endif
 }
 
 void romm_content_unloaded(const char *next_content)

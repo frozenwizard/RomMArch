@@ -33709,6 +33709,18 @@ MSG_HASH(
    "BIOS %s is missing from the system folder."
    )
 MSG_HASH(
+   MSG_ROMM_CORE_MISSING,
+   "%s isn't installed. Select Run again to download it."
+   )
+MSG_HASH(
+   MSG_ROMM_CORE_INSTALLING,
+   "%s is still downloading."
+   )
+MSG_HASH(
+   MSG_ROMM_CORE_INSTALL_FAILED,
+   "Couldn't download %s."
+   )
+MSG_HASH(
    MSG_ROMM_LAUNCH_IN_PROGRESS,
    "A game is already downloading."
    )

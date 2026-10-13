@@ -43,6 +43,14 @@ void romm_refresh_library_at_start(void);
 int romm_launch_from_menu(const char *core_path, const char *content_path,
       const char *label);
 
+/* Launches the romm:// entry @content_path, from the playlist named
+ * @playlist_name, when it has no installed core: with its platform's
+ * preferred core if one is installed, or else, once a second Run
+ * confirms it, after downloading that core. False when there is no
+ * preferred core or no core downloader, for the stock flow to go on. */
+bool romm_launch_without_core(const char *content_path, const char *label,
+      const char *playlist_name);
+
 /* The core has unloaded and @next_content, if any, loads next: frees
  * the memory of every RomM game but that one. */
 void romm_content_unloaded(const char *next_content);
