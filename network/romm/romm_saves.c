@@ -28,8 +28,14 @@
 
 #include "romm_json.h"
 #include "romm_saves.h"
+#include "../../verbosity.h"
 
 #define ROMM_SAVES_VERSION 1
+#define ROMM_SAVES_PFX "[RomM] "
+/* RomM's slot for saves synced as they are played, as its web player
+ * and Argosy use, and how many versions RomM keeps there. */
+#define ROMM_SAVES_SLOT "autosave"
+#define ROMM_SAVES_KEEP 10
 
 size_t romm_saves_record_path(char *s, size_t len, const char *save_dir)
 {
@@ -319,27 +325,33 @@ const char *romm_saves_suffix(const char *name, const char *base)
    return suffix;
 }
 
-bool romm_saves_md5_file(const char *path, char *md5)
+static void romm_saves_md5(const void *data, size_t len, char *md5)
 {
    static const char hex[] = "0123456789abcdef";
    unsigned char digest[16];
    MD5_CTX ctx;
-   void *buf   = NULL;
-   int64_t len = 0;
    int i;
 
-   if (!filestream_read_file(path, &buf, &len))
-      return false;
    MD5_Init(&ctx);
-   MD5_Update(&ctx, buf, (unsigned long)len);
+   MD5_Update(&ctx, data, (unsigned long)len);
    MD5_Final(digest, &ctx);
-   free(buf);
    for (i = 0; i < 16; i++)
    {
       md5[i * 2]     = hex[digest[i] >> 4];
       md5[i * 2 + 1] = hex[digest[i] & 15];
    }
    md5[32] = '\0';
+}
+
+bool romm_saves_md5_file(const char *path, char *md5)
+{
+   void *buf   = NULL;
+   int64_t len = 0;
+
+   if (!filestream_read_file(path, &buf, &len))
+      return false;
+   romm_saves_md5(buf, (size_t)len, md5);
+   free(buf);
    return true;
 }
 
@@ -569,4 +581,365 @@ romm_saves_step_t *romm_saves_plan(const romm_saves_plan_params_t *p)
    romm_saves_plan_kind(&steps, p, false);
    romm_saves_plan_kind(&steps, p, true);
    return steps;
+}
+
+typedef struct romm_saves_sync romm_saves_sync_t;
+
+struct romm_saves_sync
+{
+   romm_saves_sync_cb_t cb;
+   void *user_data;
+   bool push;
+   bool (*is_live)(const char *path);
+   unsigned rom_id;
+   enum romm_status status;
+   int http_status;
+   romm_saves_result_t result;
+   romm_save_t *remote_saves;
+   romm_save_t *remote_states;
+   romm_saves_record_t rec;
+   romm_saves_step_t *steps;
+   size_t next;
+   char server[1024];
+   char token[128];
+   char device_id[64];
+   char emulator[64];
+   char base[256];
+   char rom_base[256];
+   char save_dir[1024];
+   char state_dir[1024];
+   char record_path[1024];
+};
+
+/* The sync running, then those waiting, in order. */
+static romm_saves_sync_t **romm_saves_queue = NULL;
+
+static void romm_saves_sync_step(romm_saves_sync_t *sync);
+static void romm_saves_sync_begin(romm_saves_sync_t *sync);
+
+static void romm_saves_sync_free(romm_saves_sync_t *sync)
+{
+   RBUF_FREE(sync->remote_saves);
+   RBUF_FREE(sync->remote_states);
+   RBUF_FREE(sync->steps);
+   romm_saves_record_free(&sync->rec);
+   memset(sync->token, 0, sizeof(sync->token));
+   free(sync);
+}
+
+static romm_saves_game_t *romm_saves_sync_game(romm_saves_sync_t *sync)
+{
+   return romm_saves_record_game(&sync->rec, sync->rom_id, sync->emulator,
+         true);
+}
+
+static void romm_saves_sync_end(romm_saves_sync_t *sync)
+{
+   romm_saves_game_t *game = romm_saves_sync_game(sync);
+   size_t i;
+
+   strlcpy(game->save_dir, sync->save_dir, sizeof(game->save_dir));
+   strlcpy(game->state_dir, sync->state_dir, sizeof(game->state_dir));
+   strlcpy(game->base, sync->base, sizeof(game->base));
+   /* Until a push gets everything up, the game is owed one. */
+   game->pending = !sync->push || sync->status != ROMM_OK
+      || sync->result.conflicts || sync->result.failed;
+   if (!romm_saves_record_save(&sync->rec, sync->record_path))
+      RARCH_WARN(ROMM_SAVES_PFX "Couldn't write %s.\n", sync->record_path);
+
+   if (sync->status == ROMM_OK)
+      RARCH_LOG(ROMM_SAVES_PFX "Synced saves of game %u (%s) %s: %u "
+            "down, %u up, %u in conflict, %u failed.\n", sync->rom_id,
+            sync->emulator, sync->push ? "after play" : "before play",
+            sync->result.downloaded, sync->result.uploaded,
+            sync->result.conflicts, sync->result.failed);
+   else
+      RARCH_WARN(ROMM_SAVES_PFX "Couldn't sync saves of game %u "
+            "(status %d, HTTP %d).\n", sync->rom_id, sync->status,
+            sync->http_status);
+   sync->cb(sync->user_data, sync->status, sync->http_status,
+         &sync->result);
+
+   /* Next in line. */
+   for (i = 1; i < RBUF_LEN(romm_saves_queue); i++)
+      romm_saves_queue[i - 1] = romm_saves_queue[i];
+   RBUF_RESIZE(romm_saves_queue, RBUF_LEN(romm_saves_queue) - 1);
+   romm_saves_sync_free(sync);
+   if (RBUF_LEN(romm_saves_queue))
+      romm_saves_sync_begin(romm_saves_queue[0]);
+   else
+      RBUF_FREE(romm_saves_queue);
+}
+
+/* The record of @step's file now matching RomM's @remote, holding
+ * @md5. */
+static void romm_saves_sync_record(romm_saves_sync_t *sync,
+      const romm_saves_step_t *step, const romm_save_t *remote,
+      const char *md5)
+{
+   romm_saves_file_t *f = romm_saves_game_file(romm_saves_sync_game(sync),
+         step->suffix, true);
+   f->remote_id   = remote->id;
+   f->remote_time = romm_saves_time(remote->updated_at);
+   strlcpy(f->md5, md5, sizeof(f->md5));
+   romm_saves_record_save(&sync->rec, sync->record_path);
+}
+
+static size_t romm_saves_sync_path(const romm_saves_sync_t *sync,
+      const romm_saves_step_t *step, char *s, size_t len)
+{
+   char name[384];
+   snprintf(name, sizeof(name), "%s%s", sync->base, step->suffix);
+   return fill_pathname_join(s,
+         step->is_state ? sync->state_dir : sync->save_dir, name, len);
+}
+
+static void romm_saves_sync_downloaded(void *user_data,
+      enum romm_status status, int http_status, const void *data,
+      size_t len)
+{
+   romm_saves_sync_t *sync       = (romm_saves_sync_t*)user_data;
+   const romm_saves_step_t *step = &sync->steps[sync->next - 1];
+   char path[2048];
+   char md5[33];
+
+   romm_saves_sync_path(sync, step, path, sizeof(path));
+   if (status != ROMM_OK)
+      sync->result.failed++;
+   else if (sync->is_live && sync->is_live(path))
+   {
+      RARCH_WARN(ROMM_SAVES_PFX "%s is in use; not replaced.\n", path);
+      sync->result.failed++;
+   }
+   else
+   {
+      char dir[2048];
+      fill_pathname_basedir(dir, path, sizeof(dir));
+      if (     (path_is_directory(dir) || path_mkdir(dir))
+            && filestream_write_file_atomic(path, data, (int64_t)len))
+      {
+         RARCH_LOG(ROMM_SAVES_PFX "Fetched %s from RomM.\n", path);
+         romm_saves_md5(data, len, md5);
+         romm_saves_sync_record(sync, step, &step->remote, md5);
+         sync->result.downloaded++;
+      }
+      else
+      {
+         RARCH_WARN(ROMM_SAVES_PFX "Couldn't write %s.\n", path);
+         sync->result.failed++;
+      }
+   }
+   romm_saves_sync_step(sync);
+}
+
+static void romm_saves_sync_uploaded(void *user_data,
+      enum romm_status status, int http_status, const romm_save_t *save)
+{
+   romm_saves_sync_t *sync       = (romm_saves_sync_t*)user_data;
+   const romm_saves_step_t *step = &sync->steps[sync->next - 1];
+
+   if (status == ROMM_OK)
+   {
+      romm_saves_sync_record(sync, step, save, step->md5);
+      sync->result.uploaded++;
+   }
+   else if (status == ROMM_ERR_CONFLICT)
+      sync->result.conflicts++;
+   else
+      sync->result.failed++;
+   romm_saves_sync_step(sync);
+}
+
+static bool romm_saves_sync_upload(romm_saves_sync_t *sync,
+      romm_saves_step_t *step)
+{
+   romm_upload_t up;
+   void *buf   = NULL;
+   int64_t len = 0;
+   char path[2048];
+   char md5[33];
+   bool started;
+
+   romm_saves_sync_path(sync, step, path, sizeof(path));
+   if (!filestream_read_file(path, &buf, &len))
+      return false;
+   /* Written since it was listed: send what is there now. */
+   romm_saves_md5(buf, (size_t)len, md5);
+   strlcpy(step->md5, md5, sizeof(step->md5));
+
+   memset(&up, 0, sizeof(up));
+   up.server    = sync->server;
+   up.token     = sync->token;
+   up.rom_id    = sync->rom_id;
+   up.file_name = path_basename(path);
+   up.data      = buf;
+   up.len       = (size_t)len;
+   up.emulator  = sync->emulator;
+   if (step->is_state)
+      started = romm_client_state_upload(&up, romm_saves_sync_uploaded,
+            sync);
+   else
+   {
+      up.slot         = ROMM_SAVES_SLOT;
+      up.keep         = ROMM_SAVES_KEEP;
+      up.device_id    = sync->device_id;
+      up.content_hash = md5;
+      started = romm_client_save_upload(&up, romm_saves_sync_uploaded,
+            sync);
+   }
+   free(buf);
+   return started;
+}
+
+/* Runs the steps for this direction, one at a time. */
+static void romm_saves_sync_step(romm_saves_sync_t *sync)
+{
+   while (sync->next < RBUF_LEN(sync->steps))
+   {
+      romm_saves_step_t *step = &sync->steps[sync->next++];
+
+      switch (step->type)
+      {
+         case ROMM_SAVES_MATCH:
+            romm_saves_sync_record(sync, step, &step->remote, step->md5);
+            break;
+         case ROMM_SAVES_CONFLICT:
+            RARCH_WARN(ROMM_SAVES_PFX "%s%s changed both here and in "
+                  "RomM.\n", sync->base, step->suffix);
+            sync->result.conflicts++;
+            break;
+         case ROMM_SAVES_DOWNLOAD:
+            if (sync->push)
+               break;
+            if (step->is_state
+                  ? romm_client_state_content(sync->server, sync->token,
+                        step->remote.id, romm_saves_sync_downloaded, sync)
+                  : romm_client_save_content(sync->server, sync->token,
+                        step->remote.id, sync->device_id,
+                        romm_saves_sync_downloaded, sync))
+               return;
+            sync->result.failed++;
+            break;
+         case ROMM_SAVES_UPLOAD:
+            if (!sync->push)
+               break;
+            if (romm_saves_sync_upload(sync, step))
+               return;
+            sync->result.failed++;
+            break;
+      }
+   }
+   romm_saves_sync_end(sync);
+}
+
+static void romm_saves_sync_states_cb(void *user_data,
+      enum romm_status status, int http_status, const romm_save_t *saves,
+      size_t count)
+{
+   romm_saves_sync_t *sync = (romm_saves_sync_t*)user_data;
+   romm_saves_plan_params_t p;
+   romm_saves_local_t *local_saves, *local_states;
+   size_t i;
+
+   if (status != ROMM_OK)
+   {
+      sync->status      = status;
+      sync->http_status = http_status;
+      romm_saves_sync_end(sync);
+      return;
+   }
+   for (i = 0; i < count; i++)
+      RBUF_PUSH(sync->remote_states, saves[i]);
+
+   local_saves  = romm_saves_list_local(sync->save_dir, sync->base, false);
+   local_states = romm_saves_list_local(sync->state_dir, sync->base, true);
+
+   memset(&p, 0, sizeof(p));
+   p.game                = romm_saves_record_game(&sync->rec,
+         sync->rom_id, sync->emulator, false);
+   p.emulator            = sync->emulator;
+   p.base                = sync->base;
+   p.rom_base            = *sync->rom_base ? sync->rom_base : NULL;
+   p.saves               = local_saves;
+   p.saves_count         = RBUF_LEN(local_saves);
+   p.states              = local_states;
+   p.states_count        = RBUF_LEN(local_states);
+   p.remote_saves        = sync->remote_saves;
+   p.remote_saves_count  = RBUF_LEN(sync->remote_saves);
+   p.remote_states       = sync->remote_states;
+   p.remote_states_count = RBUF_LEN(sync->remote_states);
+   sync->steps           = romm_saves_plan(&p);
+   RBUF_FREE(local_saves);
+   RBUF_FREE(local_states);
+
+   romm_saves_sync_step(sync);
+}
+
+static void romm_saves_sync_saves_cb(void *user_data,
+      enum romm_status status, int http_status, const romm_save_t *saves,
+      size_t count)
+{
+   romm_saves_sync_t *sync = (romm_saves_sync_t*)user_data;
+   size_t i;
+
+   if (status == ROMM_OK)
+   {
+      for (i = 0; i < count; i++)
+         RBUF_PUSH(sync->remote_saves, saves[i]);
+      if (romm_client_states(sync->server, sync->token, sync->rom_id,
+            romm_saves_sync_states_cb, sync))
+         return;
+      status = ROMM_ERR_UNREACHABLE;
+   }
+   sync->status      = status;
+   sync->http_status = http_status;
+   romm_saves_sync_end(sync);
+}
+
+static void romm_saves_sync_begin(romm_saves_sync_t *sync)
+{
+   /* Read now: a sync that fails still writes the record back. */
+   romm_saves_record_load(&sync->rec, sync->record_path);
+   if (!romm_client_saves(sync->server, sync->token, sync->rom_id,
+         romm_saves_sync_saves_cb, sync))
+   {
+      sync->status = ROMM_ERR_UNREACHABLE;
+      romm_saves_sync_end(sync);
+   }
+}
+
+bool romm_saves_sync(const romm_saves_sync_params_t *p,
+      romm_saves_sync_cb_t cb, void *user_data)
+{
+   romm_saves_sync_t *sync;
+
+   if (     !p || !p->rom_id || string_is_empty(p->server)
+         || string_is_empty(p->token) || string_is_empty(p->emulator)
+         || string_is_empty(p->base) || string_is_empty(p->save_dir)
+         || string_is_empty(p->state_dir)
+         || string_is_empty(p->record_path))
+      return false;
+   if (!(sync = (romm_saves_sync_t*)calloc(1, sizeof(*sync))))
+      return false;
+   sync->cb        = cb;
+   sync->user_data = user_data;
+   sync->push      = p->push;
+   sync->is_live   = p->is_live;
+   sync->rom_id    = p->rom_id;
+   strlcpy(sync->server, p->server, sizeof(sync->server));
+   strlcpy(sync->token, p->token, sizeof(sync->token));
+   if (p->device_id)
+      strlcpy(sync->device_id, p->device_id, sizeof(sync->device_id));
+   strlcpy(sync->emulator, p->emulator, sizeof(sync->emulator));
+   strlcpy(sync->base, p->base, sizeof(sync->base));
+   if (p->rom_base)
+      strlcpy(sync->rom_base, p->rom_base, sizeof(sync->rom_base));
+   strlcpy(sync->save_dir, p->save_dir, sizeof(sync->save_dir));
+   strlcpy(sync->state_dir, p->state_dir, sizeof(sync->state_dir));
+   strlcpy(sync->record_path, p->record_path, sizeof(sync->record_path));
+
+   RBUF_PUSH(romm_saves_queue, sync);
+   if (RBUF_LEN(romm_saves_queue) == 1)
+      romm_saves_sync_begin(sync);
+   return true;
 }

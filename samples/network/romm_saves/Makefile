@@ -9,9 +9,12 @@ CC      := $(compiler)
 flags   += -std=gnu99
 
 # The test includes network/romm/romm_saves.c; everything below is what
-# that translation unit needs to link.
+# that translation unit needs to link. Requests go to the RomM client
+# harness's stubs, which record them for the test to answer.
 SOURCES_C := \
 	romm_saves_test.c \
+	../romm_client/stubs_retroarch.c \
+	$(CORE_DIR)/network/romm/romm_client.c \
 	$(CORE_DIR)/network/romm/romm_json.c \
 	$(LIBRETRO_COMM_DIR)/formats/json/rjson.c \
 	$(LIBRETRO_COMM_DIR)/utils/md5.c \
@@ -33,7 +36,7 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/time/rtime.c
 
 CFLAGS += -Wall $(INCDIRS)
-CFLAGS += -DHAVE_ROMM
+CFLAGS += -DHAVE_NETWORKING -DHAVE_ROMM
 LDFLAGS += -lm
 
 ifneq ($(SAN),)

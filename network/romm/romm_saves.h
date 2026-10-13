@@ -112,6 +112,48 @@ typedef struct
    size_t remote_states_count;
 } romm_saves_plan_params_t;
 
+/* A sync of one game's saves and states with RomM. */
+typedef struct
+{
+   const char *server;
+   const char *token;
+   /* RomM's id for this device, or NULL: saves go up and down as it,
+    * so RomM refuses an upload over a newer save from elsewhere. */
+   const char *device_id;
+   unsigned rom_id;
+   const char *emulator;
+   /* See romm_saves_plan_params_t. */
+   const char *base;
+   const char *rom_base;
+   /* Where the game's saves and states are, or go. */
+   const char *save_dir;
+   const char *state_dir;
+   /* The record, at romm_saves_record_path(). */
+   const char *record_path;
+   /* Send what changed here (after the game closed), rather than fetch
+    * what RomM has newer (before it starts). */
+   bool push;
+   /* Whether a running core owns the file at @path, which a download
+    * then mustn't replace; NULL if none can. */
+   bool (*is_live)(const char *path);
+} romm_saves_sync_params_t;
+
+/* Files a sync moved or left alone. */
+typedef struct
+{
+   unsigned downloaded;
+   unsigned uploaded;
+   /* Changed both here and in RomM; neither copy was touched. */
+   unsigned conflicts;
+   unsigned failed;
+} romm_saves_result_t;
+
+/* @status is that of listing RomM's saves and states; @result counts
+ * the files. */
+typedef void (*romm_saves_sync_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_saves_result_t *result);
+
 /* <@save_dir>/rommarch-saves.json */
 size_t romm_saves_record_path(char *s, size_t len, const char *save_dir);
 
@@ -160,6 +202,15 @@ romm_saves_local_t *romm_saves_list_local(const char *dir,
  * of that kind from any client and slot; for each save state, the one
  * of the same name the same emulator made. */
 romm_saves_step_t *romm_saves_plan(const romm_saves_plan_params_t *p);
+
+/* Syncs one game's files with RomM per @p: before it starts, fetches
+ * what RomM has newer, and records what both already hold; after it
+ * closes, sends what changed here. Files that changed on both sides
+ * are counted, not touched. The record is updated after each file.
+ * Syncs run one at a time, in the order asked for. @cb runs on the
+ * main thread. */
+bool romm_saves_sync(const romm_saves_sync_params_t *p,
+      romm_saves_sync_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 
