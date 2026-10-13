@@ -9,9 +9,11 @@
  * link read from its reply. The token check (whose user a token acts
  * for, and a token RomM turns down). The platform and game lists, read
  * from trimmed RomM replies, a platform's ordered game ids, a game's
- * files, a game file downloaded into memory, and file downloads. Then the wait for approval, with the
- * stubs' clock standing in for time: the poll schedule, slowing down
- * when told, and how approval, denial, expiry and cancellation end it.
+ * files, a game file downloaded into memory, file downloads, and a
+ * platform's firmware and its download. Then the wait for approval,
+ * with the stubs' clock standing in for time: the poll schedule,
+ * slowing down when told, and how approval, denial, expiry and
+ * cancellation end it.
  *
  * Includes the client's translation unit so its static JSON reader is
  * tested as shipped.
@@ -703,6 +705,103 @@ typedef struct
 {
    unsigned calls;
    enum romm_status status;
+   int http_status;
+   bool has_list;
+   size_t count;
+   romm_firmware_t firmware[4];
+} firmware_result_t;
+
+static void on_firmware(void *user_data, enum romm_status status,
+      int http_status, const romm_firmware_t *firmware, size_t count)
+{
+   firmware_result_t *r = (firmware_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_list    = firmware != NULL;
+   r->count       = count;
+   for (i = 0; i < count && i < 4; i++)
+      r->firmware[i] = firmware[i];
+}
+
+static void firmware(firmware_result_t *r, unsigned platform_id)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_firmware("http://romm.local:8090", "rmm_0123abcd",
+         platform_id, on_firmware, r), "firmware list not started");
+}
+
+static void test_firmware(void)
+{
+   firmware_result_t r;
+   download_result_t d;
+
+   /* Trimmed from RomM nightly-bdaac69. */
+   firmware(&r, 22);
+   CHECK(!strcmp(stub_req.url,
+         "http://romm.local:8090/api/firmware?platform_id=22")
+         && strstr(stub_req.headers, "Bearer rmm_0123abcd"), "request %s",
+         stub_req.url);
+   answer(200, "[{\"id\": 101, \"platform_id\": 22,"
+         " \"file_name\": \"openbios.bin\", \"file_path\": \"bios/psx\","
+         " \"file_size_bytes\": 524288, \"is_verified\": false,"
+         " \"crc_hash\": \"\", \"md5_hash\": \"\"},"
+         " {\"id\": 115, \"platform_id\": 22, \"file_name\": \"scph5501.bin\","
+         " \"file_size_bytes\": 524288, \"is_verified\": true,"
+         " \"crc_hash\": \"8d8cb7e4\", \"missing_from_fs\": false},"
+         " {\"platform_id\": 22, \"file_name\": \"no id.bin\"},"
+         " {\"id\": 9, \"file_name\": \"\"}]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 2,
+         "list: status %d count %u", r.status, (unsigned)r.count);
+   CHECK(r.firmware[0].id == 101 && !r.firmware[0].verified
+         && r.firmware[0].size == 524288 && !*r.firmware[0].crc
+         && !strcmp(r.firmware[0].name, "openbios.bin"), "unverified: %u %s",
+         r.firmware[0].id, r.firmware[0].name);
+   CHECK(r.firmware[1].id == 115 && r.firmware[1].verified
+         && !strcmp(r.firmware[1].crc, "8d8cb7e4")
+         && !strcmp(r.firmware[1].name, "scph5501.bin"), "verified: %u %s %s",
+         r.firmware[1].id, r.firmware[1].name, r.firmware[1].crc);
+
+   /* A token paired before firmware.read was asked for. */
+   firmware(&r, 22);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && !r.has_list, "403: status %d",
+         r.status);
+
+   firmware(&r, 22);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && r.http_status == 0,
+         "no response: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_firmware("http://h", "t", 0, on_firmware, &r)
+         && stub_req.count == 0, "listed firmware for no platform");
+
+   memset(&d, 0, sizeof(d));
+   stub_reset();
+   CHECK(romm_client_firmware_content("http://romm.local:8090",
+         "rmm_0123abcd", 143, "scph9002(7502).bin", on_download, &d)
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/firmware/143/"
+         "content/scph9002%287502%29.bin"), "firmware URL %s", stub_req.url);
+   answer(200, "BIOS");
+   CHECK(d.calls == 1 && d.status == ROMM_OK && d.len == 4
+         && !memcmp(d.data, "BIOS", 4), "firmware: status %d len %u",
+         d.status, (unsigned)d.len);
+   stub_reset();
+   CHECK(!romm_client_firmware_content("http://h", "t", 0, "a.bin",
+         on_download, &d)
+         && !romm_client_firmware_content("http://h", "t", 1, "",
+         on_download, &d) && stub_req.count == 0,
+         "firmware fetched without an id or name");
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
    bool has_list;
    size_t count;
    unsigned ids[8];
@@ -1305,6 +1404,7 @@ int main(void)
    test_rom_files();
    test_rom_content();
    test_download();
+   test_firmware();
    test_pair_start();
    test_pair_wait();
 

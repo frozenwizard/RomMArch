@@ -102,6 +102,12 @@ typedef struct
 
 typedef struct
 {
+   romm_firmware_cb_t cb;
+   void *user_data;
+} romm_firmware_ctx_t;
+
+typedef struct
+{
    romm_rom_ids_cb_t cb;
    void *user_data;
 } romm_rom_ids_ctx_t;
@@ -1180,4 +1186,103 @@ void *romm_client_rom_content(const char *server, const char *token,
          romm_content_cb, ctx)))
       free(ctx);
    return transfer;
+}
+
+typedef struct
+{
+   romm_firmware_t *list;
+   romm_firmware_t cur;
+} romm_firmware_parse_t;
+
+static void romm_firmware_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_firmware_t *f = &((romm_firmware_parse_t*)ctx)->cur;
+
+   if (string_is_equal(key, "is_verified"))
+      f->verified = type == RJSON_TRUE;
+   else if (type != RJSON_STRING && type != RJSON_NUMBER)
+      return;
+   else if (string_is_equal(key, "id"))
+      f->id = romm_json_uint(value);
+   else if (string_is_equal(key, "file_size_bytes"))
+      f->size = (uint64_t)strtoull(value, NULL, 10);
+   else if (string_is_equal(key, "crc_hash"))
+      strlcpy(f->crc, value, sizeof(f->crc));
+   else if (string_is_equal(key, "file_name"))
+      strlcpy(f->name, value, sizeof(f->name));
+}
+
+static void romm_firmware_item_end(void *ctx)
+{
+   romm_firmware_parse_t *parse = (romm_firmware_parse_t*)ctx;
+
+   if (parse->cur.id && *parse->cur.name)
+      RBUF_PUSH(parse->list, parse->cur);
+   memset(&parse->cur, 0, sizeof(parse->cur));
+}
+
+static void romm_firmware_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_firmware_ctx_t *ctx   = (romm_firmware_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_firmware_parse_t parse;
+
+   memset(&parse, 0, sizeof(parse));
+   if (     status == ROMM_OK
+         && !romm_json_items(data->data, data->len, NULL,
+               romm_firmware_member, romm_firmware_item_end, &parse))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status != ROMM_OK)
+      RARCH_WARN(ROMM_PFX "Couldn't list firmware (status %d, HTTP %d).\n",
+            status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? parse.list : NULL,
+         status == ROMM_OK ? RBUF_LEN(parse.list) : 0);
+   RBUF_FREE(parse.list);
+   free(ctx);
+}
+
+bool romm_client_firmware(const char *server, const char *token,
+      unsigned platform_id, romm_firmware_cb_t cb, void *user_data)
+{
+   char path[64];
+   romm_firmware_ctx_t *ctx;
+
+   if (!platform_id)
+      return false;
+   snprintf(path, sizeof(path), "/api/firmware?platform_id=%u",
+         platform_id);
+   if (!(ctx = (romm_firmware_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+
+   if (!romm_get(server, token, path, romm_firmware_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+bool romm_client_firmware_content(const char *server, const char *token,
+      unsigned firmware_id, const char *file_name,
+      romm_download_cb_t cb, void *user_data)
+{
+   char name[768];
+   char path[1024];
+
+   if (     !firmware_id || string_is_empty(file_name)
+         || !romm_url_escape(name, sizeof(name), file_name))
+      return false;
+   snprintf(path, sizeof(path), "/api/firmware/%u/content/%s",
+         firmware_id, name);
+   return romm_client_download(server, token, path, cb, user_data);
 }

@@ -110,6 +110,18 @@ typedef struct
    char path[512];
 } romm_file_t;
 
+/* A BIOS or other firmware file RomM holds for a platform. */
+typedef struct
+{
+   unsigned id;
+   uint64_t size;
+   /* RomM matched it to a known good dump. */
+   bool verified;
+   /* CRC32 in hex; empty when RomM has none. */
+   char crc[9];
+   char name[256];
+} romm_firmware_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
@@ -157,6 +169,12 @@ typedef void (*romm_rom_files_cb_t)(void *user_data,
  * file. */
 typedef void (*romm_content_cb_t)(void *user_data,
       enum romm_status status, int http_status, void *data, size_t len);
+
+/* @firmware holds @count entries, valid only during the call; NULL
+ * unless @status is ROMM_OK. */
+typedef void (*romm_firmware_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_firmware_t *firmware, size_t count);
 
 /* @data holds @len bytes, valid only during the call; NULL unless
  * @status is ROMM_OK. */
@@ -238,6 +256,17 @@ void *romm_client_rom_content(const char *server, const char *token,
  * @path goes into the URL as is. @cb runs on the main thread. */
 bool romm_client_download(const char *server, const char *token,
       const char *path, romm_download_cb_t cb, void *user_data);
+
+/* Lists the firmware RomM has for platform @platform_id. @cb runs on
+ * the main thread. */
+bool romm_client_firmware(const char *server, const char *token,
+      unsigned platform_id, romm_firmware_cb_t cb, void *user_data);
+
+/* Fetches firmware @firmware_id, named @file_name, into memory. @cb
+ * runs on the main thread. */
+bool romm_client_firmware_content(const char *server, const char *token,
+      unsigned firmware_id, const char *file_name,
+      romm_download_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 
