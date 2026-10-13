@@ -33749,6 +33749,14 @@ MSG_HASH(
    "Not enough memory to hold this game."
    )
 MSG_HASH(
+   MSG_ROMM_SAVES_NOT_FETCHED,
+   "Couldn't get this game's saves from RomM. Playing with the ones on this device."
+   )
+MSG_HASH(
+   MSG_ROMM_SAVES_CONFLICT,
+   "This game's save changed both here and in RomM since the last sync. Playing with this device's; RomM's is kept."
+   )
+MSG_HASH(
    MSG_ROMM_SAVE_NAME_CLASHES,
    "%u games share a save name with another game, so RomM may file their saves under the wrong one."
    )

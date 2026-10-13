@@ -29,13 +29,16 @@
 #include "romm_launch.h"
 #include "romm_library.h"
 #include "romm_platform.h"
+#include "romm_saves.h"
 #include "../../command.h"
 #include "../../configuration.h"
 #include "../../core_info.h"
 #include "../../msg_hash.h"
+#include "../../paths.h"
 #include "../../playlist.h"
 #include "../../runloop.h"
 #include "../../tasks/task_content.h"
+#include "../../tasks/tasks_internal.h"
 #include "../../verbosity.h"
 #if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
 #include "../../core_updater_list.h"
@@ -415,6 +418,21 @@ static bool romm_launching = false;
 static char romm_launch_core[PATH_MAX_LENGTH];
 static char romm_launch_content[PATH_MAX_LENGTH];
 static char romm_launch_label[NAME_MAX_LENGTH];
+/* What loads: the entry's path, or a disc unpacked from it */
+static char romm_launch_path[PATH_MAX_LENGTH];
+
+/* The game whose saves were synced for this launch */
+typedef struct
+{
+   unsigned rom_id;
+   char emulator[64];
+   char base[NAME_MAX_LENGTH];
+   char rom_base[NAME_MAX_LENGTH];
+   char save_dir[PATH_MAX_LENGTH];
+   char state_dir[PATH_MAX_LENGTH];
+} romm_played_t;
+
+static romm_played_t romm_played;
 
 /* The BIOS files the core at @core_path wants that the system folder
  * lacks, as the core's info names them; with @required_only, those
@@ -461,6 +479,129 @@ static int romm_load_content(const char *core_path,
       ? 0 : -1;
 }
 
+/* Where RetroArch puts the saves, or with @states the save states, of
+ * content @path played with core @core_name, the way
+ * runloop_path_set_redirect() works it out. False when they'd go
+ * beside the content, which is in memory. */
+static bool romm_saves_dir(char *s, size_t len, const char *path,
+      const char *core_name, bool states)
+{
+   settings_t *settings = config_get_ptr();
+   const char *dir      = dir_get_ptr(states
+         ? RARCH_DIR_SAVESTATE : RARCH_DIR_SAVEFILE);
+   char tmp[PATH_MAX_LENGTH];
+
+   if (     string_is_empty(dir)
+         || (states ? settings->bools.savestates_in_content_dir
+                    : settings->bools.savefiles_in_content_dir))
+      return false;
+   strlcpy(s, dir, len);
+   if (states ? settings->bools.sort_savestates_by_content_enable
+              : settings->bools.sort_savefiles_by_content_enable)
+   {
+      char name[NAME_MAX_LENGTH];
+      fill_pathname_parent_dir_name(name, path, sizeof(name));
+      fill_pathname_join_special(tmp, s, name, sizeof(tmp));
+      strlcpy(s, tmp, len);
+   }
+   if (     (states ? settings->bools.sort_savestates_enable
+                    : settings->bools.sort_savefiles_enable)
+         && !string_is_empty(core_name))
+   {
+      fill_pathname_join(tmp, s, core_name, sizeof(tmp));
+      strlcpy(s, tmp, len);
+   }
+   return true;
+}
+
+/* @path's file name without its extension, as RetroArch names saves. */
+static void romm_saves_base(char *s, size_t len, const char *path)
+{
+   char *dot;
+   strlcpy(s, path_basename(path), len);
+   if ((dot = strrchr(s, '.')) && dot != s)
+      *dot = '\0';
+}
+
+static void romm_on_saves_pulled(void *user_data, enum romm_status status,
+      int http_status, const romm_saves_result_t *result)
+{
+   romm_launching = false;
+   if (status != ROMM_OK || result->failed)
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_FETCHED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+   else if (result->conflicts)
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_CONFLICT),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+   romm_load_content(romm_launch_core, romm_launch_path, romm_launch_label);
+}
+
+/* Fetches what RomM has newer of the saves of @launch_path, the game
+ * of playlist entry @content_path, played with @core_path, then loads
+ * it. */
+static int romm_load_with_saves(const char *core_path,
+      const char *content_path, const char *launch_path, const char *label)
+{
+   settings_t *settings = config_get_ptr();
+   core_info_t *info    = NULL;
+   romm_saves_sync_params_t p;
+   char record[PATH_MAX_LENGTH];
+
+   memset(&romm_played, 0, sizeof(romm_played));
+   if (     !(romm_played.rom_id = romm_launch_rom_id(content_path))
+         || !core_info_find(core_path, &info)
+         || string_is_empty(info->core_name)
+         || !romm_saves_dir(romm_played.save_dir,
+               sizeof(romm_played.save_dir), launch_path, info->core_name,
+               false)
+         || !romm_saves_dir(romm_played.state_dir,
+               sizeof(romm_played.state_dir), launch_path, info->core_name,
+               true))
+   {
+      RARCH_LOG("[RomM] Saves of %s aren't synced: no core name or save "
+            "folder.\n", launch_path);
+      memset(&romm_played, 0, sizeof(romm_played));
+      return romm_load_content(core_path, launch_path, label);
+   }
+   strlcpy(romm_played.emulator, info->core_name,
+         sizeof(romm_played.emulator));
+   romm_saves_base(romm_played.base, sizeof(romm_played.base),
+         launch_path);
+   romm_saves_base(romm_played.rom_base, sizeof(romm_played.rom_base),
+         content_path);
+   romm_saves_record_path(record, sizeof(record),
+         dir_get_ptr(RARCH_DIR_SAVEFILE));
+   RARCH_LOG("[RomM] Saves of game %u go to %s/%s.*, states to %s.\n",
+         romm_played.rom_id, romm_played.save_dir, romm_played.base,
+         romm_played.state_dir);
+
+   if (core_path != romm_launch_core)
+      strlcpy(romm_launch_core, core_path, sizeof(romm_launch_core));
+   strlcpy(romm_launch_path, launch_path, sizeof(romm_launch_path));
+   if (label != romm_launch_label)
+      strlcpy(romm_launch_label, label, sizeof(romm_launch_label));
+
+   memset(&p, 0, sizeof(p));
+   p.server      = settings->arrays.romm_server_url;
+   p.token       = settings->arrays.romm_token;
+   p.device_id   = settings->arrays.romm_device_id;
+   p.rom_id      = romm_played.rom_id;
+   p.emulator    = romm_played.emulator;
+   p.base        = romm_played.base;
+   p.rom_base    = romm_played.rom_base;
+   p.save_dir    = romm_played.save_dir;
+   p.state_dir   = romm_played.state_dir;
+   p.record_path = record;
+   p.is_live     = content_savefile_is_live;
+   romm_launching = true;
+   if (!romm_saves_sync(&p, romm_on_saves_pulled, NULL))
+   {
+      romm_launching = false;
+      return romm_load_content(core_path, launch_path, label);
+   }
+   return 0;
+}
+
 static void romm_on_launch_prepared(void *user_data,
       enum romm_status status, int http_status, const char *launch_path)
 {
@@ -482,8 +623,8 @@ static void romm_on_launch_prepared(void *user_data,
             }
             RBUF_FREE(missing);
          }
-         romm_load_content(romm_launch_core, launch_path,
-               romm_launch_label);
+         romm_load_with_saves(romm_launch_core, romm_launch_content,
+               launch_path, romm_launch_label);
          return;
       case ROMM_ERR_CANCELLED:
          return;
@@ -522,8 +663,6 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    char title[NAME_MAX_LENGTH];
    char unpack_title[NAME_MAX_LENGTH];
 
-   if (romm_launch_is_ready(content_path))
-      return romm_load_content(core_path, content_path, label ? label : "");
    if (romm_launching)
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_LAUNCH_IN_PROGRESS),
@@ -535,6 +674,13 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
       romm_notify(msg_hash_to_str(MSG_ROMM_NOT_PAIRED),
             MESSAGE_QUEUE_CATEGORY_WARNING);
       return -1;
+   }
+   if (romm_launch_is_ready(content_path))
+   {
+      strlcpy(romm_launch_content, content_path,
+            sizeof(romm_launch_content));
+      return romm_load_with_saves(core_path, content_path, content_path,
+            label ? label : "");
    }
 
    strlcpy(romm_launch_core, core_path, sizeof(romm_launch_core));
