@@ -541,10 +541,48 @@ static char *webdav_create_digest_auth_header(const char *method, const char *ur
    return header;
 }
 
+#ifdef HAVE_ROMM
+/* Whether @url is @server or under it. */
+static bool webdav_url_is_under(const char *url, const char *server)
+{
+   size_t _len = strlen(server);
+   while (_len && server[_len - 1] == '/')
+      _len--;
+   return _len
+      && !strncmp(url, server, _len)
+      && (url[_len] == '/' || url[_len] == '\0');
+}
+
+/* RomM's WebDAV takes the paired device's token, which goes to RomM's
+ * own addresses only. */
+static char *webdav_create_romm_auth(void)
+{
+   char        header[256];
+   settings_t *settings = config_get_ptr();
+   const char *url      = webdav_state_get_ptr()->url;
+
+   if (     !*settings->arrays.romm_token
+         || (   !webdav_url_is_under(url, settings->arrays.romm_server_url)
+             && !webdav_url_is_under(url, settings->arrays.romm_web_url)))
+      return NULL;
+   if ((size_t)snprintf(header, sizeof(header),
+         "Authorization: Bearer %s\r\n", settings->arrays.romm_token)
+         >= sizeof(header))
+      return NULL;
+   return strdup(header);
+}
+#endif
+
 static char *webdav_get_auth_header(const char *method, const char *url)
 {
    webdav_state_t *webdav_st = webdav_state_get_ptr();
    settings_t     *settings  = config_get_ptr();
+#ifdef HAVE_ROMM
+   char           *romm_auth = webdav_create_romm_auth();
+
+   if (romm_auth)
+      return romm_auth;
+#endif
 
    if (   !*settings->arrays.webdav_username
        && !*settings->arrays.webdav_password)
