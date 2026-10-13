@@ -1156,7 +1156,8 @@ static void test_pair_start(void)
          && !strcmp(s, "1.22.0"), "client version %s", s);
    CHECK(strstr(stub_req.body, "\"requested_scopes\":[\"me.read\",") != NULL
          && strstr(stub_req.body, "\"assets.write\"") != NULL
-         && strstr(stub_req.body, "\"collections.write\"]") != NULL,
+         && strstr(stub_req.body, "\"devices.read\",\"devices.write\"]")
+               != NULL,
          "scopes in %s", stub_req.body);
 
    answer(201, pair_init_reply);

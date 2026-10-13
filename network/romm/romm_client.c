@@ -44,7 +44,9 @@ static const char *const romm_scopes[] = {
    "assets.write",
    "firmware.read",
    "collections.read",
-   "collections.write"
+   "collections.write",
+   "devices.read",
+   "devices.write"
 };
 
 typedef struct

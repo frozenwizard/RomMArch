@@ -1313,6 +1313,8 @@ typedef struct settings
       char romm_web_url[NAME_MAX_LENGTH];
       /* Identifies this install to RomM across pairings. */
       char romm_device_identifier[64];
+      /* RomM's id for the device the pairing made. */
+      char romm_device_id[64];
       char romm_token[128];
 #endif
 #endif

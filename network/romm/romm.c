@@ -174,6 +174,8 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
 
    strlcpy(settings->arrays.romm_token, token,
          sizeof(settings->arrays.romm_token));
+   strlcpy(settings->arrays.romm_device_id, device_id,
+         sizeof(settings->arrays.romm_device_id));
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
    romm_notify(msg_hash_to_str(MSG_ROMM_PAIRED),
