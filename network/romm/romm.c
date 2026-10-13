@@ -163,9 +163,7 @@ void romm_check_connection(void)
 
 #ifdef HAVE_CLOUDSYNC
 /* Points Cloud Sync at RomM's WebDAV, which takes the device token, for
- * RetroArch's configs only: saves and states sync per game id instead.
- * Destructive, as RomM can't copy the backup a non-destructive upload
- * makes first. */
+ * RetroArch's configs only: saves and states sync per game id instead. */
 static void romm_setup_cloud_sync(settings_t *settings)
 {
    char url[sizeof(settings->arrays.webdav_url)];
@@ -187,8 +185,6 @@ static void romm_setup_cloud_sync(settings_t *settings)
          settings->bools.cloud_sync_sync_thumbs, false);
    configuration_set_bool(settings,
          settings->bools.cloud_sync_sync_system, false);
-   configuration_set_bool(settings,
-         settings->bools.cloud_sync_destructive, true);
    /* A new server: forget the last sync, as changing driver does. */
    task_push_cloud_sync_update_driver();
 }
