@@ -576,16 +576,20 @@ static void webdav_sync_capture(void)
          sizeof(webdav_romm.token));
 }
 
+static bool webdav_is_romm(void)
+{
+   const char *url = webdav_state_get_ptr()->url;
+   return webdav_url_is_under(url, webdav_romm.server_url)
+       || webdav_url_is_under(url, webdav_romm.web_url);
+}
+
 /* RomM's WebDAV takes the paired device's token, which goes to RomM's
  * own addresses only. */
 static char *webdav_create_romm_auth(void)
 {
-   char        header[256];
-   const char *url = webdav_state_get_ptr()->url;
+   char header[256];
 
-   if (     !*webdav_romm.token
-         || (   !webdav_url_is_under(url, webdav_romm.server_url)
-             && !webdav_url_is_under(url, webdav_romm.web_url)))
+   if (!*webdav_romm.token || !webdav_is_romm())
       return NULL;
    if ((size_t)snprintf(header, sizeof(header),
          "Authorization: Bearer %s\r\n", webdav_romm.token)
@@ -594,6 +598,18 @@ static char *webdav_create_romm_auth(void)
    return strdup(header);
 }
 #endif
+
+/* Whether the server is to keep a copy of what an upload replaces or a
+ * delete removes. RomM keeps none: it has no COPY, and its MOVE
+ * deletes. */
+static bool webdav_server_backups(void)
+{
+#ifdef HAVE_ROMM
+   if (webdav_is_romm())
+      return false;
+#endif
+   return !config_get_ptr()->bools.cloud_sync_destructive;
+}
 
 static char *webdav_get_auth_header(const char *method, const char *url)
 {
@@ -1372,7 +1388,6 @@ static void webdav_do_update_backup(bool success, webdav_cb_state_t *webdav_cb_s
 static bool webdav_update(const char *path, RFILE *rfile,
       cloud_sync_complete_handler_t cb, void *user_data)
 {
-   settings_t        *settings     = config_get_ptr();
    webdav_cb_state_t *webdav_cb_st = (webdav_cb_state_t*)calloc(1, sizeof(webdav_cb_state_t));
 
    if (!webdav_cb_st)
@@ -1389,7 +1404,7 @@ static bool webdav_update(const char *path, RFILE *rfile,
     * against it being overwritten.  The local side does the same with
     * cloud_backups/ before a fetch replaces a local file.  The server
     * manifest is rewritten every sync and is not backed up. */
-   if (   !settings->bools.cloud_sync_destructive
+   if (   webdav_server_backups()
        && !string_is_equal(path, CLOUD_SYNC_SERVER_MANIFEST))
    {
       char   dir[DIR_MAX_LENGTH];
@@ -1510,7 +1525,6 @@ static void webdav_do_backup(bool success, webdav_cb_state_t *webdav_cb_st)
 static bool webdav_delete(const char *path, cloud_sync_complete_handler_t cb, void *user_data)
 {
    webdav_cb_state_t *webdav_cb_st = (webdav_cb_state_t*)calloc(1, sizeof(webdav_cb_state_t));
-   settings_t        *settings     = config_get_ptr();
 
    if (!webdav_cb_st)
       return false;
@@ -1524,7 +1538,7 @@ static bool webdav_delete(const char *path, cloud_sync_complete_handler_t cb, vo
     * think not because it gives each driver a chance to do a move rather than a
     * delete/update. Or we could add a cloud_sync_move() API to the driver.
     */
-   if (settings->bools.cloud_sync_destructive)
+   if (!webdav_server_backups())
    {
       char *auth_header;
       char url_encoded[PATH_MAX_LENGTH];
