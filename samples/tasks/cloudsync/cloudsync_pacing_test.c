@@ -525,12 +525,14 @@ static void walk_lane(void)
 }
 
 /* The configs category walks the folder retroarch.cfg is in, which also
- * holds the credentials file and its key file: the walk leaves out all
- * three and lists the rest, and those names are only special there. */
+ * holds the credentials file and its key file, and the copies of them
+ * being written: the walk leaves those out and lists the rest, and
+ * their names are only special there. */
 static void config_lane(void)
 {
    static const char *const files[] = {
       "retroarch.cfg", "retroarch-keychain.cfg", "retroarch-keychain.key",
+      "retroarch-keychain.cfg.tmp", "retroarch-keychain.key.new",
       "remaps/mGBA/mGBA.rmp", "mGBA/mGBA.opt" };
    static const char *const dirs[] = { "remaps/mGBA", "remaps", "mGBA" };
    char      root[160], path[256];
@@ -568,8 +570,10 @@ static void config_lane(void)
       }
    check("config: the main config and keychain files left out",
          !listed[0] && !listed[1] && !listed[2]);
+   check("config: so are the keychain files being written",
+         !listed[3] && !listed[4]);
    check("config: remaps and core options listed, once each",
-         listed[3] == 1 && listed[4] == 1
+         listed[5] == 1 && listed[6] == 1
          && st->current_manifest && st->current_manifest->size == 2);
    check("config: keychain names ignored only in config",
             task_cloud_sync_should_ignore_file("config/retroarch-keychain.key")

@@ -490,10 +490,11 @@ static bool task_cloud_sync_should_ignore_file(const char *filename)
       if (string_is_equal(path, FILE_PATH_MAIN_CONFIG))
          return true;
 
-      /* nor the credentials file and its key file beside it: sealed
-       * per machine, a copy from elsewhere locks this keychain */
-      if (     string_is_equal(path, "retroarch-keychain.cfg")
-            || string_is_equal(path, "retroarch-keychain.key"))
+      /* nor the credentials file and its key file beside it, or the
+       * copy of either still being written (.tmp, .new): sealed per
+       * machine, a copy from elsewhere locks this keychain */
+      if (     string_starts_with(path, FILE_PATH_KEYCHAIN_CONFIG)
+            || string_starts_with(path, FILE_PATH_KEYCHAIN_KEY))
          return true;
 
       /* ignore playlist files */

@@ -77,6 +77,8 @@ RETRO_BEGIN_DECLS
 #define FILE_PATH_MAIN_CONFIG "retroarch.cfg"
 #define FILE_PATH_SALAMANDER_CONFIG "retroarch-salamander.cfg"
 #endif
+#define FILE_PATH_KEYCHAIN_CONFIG "retroarch-keychain.cfg"
+#define FILE_PATH_KEYCHAIN_KEY "retroarch-keychain.key"
 #define FILE_PATH_BACKGROUND_IMAGE "bg.png"
 #define FILE_PATH_TTF_FONT "font.ttf"
 #define FILE_PATH_RUNTIME_EXTENSION ".lrtl"

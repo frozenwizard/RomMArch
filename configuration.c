@@ -1111,7 +1111,7 @@ static bool config_keychain_init(void)
    fill_pathname_basedir(config_directory,
          path_get(RARCH_PATH_CONFIG), sizeof(config_directory));
    fill_pathname_join_special(keyfile_path, config_directory,
-         "retroarch-keychain.key", sizeof(keyfile_path));
+         FILE_PATH_KEYCHAIN_KEY, sizeof(keyfile_path));
    return keychain_init(keyfile_path);
 }
 
@@ -8918,7 +8918,7 @@ static size_t config_get_credentials_path(char *s, size_t len)
          sizeof(config_directory));
 
    return fill_pathname_join_special(s, config_directory,
-         "retroarch-keychain.cfg", len);
+         FILE_PATH_KEYCHAIN_CONFIG, len);
 }
 
 /**
