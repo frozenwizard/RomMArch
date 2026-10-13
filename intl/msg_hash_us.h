@@ -33754,7 +33754,15 @@ MSG_HASH(
    )
 MSG_HASH(
    MSG_ROMM_SAVES_CONFLICT,
-   "This game's save changed both here and in RomM since the last sync. Playing with this device's; RomM's is kept."
+   "This game's save changed here and in RomM. Run it again within 10 seconds to use RomM's; otherwise this device's is used."
+   )
+MSG_HASH(
+   MSG_ROMM_SAVES_USED_REMOTE,
+   "Using RomM's save. This device's is kept in RomM."
+   )
+MSG_HASH(
+   MSG_ROMM_SAVES_USED_LOCAL,
+   "Using this device's save. RomM's is kept."
    )
 MSG_HASH(
    MSG_ROMM_SAVES_NOT_SENT,

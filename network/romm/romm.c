@@ -521,16 +521,17 @@ static void romm_saves_base(char *s, size_t len, const char *path)
       *dot = '\0';
 }
 
-static void romm_on_saves_pulled(void *user_data, enum romm_status status,
-      int http_status, const romm_saves_result_t *result)
+/* How long a second Run has to choose RomM's save in a conflict */
+#define ROMM_CONFLICT_ASK_USEC 10000000
+
+/* A launch waiting on the choice of save in a conflict; a new
+ * generation cancels the timer of the one before. */
+static bool romm_conflict_pending = false;
+static unsigned romm_conflict_gen = 0;
+static char romm_conflict_content[PATH_MAX_LENGTH];
+
+static void romm_load_played(void)
 {
-   romm_launching = false;
-   if (status != ROMM_OK || result->failed)
-      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_FETCHED),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
-   else if (result->conflicts)
-      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_CONFLICT),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
    /* The game running closes during the load, now or a frame later. */
    if (romm_running.rom_id)
       romm_closing = romm_running;
@@ -539,9 +540,103 @@ static void romm_on_saves_pulled(void *user_data, enum romm_status status,
       romm_running = romm_played;
 }
 
-/* @push syncs @game after play rather than before. */
 static bool romm_sync_played(const romm_played_t *game, bool push,
-      romm_saves_sync_cb_t cb)
+      enum romm_saves_resolve resolve, romm_saves_sync_cb_t cb,
+      void *user_data);
+
+static void romm_on_conflict_settled(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_saves_result_t *result)
+{
+   bool remote    = user_data != NULL;
+   romm_launching = false;
+   if (status != ROMM_OK || result->failed || result->conflicts)
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_FETCHED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+   else
+      romm_notify(msg_hash_to_str(remote ? MSG_ROMM_SAVES_USED_REMOTE
+            : MSG_ROMM_SAVES_USED_LOCAL), MESSAGE_QUEUE_CATEGORY_INFO);
+   romm_load_played();
+}
+
+/* Settles the waiting launch's conflict as chosen, then loads it. */
+static void romm_settle_conflict(enum romm_saves_resolve resolve)
+{
+   romm_conflict_pending = false;
+   romm_conflict_gen++;
+   romm_launching        = true;
+   /* The callback tells which way by its user data. */
+   if (!romm_sync_played(&romm_played, false, resolve,
+         romm_on_conflict_settled,
+         resolve == ROMM_SAVES_RESOLVE_REMOTE ? (void*)&romm_played : NULL))
+   {
+      romm_launching = false;
+      romm_load_played();
+   }
+}
+
+/* Runs on the main thread: no second Run in time keeps this device's
+ * save. */
+static void romm_conflict_timer_handler(retro_task_t *task)
+{
+   if (     (uintptr_t)task->user_data != romm_conflict_gen
+         || !romm_conflict_pending)
+   {
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+   if (cpu_features_get_time_usec() < task->when)
+      return;
+   task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+   RARCH_LOG("[RomM] No second Run: using this device's save.\n");
+   romm_settle_conflict(ROMM_SAVES_RESOLVE_LOCAL);
+}
+
+static void romm_on_saves_pulled(void *user_data, enum romm_status status,
+      int http_status, const romm_saves_result_t *result)
+{
+   retro_task_t *task;
+
+   romm_launching = false;
+   if (status == ROMM_OK && !result->failed && result->conflicts)
+   {
+      romm_conflict_gen++;
+      if ((task = task_init()))
+      {
+         task->handler   = romm_conflict_timer_handler;
+         task->user_data = (void*)(uintptr_t)romm_conflict_gen;
+         task->when      = cpu_features_get_time_usec()
+            + ROMM_CONFLICT_ASK_USEC;
+         task->flags    |= RETRO_TASK_FLG_MAIN_THREAD
+                         | RETRO_TASK_FLG_MUTE;
+         if (task_queue_push(task))
+         {
+            romm_conflict_pending = true;
+            strlcpy(romm_conflict_content, romm_launch_content,
+                  sizeof(romm_conflict_content));
+            RARCH_LOG("[RomM] Save conflict in game %u: waiting for a "
+                  "second Run.\n", romm_played.rom_id);
+            romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_CONFLICT),
+                  MESSAGE_QUEUE_CATEGORY_WARNING);
+            return;
+         }
+         free(task);
+      }
+      romm_settle_conflict(ROMM_SAVES_RESOLVE_LOCAL);
+      return;
+   }
+   if (status != ROMM_OK || result->failed)
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_FETCHED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+   romm_load_played();
+}
+
+/* @push syncs @game after play rather than before. */
+/* @push syncs @game after play; before, @resolve settles conflicts.
+ * @cb gets @user_data. */
+static bool romm_sync_played(const romm_played_t *game, bool push,
+      enum romm_saves_resolve resolve, romm_saves_sync_cb_t cb,
+      void *user_data)
 {
    settings_t *settings = config_get_ptr();
    romm_saves_sync_params_t p;
@@ -561,8 +656,9 @@ static bool romm_sync_played(const romm_played_t *game, bool push,
    p.state_dir   = game->state_dir;
    p.record_path = record;
    p.push        = push;
+   p.resolve     = resolve;
    p.is_live     = content_savefile_is_live;
-   return romm_saves_sync(&p, cb, NULL);
+   return romm_saves_sync(&p, cb, user_data);
 }
 
 static void romm_on_saves_pushed(void *user_data, enum romm_status status,
@@ -644,7 +740,8 @@ void romm_sync_owed_saves(void)
       strlcpy(game.state_dir, g->state_dir, sizeof(game.state_dir));
       RARCH_LOG("[RomM] Sending saves owed for game %u (%s).\n",
             game.rom_id, game.emulator);
-      if (romm_sync_played(&game, true, romm_on_owed_pushed))
+      if (romm_sync_played(&game, true, ROMM_SAVES_RESOLVE_NONE,
+            romm_on_owed_pushed, NULL))
          romm_owed_pending++;
    }
    romm_saves_record_free(&rec);
@@ -658,7 +755,8 @@ void romm_content_closed(void)
 
    if (!game)
       return;
-   if (!romm_sync_played(game, true, romm_on_saves_pushed))
+   if (!romm_sync_played(game, true, ROMM_SAVES_RESOLVE_NONE,
+         romm_on_saves_pushed, NULL))
       romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_SENT),
             MESSAGE_QUEUE_CATEGORY_WARNING);
    memset(game, 0, sizeof(*game));
@@ -705,7 +803,8 @@ static int romm_load_with_saves(const char *core_path,
       strlcpy(romm_launch_label, label, sizeof(romm_launch_label));
 
    romm_launching = true;
-   if (!romm_sync_played(&romm_played, false, romm_on_saves_pulled))
+   if (!romm_sync_played(&romm_played, false, ROMM_SAVES_RESOLVE_NONE,
+         romm_on_saves_pulled, NULL))
    {
       romm_launching = false;
       return romm_load_content(core_path, launch_path, label);
@@ -774,6 +873,20 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    char title[NAME_MAX_LENGTH];
    char unpack_title[NAME_MAX_LENGTH];
 
+   /* Run again on a game waiting on a save conflict: RomM's save.
+    * Any other launch drops the waiting one. */
+   if (romm_conflict_pending)
+   {
+      bool same = string_is_equal(romm_conflict_content, content_path);
+      romm_conflict_pending = false;
+      romm_conflict_gen++;
+      if (same)
+      {
+         RARCH_LOG("[RomM] Second Run: using RomM's save.\n");
+         romm_settle_conflict(ROMM_SAVES_RESOLVE_REMOTE);
+         return 0;
+      }
+   }
    if (romm_launching)
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_LAUNCH_IN_PROGRESS),
