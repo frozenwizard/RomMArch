@@ -33665,6 +33665,10 @@ MSG_HASH(
    "This device is paired with RomM."
    )
 MSG_HASH(
+   MSG_ROMM_PAIRED_MISSING_SCOPES,
+   "Paired, but RomM left out: %s. Pair again with every permission ticked."
+   )
+MSG_HASH(
    MSG_ROMM_PAIR_DENIED,
    "RomM turned the pairing down."
    )

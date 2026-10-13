@@ -158,9 +158,10 @@ void romm_check_connection(void)
 }
 
 static void romm_on_pair_approved(void *user_data, enum romm_status status,
-      const char *token, const char *device_id)
+      const char *token, const char *device_id, const char *missing_scopes)
 {
    settings_t *settings = config_get_ptr();
+   char msg[512];
 
    romm_pairing = false;
 
@@ -178,8 +179,15 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
          sizeof(settings->arrays.romm_device_id));
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
-   romm_notify(msg_hash_to_str(MSG_ROMM_PAIRED),
-         MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   if (*missing_scopes)
+   {
+      snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_ROMM_PAIRED_MISSING_SCOPES), missing_scopes);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
+   }
+   else
+      romm_notify(msg_hash_to_str(MSG_ROMM_PAIRED),
+            MESSAGE_QUEUE_CATEGORY_SUCCESS);
 }
 
 static void romm_on_pair_started(void *user_data, enum romm_status status,

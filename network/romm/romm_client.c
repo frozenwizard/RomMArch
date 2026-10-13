@@ -82,6 +82,7 @@ typedef struct
    char body[256];
    char token[128];
    char device_id[64];
+   char missing_scopes[256];
 } romm_pair_wait_ctx_t;
 
 typedef struct
@@ -446,6 +447,40 @@ bool romm_client_pair_start(const char *server, const char *web,
    return pushed;
 }
 
+static void romm_pair_scope(void *ctx, enum rjson_type type,
+      const char *value, size_t len)
+{
+   uint32_t *granted = (uint32_t*)ctx;
+   size_t i;
+
+   if (type != RJSON_STRING)
+      return;
+   for (i = 0; i < ARRAY_SIZE(romm_scopes); i++)
+      if (string_is_equal(value, romm_scopes[i]))
+         *granted |= (uint32_t)1 << i;
+}
+
+/* Lists in @s the scopes asked for that the token reply @data leaves
+ * out; none when it doesn't list scopes at all. */
+static void romm_pair_missing_scopes(const char *data, size_t len,
+      char *s, size_t s_len)
+{
+   uint32_t granted = 0;
+   size_t i;
+
+   *s = '\0';
+   if (!romm_json_values(data, len, "scopes", romm_pair_scope, &granted))
+      return;
+   for (i = 0; i < ARRAY_SIZE(romm_scopes); i++)
+   {
+      if (granted & ((uint32_t)1 << i))
+         continue;
+      if (*s)
+         strlcat(s, ", ", s_len);
+      strlcat(s, romm_scopes[i], s_len);
+   }
+}
+
 static void romm_pair_wait_finish(romm_pair_wait_ctx_t *ctx,
       enum romm_status status)
 {
@@ -470,7 +505,11 @@ static void romm_pair_poll_cb(retro_task_t *task, void *task_data,
                   ctx->token, sizeof(ctx->token))
             && romm_json_get(data->data, data->len, "device_id",
                   ctx->device_id, sizeof(ctx->device_id)))
+      {
+         romm_pair_missing_scopes(data->data, data->len,
+               ctx->missing_scopes, sizeof(ctx->missing_scopes));
          romm_pair_wait_finish(ctx, ROMM_OK);
+      }
       else
          romm_pair_wait_finish(ctx, ROMM_ERR_RESPONSE);
       return;
@@ -564,10 +603,13 @@ static void romm_pair_wait_cb(retro_task_t *task, void *task_data,
       RARCH_LOG(ROMM_PFX "Paired as device %s.\n", ctx->device_id);
    else
       RARCH_WARN(ROMM_PFX "Pairing ended (status %d).\n", ctx->status);
+   if (*ctx->missing_scopes)
+      RARCH_WARN(ROMM_PFX "Pairing left out %s.\n", ctx->missing_scopes);
 
    ctx->cb(ctx->user_data, ctx->status,
          ctx->status == ROMM_OK ? ctx->token     : "",
-         ctx->status == ROMM_OK ? ctx->device_id : "");
+         ctx->status == ROMM_OK ? ctx->device_id : "",
+         ctx->missing_scopes);
 }
 
 static void romm_pair_wait_cleanup(retro_task_t *task)

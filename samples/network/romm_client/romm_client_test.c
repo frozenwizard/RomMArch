@@ -104,16 +104,18 @@ typedef struct
    enum romm_status status;
    char token[128];
    char device_id[64];
+   char missing_scopes[256];
 } pair_wait_result_t;
 
 static void on_pair_wait(void *user_data, enum romm_status status,
-      const char *token, const char *device_id)
+      const char *token, const char *device_id, const char *missing_scopes)
 {
    pair_wait_result_t *r = (pair_wait_result_t*)user_data;
    r->calls++;
    r->status = status;
    strlcpy(r->token, token, sizeof(r->token));
    strlcpy(r->device_id, device_id, sizeof(r->device_id));
+   strlcpy(r->missing_scopes, missing_scopes, sizeof(r->missing_scopes));
 }
 
 /* Answers the recorded request with @status and @body. -1 is what the
@@ -1292,15 +1294,42 @@ static void test_pair_wait(void)
    expect_poll(t0 + 35 * SEC);
    answer(200, "{\"access_token\": \"rmm_0123abcd\","
          " \"device_id\": \"5d1e-device\","
-         " \"scopes\": [\"me.read\"], \"expires_at\": null}");
+         " \"scopes\": [\"assets.read\", \"assets.write\","
+         " \"collections.read\", \"collections.write\","
+         " \"devices.read\", \"devices.write\", \"firmware.read\","
+         " \"me.read\", \"platforms.read\", \"roms.read\","
+         " \"roms.user.read\", \"roms.user.write\"],"
+         " \"expires_at\": null}");
    CHECK(r.calls == 0, "callback before the task finished");
    CHECK(stub_task->when <= stub_now, "approval not handled right away");
    CHECK(run_task(), "approved but not finished");
    CHECK(r.calls == 1 && r.status == ROMM_OK
          && !strcmp(r.token, "rmm_0123abcd")
-         && !strcmp(r.device_id, "5d1e-device"),
-         "approved: calls %u status %d token %s device %s",
-         r.calls, r.status, r.token, r.device_id);
+         && !strcmp(r.device_id, "5d1e-device") && !*r.missing_scopes,
+         "approved: calls %u status %d token %s device %s missing %s",
+         r.calls, r.status, r.token, r.device_id, r.missing_scopes);
+
+   /* The approver unticked two scopes; RomM sorts what it grants. */
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(200, "{\"access_token\": \"rmm_0123abcd\","
+         " \"device_id\": \"5d1e-device\","
+         " \"scopes\": [\"assets.read\", \"collections.read\","
+         " \"collections.write\", \"devices.read\", \"firmware.read\","
+         " \"me.read\", \"platforms.read\", \"roms.read\","
+         " \"roms.user.read\", \"roms.user.write\"],"
+         " \"expires_at\": null}");
+   CHECK(run_task() && r.status == ROMM_OK
+         && !strcmp(r.missing_scopes, "assets.write, devices.write"),
+         "unticked: status %d missing %s", r.status, r.missing_scopes);
+
+   /* A reply that doesn't list scopes says nothing is missing. */
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(200, "{\"access_token\": \"rmm_0123abcd\","
+         " \"device_id\": \"5d1e-device\"}");
+   CHECK(run_task() && r.status == ROMM_OK && !*r.missing_scopes,
+         "no scope list: status %d missing %s", r.status, r.missing_scopes);
 
    /* A dropped connection is retried at the next interval. */
    pair_wait(&r, 600);
