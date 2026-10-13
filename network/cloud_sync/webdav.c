@@ -816,6 +816,17 @@ static void webdav_stat_cb(retro_task_t *task, void *task_data, void *user_data,
    if (!success && data)
        webdav_log_http_failure(webdav_st->url, data, err);
 
+#ifdef HAVE_ROMM
+   /* Never retried with the WebDAV credentials, which may well be for
+    * another server. */
+   if (     data
+         && (data->status == 401 || data->status == 403)
+         && *webdav_romm.token
+         && webdav_is_romm())
+      RARCH_ERR("[webdav] RomM refused this device's access to Cloud Sync (HTTP %d). Pair it again in Settings > RomM, with every permission approved.\n",
+            data->status);
+#endif
+
    if (success && data)
    {
       bool dav              = false;

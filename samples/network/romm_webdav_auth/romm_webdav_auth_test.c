@@ -105,6 +105,33 @@ static bool begin_has_auth(const char *url)
    return had_auth;
 }
 
+/* Starts a sync against RomM and answers its probe with @status and
+ * a Basic challenge, as RomM does; reports whether the driver tried
+ * again (with the WebDAV credentials: the token is all it has). */
+static bool probe_retried(int status)
+{
+   static char headers[] = "WWW-Authenticate: Basic realm=\"RomM Cloud Sync\"\0";
+   settings_t          *settings = config_get_ptr();
+   http_transfer_data_t resp;
+   bool                 retried;
+
+   strlcpy(settings->arrays.webdav_url,
+         "http://romm.lan:8090/api/sync/retroarch/",
+         sizeof(settings->arrays.webdav_url));
+   stub_reset();
+   if (!webdav_sync_begin(on_done, NULL) || stub_req.count != 1)
+      return true;
+   memset(&resp, 0, sizeof(resp));
+   resp.status  = status;
+   resp.headers = headers;
+   stub_req.count = 0;
+   stub_req.cb(NULL, &resp, stub_req.user_data, NULL);
+   retried = stub_req.count != 0;
+   if (retried)
+      stub_req.cb(NULL, NULL, stub_req.user_data, NULL);
+   return retried;
+}
+
 /* The method of the first request an upload (or a delete) of a file
  * starts against @url, its answer left out so the request fails. */
 static const char *first_request(const char *url, bool upload)
@@ -208,6 +235,12 @@ int main(void)
    setup("http://romm.lan:8090", "", "", "", "");
    check("unpaired, the probe goes without credentials",
          !begin_has_auth("http://romm.lan:8090/api/sync/retroarch"));
+
+   setup("http://romm.lan:8090", "", "rmm_tok", "user", "pass");
+   check("a refused token isn't retried with the WebDAV credentials",
+         !probe_retried(401));
+   check("nor is a token missing a permission",
+         !probe_retried(403));
 
    /* non-destructive: RomM's copies aren't backed up first */
    setup("http://romm.lan:8090", "", "rmm_tok", "", "");
