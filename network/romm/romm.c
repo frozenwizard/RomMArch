@@ -161,6 +161,39 @@ void romm_check_connection(void)
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
 }
 
+#ifdef HAVE_CLOUDSYNC
+/* Points Cloud Sync at RomM's WebDAV, which takes the device token, for
+ * RetroArch's configs only: saves and states sync per game id instead.
+ * Destructive, as RomM can't copy the backup a non-destructive upload
+ * makes first. */
+static void romm_setup_cloud_sync(settings_t *settings)
+{
+   char url[sizeof(settings->arrays.webdav_url)];
+
+   if (!romm_client_url(url, sizeof(url),
+         settings->arrays.romm_server_url, "/api/sync/retroarch/"))
+      return;
+   configuration_set_string(settings,
+         settings->arrays.webdav_url, url);
+   configuration_set_string(settings,
+         settings->arrays.cloud_sync_driver, "webdav");
+   configuration_set_bool(settings,
+         settings->bools.cloud_sync_enable, true);
+   configuration_set_bool(settings,
+         settings->bools.cloud_sync_sync_configs, true);
+   configuration_set_bool(settings,
+         settings->bools.cloud_sync_sync_saves, false);
+   configuration_set_bool(settings,
+         settings->bools.cloud_sync_sync_thumbs, false);
+   configuration_set_bool(settings,
+         settings->bools.cloud_sync_sync_system, false);
+   configuration_set_bool(settings,
+         settings->bools.cloud_sync_destructive, true);
+   /* A new server: forget the last sync, as changing driver does. */
+   task_push_cloud_sync_update_driver();
+}
+#endif
+
 static void romm_on_pair_approved(void *user_data, enum romm_status status,
       const char *token, const char *device_id, const char *missing_scopes)
 {
@@ -181,8 +214,15 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
          sizeof(settings->arrays.romm_token));
    strlcpy(settings->arrays.romm_device_id, device_id,
          sizeof(settings->arrays.romm_device_id));
+#ifdef HAVE_CLOUDSYNC
+   romm_setup_cloud_sync(settings);
+#endif
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+#ifdef HAVE_CLOUDSYNC
+   if (settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
+      task_push_cloud_sync();
+#endif
    if (*missing_scopes)
    {
       snprintf(msg, sizeof(msg),
