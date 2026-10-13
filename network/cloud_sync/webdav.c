@@ -556,20 +556,39 @@ static bool webdav_url_is_under(const char *url, const char *server)
       && (url[_len] == '/' || url[_len] == '\0');
 }
 
+/* RomM's addresses and this device's token, as cloud_sync_capture()
+ * found them. */
+static struct
+{
+   char server_url[NAME_MAX_LENGTH];
+   char web_url[NAME_MAX_LENGTH];
+   char token[128];
+} webdav_romm;
+
+static void webdav_sync_capture(void)
+{
+   settings_t *settings = config_get_ptr();
+   strlcpy(webdav_romm.server_url, settings->arrays.romm_server_url,
+         sizeof(webdav_romm.server_url));
+   strlcpy(webdav_romm.web_url, settings->arrays.romm_web_url,
+         sizeof(webdav_romm.web_url));
+   strlcpy(webdav_romm.token, settings->arrays.romm_token,
+         sizeof(webdav_romm.token));
+}
+
 /* RomM's WebDAV takes the paired device's token, which goes to RomM's
  * own addresses only. */
 static char *webdav_create_romm_auth(void)
 {
    char        header[256];
-   settings_t *settings = config_get_ptr();
-   const char *url      = webdav_state_get_ptr()->url;
+   const char *url = webdav_state_get_ptr()->url;
 
-   if (     !*settings->arrays.romm_token
-         || (   !webdav_url_is_under(url, settings->arrays.romm_server_url)
-             && !webdav_url_is_under(url, settings->arrays.romm_web_url)))
+   if (     !*webdav_romm.token
+         || (   !webdav_url_is_under(url, webdav_romm.server_url)
+             && !webdav_url_is_under(url, webdav_romm.web_url)))
       return NULL;
    if ((size_t)snprintf(header, sizeof(header),
-         "Authorization: Bearer %s\r\n", settings->arrays.romm_token)
+         "Authorization: Bearer %s\r\n", webdav_romm.token)
          >= sizeof(header))
       return NULL;
    return strdup(header);
@@ -1539,5 +1558,10 @@ cloud_sync_driver_t cloud_sync_webdav = {
    webdav_update,
    webdav_delete,
    "webdav", /* ident */
-   0 /* flags */
+   0, /* flags */
+#ifdef HAVE_ROMM
+   webdav_sync_capture
+#else
+   NULL
+#endif
 };

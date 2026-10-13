@@ -49,6 +49,8 @@ static void setup(const char *server, const char *web, const char *token,
    free(webdav_driver_st.basic_auth_header);
    webdav_driver_st.basic_auth_header = NULL;
    webdav_driver_st.basic             = true;
+   /* as a sync is pushed */
+   webdav_sync_capture();
 }
 
 /* The header the driver sends to @url. */
@@ -129,6 +131,12 @@ int main(void)
          header_starts("https://dav.example.net/dav/",
             "Authorization: Basic "));
    check("RomM gets the token even with a username and password set",
+         header_is("http://romm.lan:8090/api/sync/retroarch/", bearer));
+
+   setup("http://romm.lan:8090", "", "rmm_tok", "", "");
+   strlcpy(config_get_ptr()->arrays.romm_token, "rmm_new",
+         sizeof(config_get_ptr()->arrays.romm_token));
+   check("a token saved during a sync waits for the next one",
          header_is("http://romm.lan:8090/api/sync/retroarch/", bearer));
 
    setup("http://romm.lan:8090", "", "", "user", "pass");
