@@ -2383,10 +2383,17 @@ static bool task_cloud_sync_task_finder(retro_task_t *task, void *user_data)
    return task->handler == task_cloud_sync_task_handler;
 }
 
+bool task_cloud_sync_in_progress(void)
+{
+   task_finder_data_t find_data;
+   find_data.func     = task_cloud_sync_task_finder;
+   find_data.userdata = NULL;
+   return task_queue_find(&find_data);
+}
+
 static void task_push_cloud_sync_with_mode(int conflict_resolution)
 {
    char task_title[128];
-   task_finder_data_t       find_data;
    task_cloud_sync_state_t *sync_state = NULL;
    retro_task_t            *task       = NULL;
    bool cloud_sync_enable              = config_get_ptr()->bools.cloud_sync_enable;
@@ -2399,8 +2406,7 @@ static void task_push_cloud_sync_with_mode(int conflict_resolution)
       tcs_manifest_lock = slock_new();
 #endif
 
-   find_data.func = task_cloud_sync_task_finder;
-   if (task_queue_find(&find_data))
+   if (task_cloud_sync_in_progress())
    {
       RARCH_LOG(CSPFX "Already in progress.\n");
       return;

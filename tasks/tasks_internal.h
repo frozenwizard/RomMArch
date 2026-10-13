@@ -518,6 +518,7 @@ void task_push_cloud_sync_update_driver(void);
 void task_push_cloud_sync(void);
 void task_push_cloud_sync_resolve_keep_local(void);
 void task_push_cloud_sync_resolve_keep_server(void);
+bool task_cloud_sync_in_progress(void);
 
 RETRO_END_DECLS
 
