@@ -9601,6 +9601,13 @@ bool retroarch_main_deinit_pending(void)
 
 void retroarch_main_deinit_finish(void)
 {
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* Save RAM is on disk, and the save file list still names the
+    * content closing. A game left running at quit goes up at the next
+    * start, as the task queue has stopped. */
+   if (!(runloop_state_get_ptr()->flags & RUNLOOP_FLAG_SHUTDOWN_INITIATED))
+      romm_content_closed();
+#endif
    command_event_core_deinit_finish();
 
    content_deinit();

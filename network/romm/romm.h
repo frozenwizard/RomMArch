@@ -55,6 +55,10 @@ bool romm_launch_without_core(const char *content_path, const char *label,
  * the memory of every RomM game but that one. */
 void romm_content_unloaded(const char *next_content);
 
+/* Content is closing and its save RAM is on disk: if it is a RomM
+ * game, sends what changed of its saves and states to RomM. */
+void romm_content_closed(void);
+
 RETRO_END_DECLS
 
 #endif

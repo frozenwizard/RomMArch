@@ -33,6 +33,7 @@
 #include "../../command.h"
 #include "../../configuration.h"
 #include "../../core_info.h"
+#include "../../file_path_special.h"
 #include "../../msg_hash.h"
 #include "../../paths.h"
 #include "../../playlist.h"
@@ -432,7 +433,11 @@ typedef struct
    char state_dir[PATH_MAX_LENGTH];
 } romm_played_t;
 
+/* The one launching, the one running, and the one a launch replaces,
+ * whose saves go up when it has closed */
 static romm_played_t romm_played;
+static romm_played_t romm_running;
+static romm_played_t romm_closing;
 
 /* The BIOS files the core at @core_path wants that the system folder
  * lacks, as the core's info names them; with @required_only, those
@@ -533,7 +538,77 @@ static void romm_on_saves_pulled(void *user_data, enum romm_status status,
    else if (result->conflicts)
       romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_CONFLICT),
             MESSAGE_QUEUE_CATEGORY_WARNING);
-   romm_load_content(romm_launch_core, romm_launch_path, romm_launch_label);
+   /* The game running closes during the load, now or a frame later. */
+   if (romm_running.rom_id)
+      romm_closing = romm_running;
+   if (!romm_load_content(romm_launch_core, romm_launch_path,
+         romm_launch_label))
+      romm_running = romm_played;
+}
+
+/* @push syncs @game after play rather than before. */
+static bool romm_sync_played(const romm_played_t *game, bool push,
+      romm_saves_sync_cb_t cb)
+{
+   settings_t *settings = config_get_ptr();
+   romm_saves_sync_params_t p;
+   char record[PATH_MAX_LENGTH];
+
+   romm_saves_record_path(record, sizeof(record),
+         dir_get_ptr(RARCH_DIR_SAVEFILE));
+   memset(&p, 0, sizeof(p));
+   p.server      = settings->arrays.romm_server_url;
+   p.token       = settings->arrays.romm_token;
+   p.device_id   = settings->arrays.romm_device_id;
+   p.rom_id      = game->rom_id;
+   p.emulator    = game->emulator;
+   p.base        = game->base;
+   p.rom_base    = game->rom_base;
+   p.save_dir    = game->save_dir;
+   p.state_dir   = game->state_dir;
+   p.record_path = record;
+   p.push        = push;
+   p.is_live     = content_savefile_is_live;
+   return romm_saves_sync(&p, cb, NULL);
+}
+
+static void romm_on_saves_pushed(void *user_data, enum romm_status status,
+      int http_status, const romm_saves_result_t *result)
+{
+   if (status != ROMM_OK || result->failed)
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_SENT),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+   else if (result->conflicts)
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_CONFLICT_AFTER),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+}
+
+/* Is @game's save file one the content closing has? */
+static bool romm_played_is_live(const romm_played_t *game)
+{
+   char name[NAME_MAX_LENGTH];
+   char path[PATH_MAX_LENGTH];
+
+   if (!game->rom_id)
+      return false;
+   strlcpy(name, game->base, sizeof(name));
+   strlcat(name, FILE_PATH_SRM_EXTENSION, sizeof(name));
+   fill_pathname_join(path, game->save_dir, name, sizeof(path));
+   return content_savefile_is_live(path);
+}
+
+void romm_content_closed(void)
+{
+   romm_played_t *game = romm_played_is_live(&romm_closing)
+      ? &romm_closing
+      : romm_played_is_live(&romm_running) ? &romm_running : NULL;
+
+   if (!game)
+      return;
+   if (!romm_sync_played(game, true, romm_on_saves_pushed))
+      romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_SENT),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+   memset(game, 0, sizeof(*game));
 }
 
 /* Fetches what RomM has newer of the saves of @launch_path, the game
@@ -542,10 +617,7 @@ static void romm_on_saves_pulled(void *user_data, enum romm_status status,
 static int romm_load_with_saves(const char *core_path,
       const char *content_path, const char *launch_path, const char *label)
 {
-   settings_t *settings = config_get_ptr();
    core_info_t *info    = NULL;
-   romm_saves_sync_params_t p;
-   char record[PATH_MAX_LENGTH];
 
    memset(&romm_played, 0, sizeof(romm_played));
    if (     !(romm_played.rom_id = romm_launch_rom_id(content_path))
@@ -569,8 +641,6 @@ static int romm_load_with_saves(const char *core_path,
          launch_path);
    romm_saves_base(romm_played.rom_base, sizeof(romm_played.rom_base),
          content_path);
-   romm_saves_record_path(record, sizeof(record),
-         dir_get_ptr(RARCH_DIR_SAVEFILE));
    RARCH_LOG("[RomM] Saves of game %u go to %s/%s.*, states to %s.\n",
          romm_played.rom_id, romm_played.save_dir, romm_played.base,
          romm_played.state_dir);
@@ -581,20 +651,8 @@ static int romm_load_with_saves(const char *core_path,
    if (label != romm_launch_label)
       strlcpy(romm_launch_label, label, sizeof(romm_launch_label));
 
-   memset(&p, 0, sizeof(p));
-   p.server      = settings->arrays.romm_server_url;
-   p.token       = settings->arrays.romm_token;
-   p.device_id   = settings->arrays.romm_device_id;
-   p.rom_id      = romm_played.rom_id;
-   p.emulator    = romm_played.emulator;
-   p.base        = romm_played.base;
-   p.rom_base    = romm_played.rom_base;
-   p.save_dir    = romm_played.save_dir;
-   p.state_dir   = romm_played.state_dir;
-   p.record_path = record;
-   p.is_live     = content_savefile_is_live;
    romm_launching = true;
-   if (!romm_saves_sync(&p, romm_on_saves_pulled, NULL))
+   if (!romm_sync_played(&romm_played, false, romm_on_saves_pulled))
    {
       romm_launching = false;
       return romm_load_content(core_path, launch_path, label);
