@@ -150,6 +150,7 @@ void *task_push_http_transfer_with_content(const char *url,
    strlcpy(stub_req.content_type, content_type ? content_type : "",
          sizeof(stub_req.content_type));
    stub_req.body[0] = '\0';
+   stub_req.body_len = content_len;
    if (content_len < sizeof(stub_req.body))
    {
       memcpy(stub_req.body, content, content_len);

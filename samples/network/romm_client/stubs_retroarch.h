@@ -15,8 +15,11 @@ typedef struct
    char method[16];
    char url[1024];
    char headers[1024];
-   char content_type[64];
+   char content_type[128];
+   /* The body, NULs included, and its length; cut short at the size
+    * of @body. */
    char body[4096];
+   size_t body_len;
    retro_task_callback_t cb;
    void *user_data;
 } stub_request_t;

@@ -45,7 +45,9 @@ enum romm_status
    /* Launch: a download doesn't match RomM's size or CRC32. */
    ROMM_ERR_CHECKSUM,
    /* Launch: no memory to hold the game. */
-   ROMM_ERR_MEMORY
+   ROMM_ERR_MEMORY,
+   /* Save sync: RomM's copy changed since this device last synced it. */
+   ROMM_ERR_CONFLICT
 };
 
 /* A pairing RomM has started: the user approves it at @approve_url
@@ -142,6 +144,30 @@ typedef struct
    char updated_at[40];
 } romm_save_t;
 
+/* A save or save state to upload for game @rom_id. */
+typedef struct
+{
+   const char *server;
+   const char *token;
+   unsigned rom_id;
+   /* What RomM keeps it under, such as "Super Metroid (USA).srm". */
+   const char *file_name;
+   const void *data;
+   size_t len;
+   /* The emulator that made it, such as "Snes9x"; NULL for none. */
+   const char *emulator;
+   /* Saves only, each NULL or 0 to leave out. In @slot, each upload
+    * is a new version, RomM keeping the latest @keep; with no slot it
+    * replaces the game's save of that name. With @device_id, RomM's id
+    * for this device, RomM refuses it when the slot or save changed
+    * since this device last synced it. @content_hash, the MD5 of
+    * @data in hex, is recorded as what the device holds. */
+   const char *slot;
+   unsigned keep;
+   const char *device_id;
+   const char *content_hash;
+} romm_upload_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
@@ -204,6 +230,12 @@ typedef void (*romm_firmware_cb_t)(void *user_data,
 typedef void (*romm_saves_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_save_t *saves, size_t count);
+
+/* @save is the upload as RomM keeps it, valid only during the call;
+ * NULL unless @status is ROMM_OK. ROMM_ERR_CONFLICT when RomM refused
+ * it for having changed since this device's last sync. */
+typedef void (*romm_save_cb_t)(void *user_data,
+      enum romm_status status, int http_status, const romm_save_t *save);
 
 /* @data holds @len bytes, valid only during the call; NULL unless
  * @status is ROMM_OK. */
@@ -318,6 +350,16 @@ bool romm_client_save_content(const char *server, const char *token,
  * thread. */
 bool romm_client_state_content(const char *server, const char *token,
       unsigned state_id, romm_download_cb_t cb, void *user_data);
+
+/* Uploads @up as a save. @up's strings and data are copied. @cb runs
+ * on the main thread. */
+bool romm_client_save_upload(const romm_upload_t *up,
+      romm_save_cb_t cb, void *user_data);
+
+/* Uploads @up as a save state; RomM replaces the game's state of that
+ * name. @cb runs on the main thread. */
+bool romm_client_state_upload(const romm_upload_t *up,
+      romm_save_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 

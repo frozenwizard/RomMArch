@@ -137,6 +137,14 @@ typedef struct
    const char *what;
 } romm_saves_ctx_t;
 
+typedef struct
+{
+   romm_save_cb_t cb;
+   void *user_data;
+   /* What is uploaded, for the log: "save" or "save state" */
+   const char *what;
+} romm_upload_ctx_t;
+
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)
 {
@@ -1482,4 +1490,192 @@ bool romm_client_state_content(const char *server, const char *token,
       return false;
    snprintf(path, sizeof(path), "/api/states/%u/content", state_id);
    return romm_client_download(server, token, path, cb, user_data);
+}
+
+static void romm_upload_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_upload_ctx_t *ctx     = (romm_upload_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_save_t save;
+   char value[32];
+
+   memset(&save, 0, sizeof(save));
+   if (status == ROMM_ERR_HTTP && data->status == 409)
+      status = ROMM_ERR_CONFLICT;
+   else if (status == ROMM_OK)
+   {
+      if (romm_json_get(data->data, data->len, "id", value, sizeof(value)))
+         save.id = romm_json_uint(value);
+      if (romm_json_get(data->data, data->len, "rom_id",
+            value, sizeof(value)))
+         save.rom_id = romm_json_uint(value);
+      if (romm_json_get(data->data, data->len, "file_size_bytes",
+            value, sizeof(value)))
+         save.size = (uint64_t)strtoull(value, NULL, 10);
+      romm_json_get(data->data, data->len, "file_name", save.file_name,
+            sizeof(save.file_name));
+      romm_json_get(data->data, data->len, "emulator", save.emulator,
+            sizeof(save.emulator));
+      romm_json_get(data->data, data->len, "slot", save.slot,
+            sizeof(save.slot));
+      romm_json_get(data->data, data->len, "content_hash",
+            save.content_hash, sizeof(save.content_hash));
+      romm_json_get(data->data, data->len, "updated_at", save.updated_at,
+            sizeof(save.updated_at));
+      if (!save.id || !*save.file_name)
+         status = ROMM_ERR_RESPONSE;
+   }
+
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "Uploaded %s %u as %s.\n", ctx->what, save.id,
+            save.file_name);
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't upload a %s (status %d, HTTP %d).\n",
+            ctx->what, status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? &save : NULL);
+   free(ctx);
+}
+
+/* Appends "&@key=@value", @value percent-encoded, at @s + *@_len. */
+static bool romm_query_add(char *s, size_t len, size_t *_len,
+      const char *key, const char *value)
+{
+   char esc[1024];
+   size_t n;
+
+   if (!romm_url_escape(esc, sizeof(esc), value))
+      return false;
+   n = (size_t)snprintf(s + *_len, len - *_len, "&%s=%s", key, esc);
+   if (n >= len - *_len)
+      return false;
+   *_len += n;
+   return true;
+}
+
+/* A multipart/form-data body holding @data as file @file_name in form
+ * field @field; NULL when out of memory. */
+static char *romm_form_body(const char *boundary, const char *field,
+      const char *file_name, const void *data, size_t len,
+      size_t *body_len)
+{
+   char head[1536];
+   char tail[96];
+   char name[1024];
+   size_t head_len, tail_len, pos = 0;
+   const char *c;
+   char *body;
+
+   /* A quoted string: backslash before '"' and '\'. */
+   for (c = file_name; *c && pos + 2 < sizeof(name); c++)
+   {
+      if (*c == '"' || *c == '\\')
+         name[pos++] = '\\';
+      name[pos++] = (*c == '\r' || *c == '\n') ? ' ' : *c;
+   }
+   name[pos] = '\0';
+
+   head_len = (size_t)snprintf(head, sizeof(head),
+         "--%s\r\nContent-Disposition: form-data; name=\"%s\";"
+         " filename=\"%s\"\r\nContent-Type: application/octet-stream"
+         "\r\n\r\n", boundary, field, name);
+   tail_len = (size_t)snprintf(tail, sizeof(tail), "\r\n--%s--\r\n",
+         boundary);
+   if (head_len >= sizeof(head) || tail_len >= sizeof(tail))
+      return NULL;
+   if (!(body = (char*)malloc(head_len + len + tail_len)))
+      return NULL;
+   memcpy(body, head, head_len);
+   if (len)
+      memcpy(body + head_len, data, len);
+   memcpy(body + head_len + len, tail, tail_len);
+   *body_len = head_len + len + tail_len;
+   return body;
+}
+
+static bool romm_upload(const romm_upload_t *up, bool is_state,
+      romm_save_cb_t cb, void *user_data)
+{
+   static unsigned counter;
+   char path[3072];
+   char url[4096];
+   char headers[512];
+   char boundary[64];
+   char content_type[96];
+   size_t _len, body_len = 0;
+   romm_upload_ctx_t *ctx;
+   char *body;
+   bool pushed = false;
+
+   if (     !up || !up->rom_id || string_is_empty(up->token)
+         || string_is_empty(up->file_name) || (!up->data && up->len))
+      return false;
+
+   _len = (size_t)snprintf(path, sizeof(path), "/api/%s?rom_id=%u",
+         is_state ? "states" : "saves", up->rom_id);
+   if (     (!string_is_empty(up->emulator)
+            && !romm_query_add(path, sizeof(path), &_len, "emulator",
+                  up->emulator))
+         || (!is_state && !string_is_empty(up->slot)
+            && !romm_query_add(path, sizeof(path), &_len, "slot",
+                  up->slot))
+         || (!is_state && !string_is_empty(up->device_id)
+            && !romm_query_add(path, sizeof(path), &_len, "device_id",
+                  up->device_id))
+         || (!is_state && !string_is_empty(up->content_hash)
+            && !romm_query_add(path, sizeof(path), &_len, "content_hash",
+                  up->content_hash)))
+      return false;
+   if (!is_state && !string_is_empty(up->slot) && up->keep)
+   {
+      size_t n = (size_t)snprintf(path + _len, sizeof(path) - _len,
+            "&autocleanup=true&autocleanup_limit=%u", up->keep);
+      if (n >= sizeof(path) - _len)
+         return false;
+   }
+   if (     !romm_client_url(url, sizeof(url), up->server, path)
+         || (size_t)snprintf(headers, sizeof(headers),
+               "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, up->token)
+            >= sizeof(headers))
+      return false;
+
+   snprintf(boundary, sizeof(boundary), "RommarchForm%08x%08x",
+         (unsigned)cpu_features_get_time_usec(), ++counter);
+   snprintf(content_type, sizeof(content_type),
+         "multipart/form-data; boundary=%s", boundary);
+   if (!(body = romm_form_body(boundary,
+         is_state ? "stateFile" : "saveFile", up->file_name, up->data,
+         up->len, &body_len)))
+      return false;
+
+   if ((ctx = (romm_upload_ctx_t*)malloc(sizeof(*ctx))))
+   {
+      ctx->cb        = cb;
+      ctx->user_data = user_data;
+      ctx->what      = is_state ? "save state" : "save";
+      /* The body is copied into the request. */
+      if (!(pushed = task_push_http_transfer_with_content(url, "POST",
+            body, body_len, content_type, true, false, headers,
+            romm_upload_cb, ctx) != NULL))
+         free(ctx);
+   }
+   free(body);
+   return pushed;
+}
+
+bool romm_client_save_upload(const romm_upload_t *up,
+      romm_save_cb_t cb, void *user_data)
+{
+   return romm_upload(up, false, cb, user_data);
+}
+
+bool romm_client_state_upload(const romm_upload_t *up,
+      romm_save_cb_t cb, void *user_data)
+{
+   return romm_upload(up, true, cb, user_data);
 }

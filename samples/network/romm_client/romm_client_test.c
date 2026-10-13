@@ -11,10 +11,10 @@
  * from trimmed RomM replies, a platform's ordered game ids, a game's
  * files, a game file downloaded into memory, file downloads, a
  * platform's firmware and its download, and a game's saves and save
- * states and their downloads. Then the wait for approval, with the
- * stubs' clock standing in for time: the poll schedule, slowing down
- * when told, and how approval, denial, expiry and cancellation end
- * it.
+ * states, their downloads and uploads. Then the wait for approval,
+ * with the stubs' clock standing in for time: the poll schedule,
+ * slowing down when told, and how approval, denial, expiry and
+ * cancellation end it.
  *
  * Includes the client's translation unit so its static JSON reader is
  * tested as shipped.
@@ -1590,6 +1590,205 @@ static void test_saves(void)
          "listed or fetched without an id or a token");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_save;
+   romm_save_t save;
+} upload_result_t;
+
+static void on_upload(void *user_data, enum romm_status status,
+      int http_status, const romm_save_t *save)
+{
+   upload_result_t *r = (upload_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_save    = save != NULL;
+   if (save)
+      r->save = *save;
+}
+
+/* Checks the recorded request's body is one form part holding @len
+ * bytes of @data as file @file_name in field @field. */
+static bool form_holds(const char *field, const char *file_name,
+      const void *data, size_t len)
+{
+   char boundary[96];
+   char head[1024];
+   char tail[128];
+   const char *b = strstr(stub_req.content_type, "boundary=");
+   size_t head_len, tail_len;
+
+   if (     strncmp(stub_req.content_type, "multipart/form-data; ", 21)
+         || !b)
+      return false;
+   strlcpy(boundary, b + 9, sizeof(boundary));
+   head_len = (size_t)snprintf(head, sizeof(head),
+         "--%s\r\nContent-Disposition: form-data; name=\"%s\";"
+         " filename=\"%s\"\r\nContent-Type: application/octet-stream"
+         "\r\n\r\n", boundary, field, file_name);
+   tail_len = (size_t)snprintf(tail, sizeof(tail), "\r\n--%s--\r\n",
+         boundary);
+   return stub_req.body_len == head_len + len + tail_len
+       && !memcmp(stub_req.body, head, head_len)
+       && !memcmp(stub_req.body + head_len, data, len)
+       && !memcmp(stub_req.body + head_len + len, tail, tail_len);
+}
+
+static void test_upload(void)
+{
+   static const unsigned char sram[] = { 0, 'S', 0, 'M', 0xff, '\r', '\n' };
+   romm_upload_t up;
+   upload_result_t r;
+
+   memset(&up, 0, sizeof(up));
+   up.server       = "http://romm.local:8090";
+   up.token        = "rmm_0123abcd";
+   up.rom_id       = 3335;
+   up.file_name    = "Super Metroid (USA).srm";
+   up.data         = sram;
+   up.len          = sizeof(sram);
+   up.emulator     = "Snes9x";
+   up.slot         = "autosave";
+   up.keep         = 10;
+   up.device_id    = "e409ecd7-f8f1-458e-bf82-09c5f8604113";
+   up.content_hash = "0f343b0931126a20f133d67c2b018a3b";
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_save_upload(&up, on_upload, &r), "upload not started");
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/saves"
+            "?rom_id=3335&emulator=Snes9x&slot=autosave"
+            "&device_id=e409ecd7-f8f1-458e-bf82-09c5f8604113"
+            "&content_hash=0f343b0931126a20f133d67c2b018a3b"
+            "&autocleanup=true&autocleanup_limit=10"),
+         "request %s %s", stub_req.method, stub_req.url);
+   CHECK(strstr(stub_req.headers, "Authorization: Bearer rmm_0123abcd\r\n")
+         && strstr(stub_req.headers, "application/json"),
+         "headers %s", stub_req.headers);
+   CHECK(form_holds("saveFile", "Super Metroid (USA).srm", sram,
+         sizeof(sram)), "body (%u bytes, %s) %s",
+         (unsigned)stub_req.body_len, stub_req.content_type, stub_req.body);
+
+   /* RomM's reply, trimmed; the screenshot's members aren't the save's. */
+   answer(200, "{\"id\": 21, \"rom_id\": 3335, \"user_id\": 1,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-12_21-30-00].srm\","
+         " \"file_size_bytes\": 7, \"emulator\": \"Snes9x\","
+         " \"slot\": \"autosave\","
+         " \"content_hash\": \"0f343b0931126a20f133d67c2b018a3b\","
+         " \"updated_at\": \"2026-10-13T02:30:00+00:00\","
+         " \"screenshot\": {\"id\": 7, \"file_name\": \"shot.png\"},"
+         " \"device_syncs\": [{\"device_id\": \"e409\","
+         " \"is_current\": true}]}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_save
+         && r.save.id == 21 && r.save.rom_id == 3335 && r.save.size == 7
+         && !strcmp(r.save.file_name,
+               "Super Metroid (USA) [2026-10-12_21-30-00].srm")
+         && !strcmp(r.save.slot, "autosave")
+         && !strcmp(r.save.emulator, "Snes9x")
+         && !strcmp(r.save.content_hash, "0f343b0931126a20f133d67c2b018a3b")
+         && !strcmp(r.save.updated_at, "2026-10-13T02:30:00+00:00"),
+         "uploaded: status %d id %u %s at %s", r.status, r.save.id,
+         r.save.file_name, r.save.updated_at);
+
+   /* Another client wrote to the slot since this device last synced. */
+   memset(&r, 0, sizeof(r));
+   romm_client_save_upload(&up, on_upload, &r);
+   answer(409, "{\"detail\": \"Slot has a newer save since your last"
+         " sync\"}");
+   CHECK(r.status == ROMM_ERR_CONFLICT && r.http_status == 409
+         && !r.has_save, "409: status %d", r.status);
+
+   /* A token paired without assets.write or devices.write. */
+   memset(&r, 0, sizeof(r));
+   romm_client_save_upload(&up, on_upload, &r);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED, "403: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_save_upload(&up, on_upload, &r);
+   answer(400, "{\"detail\": \"Invalid emulator name: x\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 400,
+         "400: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_save_upload(&up, on_upload, &r);
+   answer(200, "<html>proxy</html>");
+   CHECK(r.status == ROMM_ERR_RESPONSE && !r.has_save, "HTML: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_save_upload(&up, on_upload, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && r.http_status == 0,
+         "no response: status %d", r.status);
+
+   /* Plain replace: no slot, device or hash; names escaped. */
+   up.slot         = NULL;
+   up.device_id    = NULL;
+   up.content_hash = NULL;
+   up.emulator     = "Genesis Plus GX";
+   up.file_name    = "Say \"Hi\" \\ Bye.brm";
+   stub_reset();
+   CHECK(romm_client_save_upload(&up, on_upload, &r)
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/saves"
+            "?rom_id=3335&emulator=Genesis%20Plus%20GX"),
+         "plain upload %s", stub_req.url);
+   CHECK(form_holds("saveFile", "Say \\\"Hi\\\" \\\\ Bye.brm", sram,
+         sizeof(sram)), "quoted name in %s", stub_req.body);
+
+   /* A state: the save-only fields don't apply. */
+   up.emulator     = "Snes9x";
+   up.file_name    = "Super Metroid (USA).state1";
+   up.slot         = "autosave";
+   up.device_id    = "e409ecd7-f8f1-458e-bf82-09c5f8604113";
+   up.content_hash = "0f343b0931126a20f133d67c2b018a3b";
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_state_upload(&up, on_upload, &r)
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/states"
+            "?rom_id=3335&emulator=Snes9x"), "state upload %s",
+         stub_req.url);
+   CHECK(form_holds("stateFile", "Super Metroid (USA).state1", sram,
+         sizeof(sram)), "state body %s", stub_req.body);
+   answer(200, "{\"id\": 40, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA).state1\","
+         " \"file_size_bytes\": 7, \"emulator\": \"Snes9x\","
+         " \"updated_at\": \"2026-10-13T02:31:00+00:00\"}");
+   CHECK(r.status == ROMM_OK && r.save.id == 40 && !*r.save.slot,
+         "state: status %d id %u", r.status, r.save.id);
+
+   /* An empty file is still a file. */
+   up.data = NULL;
+   up.len  = 0;
+   stub_reset();
+   CHECK(romm_client_state_upload(&up, on_upload, &r)
+         && form_holds("stateFile", "Super Metroid (USA).state1", "", 0),
+         "empty file body %s", stub_req.body);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   up.data  = sram;
+   up.len   = sizeof(sram);
+   up.token = "";
+   CHECK(!romm_client_save_upload(&up, on_upload, &r), "uploaded without"
+         " a token");
+   up.token  = "t";
+   up.rom_id = 0;
+   CHECK(!romm_client_save_upload(&up, on_upload, &r), "uploaded without"
+         " a game");
+   up.rom_id    = 3335;
+   up.file_name = "";
+   CHECK(!romm_client_state_upload(&up, on_upload, &r), "uploaded without"
+         " a name");
+   CHECK(!romm_client_save_upload(NULL, on_upload, &r)
+         && stub_req.count == 0 && r.calls == 0, "upload started");
+}
+
 int main(void)
 {
    test_url();
@@ -1606,6 +1805,7 @@ int main(void)
    test_download();
    test_firmware();
    test_saves();
+   test_upload();
    test_pair_start();
    test_pair_wait();
 
