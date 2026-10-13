@@ -136,7 +136,8 @@ bool retro_vfs_romm_remove(const char *path)
    return found;
 }
 
-void retro_vfs_romm_remove_prefix(const char *prefix)
+/* Removes the files under @prefix or, with @others, the rest. */
+static void romm_vfs_remove_matching(const char *prefix, bool others)
 {
    romm_vfs_file_t **link;
    size_t len;
@@ -147,12 +148,22 @@ void retro_vfs_romm_remove_prefix(const char *prefix)
    romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; )
    {
-      if (!strncasecmp((*link)->path, prefix, len))
+      if (!strncasecmp((*link)->path, prefix, len) != others)
          romm_vfs_unlink(link);
       else
          link = &(*link)->next;
    }
    romm_vfs_lock_release();
+}
+
+void retro_vfs_romm_remove_prefix(const char *prefix)
+{
+   romm_vfs_remove_matching(prefix, false);
+}
+
+void retro_vfs_romm_keep_prefix(const char *prefix)
+{
+   romm_vfs_remove_matching(prefix, true);
 }
 
 bool retro_vfs_file_open_romm(libretro_vfs_implementation_file *stream,

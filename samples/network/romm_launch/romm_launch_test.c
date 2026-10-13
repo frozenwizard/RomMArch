@@ -5,7 +5,8 @@
  * is made from its cue sheet (one file over a 64 MB range), one with
  * RomM's own .m3u and discs in subfolders, and how a RAR, a deleted
  * game, a folder with nothing to launch, a bad CRC32 and a cancel end
- * it. Also that the previous game is released.
+ * it. Also that the previous game is released, and that unloading
+ * releases every game but the one loading next.
  */
 
 #include <stdio.h>
@@ -137,6 +138,22 @@ static void test_rom_id(void)
    CHECK(!romm_launch_rom_id("romm://x/a.zip") && !romm_launch_rom_id("romm://314")
          && !romm_launch_rom_id("/games/a.zip") && !romm_launch_rom_id(NULL),
          "id from a path without one");
+}
+
+/* Content unloading frees every game but the one loading next. */
+static void test_release(void)
+{
+   retro_vfs_romm_add("romm://5/a.gb", strdup("a"), 1);
+   retro_vfs_romm_add("romm://50/b.cue", strdup("b"), 1);
+   retro_vfs_romm_add("romm://50/b.bin", strdup("b"), 1);
+   romm_launch_release("romm://50/b.m3u");
+   CHECK(!path_is_valid("romm://5/a.gb") && path_is_valid("romm://50/b.cue")
+         && path_is_valid("romm://50/b.bin"), "kept the wrong game");
+   romm_launch_release("/games/c.gb");
+   CHECK(!path_is_valid("romm://50/b.cue"), "a local game kept a RomM one");
+   retro_vfs_romm_add("romm://5/a.gb", strdup("a"), 1);
+   romm_launch_release(NULL);
+   CHECK(!path_is_valid("romm://5/a.gb"), "closing kept a game");
 }
 
 static void test_single_file(void)
@@ -340,6 +357,7 @@ static void test_refused(void)
 int main(void)
 {
    test_rom_id();
+   test_release();
    test_single_file();
    test_cue_bin();
    test_romm_m3u();

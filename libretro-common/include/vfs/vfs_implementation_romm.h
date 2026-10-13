@@ -46,6 +46,9 @@ bool retro_vfs_romm_remove(const char *path);
 /* Removes every file whose path starts with @prefix. */
 void retro_vfs_romm_remove_prefix(const char *prefix);
 
+/* Removes every file whose path doesn't start with @prefix. */
+void retro_vfs_romm_keep_prefix(const char *prefix);
+
 bool    retro_vfs_file_open_romm(libretro_vfs_implementation_file *stream,
         const char *path, unsigned mode);
 int64_t retro_vfs_file_read_romm(libretro_vfs_implementation_file *stream,

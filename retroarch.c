@@ -3476,6 +3476,11 @@ static void command_event_core_deinit_finish(void)
 {
    runloop_state_t *runloop_st = runloop_state_get_ptr();
    command_event_finish_content_deinit();
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* The core has closed the game it read from memory. Loading other
+    * content, the content path is already the next game's. */
+   romm_content_unloaded(path_get(RARCH_PATH_CONTENT));
+#endif
 #ifdef HAVE_SMBCLIENT
    {
       unsigned w, d;

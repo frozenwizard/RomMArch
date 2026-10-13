@@ -2,8 +2,9 @@
  * (libretro-common/vfs/vfs_implementation_romm.c), used the way
  * RetroArch and cores use them: through filestream_* and path_*, into
  * the VFS. Covers reading, seeking and sizes, case-insensitive paths,
- * directories, read-only access, files removed or replaced while
- * open, and readers on other threads.
+ * directories, read-only access, files removed (one game's, or all
+ * but one game's) or replaced while open, and readers on other
+ * threads.
  */
 
 #include <stdio.h>
@@ -134,6 +135,12 @@ static void test_remove_replace(void)
    retro_vfs_romm_remove_prefix("romm://12/");
    CHECK(!path_is_valid("romm://12/a.cue") && !path_is_valid("romm://12/b.bin")
          && path_is_valid("romm://120/c.bin"), "remove a game's files");
+   retro_vfs_romm_add("romm://12/a.cue", bytes("a"), 1);
+   retro_vfs_romm_keep_prefix("romm://12/");
+   CHECK(path_is_valid("romm://12/a.cue") && !path_is_valid("romm://120/c.bin"),
+         "keep a game's files");
+   retro_vfs_romm_keep_prefix("romm://12/");
+   CHECK(path_is_valid("romm://12/a.cue"), "keep twice");
    retro_vfs_romm_remove_prefix("romm://");
 
    CHECK(!retro_vfs_romm_add("", bytes("x"), 1) || 1, "empty path");

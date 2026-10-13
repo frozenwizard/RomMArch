@@ -98,6 +98,20 @@ bool romm_launch_is_ready(const char *content_path)
          & RETRO_VFS_STAT_IS_VALID) != 0;
 }
 
+void romm_launch_release(const char *keep_path)
+{
+   char prefix[32];
+   unsigned rom_id = romm_launch_rom_id(keep_path);
+
+   if (!rom_id)
+   {
+      retro_vfs_romm_remove_prefix(ROMM_SCHEME);
+      return;
+   }
+   snprintf(prefix, sizeof(prefix), ROMM_SCHEME "%u/", rom_id);
+   retro_vfs_romm_keep_prefix(prefix);
+}
+
 static bool romm_launch_ext_is(const char *path, const char *const *exts)
 {
    const char *ext = path_get_extension(path);

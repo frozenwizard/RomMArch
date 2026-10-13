@@ -487,3 +487,10 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    romm_launching = true;
    return 0;
 }
+
+void romm_content_unloaded(const char *next_content)
+{
+   /* A fetch freed the rest when it began; what it holds is its own. */
+   if (!romm_launching)
+      romm_launch_release(next_content);
+}

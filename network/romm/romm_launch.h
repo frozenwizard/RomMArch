@@ -33,6 +33,10 @@ unsigned romm_launch_rom_id(const char *content_path);
 /* Has @content_path's game been fetched into memory already? */
 bool romm_launch_is_ready(const char *content_path);
 
+/* Frees the memory of every fetched game but @keep_path's; of them all
+ * when @keep_path is NULL or not a RomM game. */
+void romm_launch_release(const char *keep_path);
+
 /* Fetches the game behind playlist path @content_path from RomM into
  * memory, as romm://<id>/<path inside the game> files, which the
  * loader and cores read through the VFS. A folder game also gets the

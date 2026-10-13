@@ -43,6 +43,10 @@ void romm_refresh_library_at_start(void);
 int romm_launch_from_menu(const char *core_path, const char *content_path,
       const char *label);
 
+/* The core has unloaded and @next_content, if any, loads next: frees
+ * the memory of every RomM game but that one. */
+void romm_content_unloaded(const char *next_content);
+
 RETRO_END_DECLS
 
 #endif
