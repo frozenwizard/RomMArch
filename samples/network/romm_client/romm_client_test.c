@@ -9,11 +9,11 @@
  * link read from its reply. The token check (whose user a token acts
  * for, and a token RomM turns down). The platform and game lists, read
  * from trimmed RomM replies, a platform's ordered game ids, a game's
- * files, a game file downloaded into memory, file downloads, and a
- * platform's firmware and its download. Then the wait for approval,
- * with the stubs' clock standing in for time: the poll schedule,
- * slowing down when told, and how approval, denial, expiry and
- * cancellation end it.
+ * files, a game file downloaded into memory, file downloads, a
+ * platform's firmware and its download, and a game's saves and save
+ * states. Then the wait for approval, with the stubs' clock standing
+ * in for time: the poll schedule, slowing down when told, and how
+ * approval, denial, expiry and cancellation end it.
  *
  * Includes the client's translation unit so its static JSON reader is
  * tested as shipped.
@@ -1390,6 +1390,138 @@ static void test_pair_wait(void)
    CHECK(r.calls == 0, "callback ran for a wait never started");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_list;
+   size_t count;
+   romm_save_t saves[4];
+} saves_result_t;
+
+static void on_saves(void *user_data, enum romm_status status,
+      int http_status, const romm_save_t *saves, size_t count)
+{
+   saves_result_t *r = (saves_result_t*)user_data;
+   size_t i;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_list    = saves != NULL;
+   r->count       = count;
+   for (i = 0; i < count && i < 4; i++)
+      r->saves[i] = saves[i];
+}
+
+static void test_saves(void)
+{
+   saves_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_saves("http://romm.local:8090", "rmm_0123abcd", 3335,
+         on_saves, &r), "save list not started");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/saves?rom_id=3335")
+         && strstr(stub_req.headers, "Bearer rmm_0123abcd"), "request %s",
+         stub_req.url);
+   /* RomM's SaveSchema, trimmed: one save replaced in place, one in the
+    * web player's autosave slot with its screenshot and device list,
+    * whose members must not be read as the save's. */
+   answer(200, "[{\"id\": 12, \"rom_id\": 3335, \"user_id\": 1,"
+         " \"file_name\": \"Super Metroid (USA).srm\","
+         " \"file_name_no_ext\": \"Super Metroid (USA)\","
+         " \"file_extension\": \"srm\", \"file_size_bytes\": 8192,"
+         " \"emulator\": \"Snes9x\", \"slot\": null,"
+         " \"content_hash\": \"0f343b0931126a20f133d67c2b018a3b\","
+         " \"updated_at\": \"2026-10-12T20:15:00+00:00\","
+         " \"screenshot\": null, \"device_syncs\": []},"
+         " {\"id\": 13, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-12_21-00-00].srm\","
+         " \"file_size_bytes\": 8192, \"emulator\": \"snes9x\","
+         " \"slot\": \"autosave\", \"content_hash\": null,"
+         " \"updated_at\": \"2026-10-12T21:00:00+00:00\","
+         " \"screenshot\": {\"id\": 7, \"rom_id\": 3335,"
+         " \"file_name\": \"shot.png\", \"updated_at\": \"x\"},"
+         " \"device_syncs\": [{\"device_id\": \"d1\","
+         " \"last_synced_at\": \"2026-10-12T21:00:00+00:00\","
+         " \"is_current\": true}]},"
+         " {\"rom_id\": 3335, \"file_name\": \"no id.srm\"}]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 2,
+         "list: status %d count %u", r.status, (unsigned)r.count);
+   CHECK(r.saves[0].id == 12 && r.saves[0].rom_id == 3335
+         && r.saves[0].size == 8192
+         && !strcmp(r.saves[0].file_name, "Super Metroid (USA).srm")
+         && !strcmp(r.saves[0].emulator, "Snes9x") && !*r.saves[0].slot
+         && !strcmp(r.saves[0].content_hash,
+               "0f343b0931126a20f133d67c2b018a3b")
+         && !strcmp(r.saves[0].updated_at, "2026-10-12T20:15:00+00:00"),
+         "save: %u %s %s %s", r.saves[0].id, r.saves[0].file_name,
+         r.saves[0].emulator, r.saves[0].updated_at);
+   CHECK(r.saves[1].id == 13 && !strcmp(r.saves[1].slot, "autosave")
+         && !*r.saves[1].content_hash
+         && !strcmp(r.saves[1].file_name,
+               "Super Metroid (USA) [2026-10-12_21-00-00].srm")
+         && !strcmp(r.saves[1].updated_at, "2026-10-12T21:00:00+00:00"),
+         "slotted save: %u %s slot %s at %s", r.saves[1].id,
+         r.saves[1].file_name, r.saves[1].slot, r.saves[1].updated_at);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_client_saves("http://h", "t", 3335, on_saves, &r);
+   answer(200, "[]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.count == 0,
+         "none: status %d count %u", r.status, (unsigned)r.count);
+
+   /* A token paired before assets.read was asked for. */
+   memset(&r, 0, sizeof(r));
+   romm_client_saves("http://h", "t", 3335, on_saves, &r);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && !r.has_list, "403: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_saves("http://h", "t", 3335, on_saves, &r);
+   answer(200, "<html>proxy</html>");
+   CHECK(r.status == ROMM_ERR_RESPONSE && !r.has_list, "HTML: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_saves("http://h", "t", 3335, on_saves, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && r.http_status == 0,
+         "no response: status %d", r.status);
+
+   /* States: same reply shape, without slot or hash. */
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_states("http://romm.local:8090", "rmm_0123abcd", 3335,
+         on_saves, &r), "state list not started");
+   CHECK(!strcmp(stub_req.url,
+         "http://romm.local:8090/api/states?rom_id=3335"), "request %s",
+         stub_req.url);
+   answer(200, "[{\"id\": 40, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA).state1\","
+         " \"file_size_bytes\": 431020, \"emulator\": \"Snes9x\","
+         " \"core\": null, \"updated_at\": \"2026-10-12T20:16:01+00:00\","
+         " \"screenshot\": {\"id\": 8,"
+         " \"file_name\": \"Super Metroid (USA).state1.png\"}}]");
+   CHECK(r.status == ROMM_OK && r.count == 1 && r.saves[0].id == 40
+         && r.saves[0].size == 431020 && !*r.saves[0].slot
+         && !strcmp(r.saves[0].file_name, "Super Metroid (USA).state1")
+         && !strcmp(r.saves[0].emulator, "Snes9x"),
+         "state: status %d count %u %s", r.status, (unsigned)r.count,
+         r.saves[0].file_name);
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(!romm_client_saves("http://h", "t", 0, on_saves, &r)
+         && !romm_client_states("http://h", "t", 0, on_saves, &r)
+         && !romm_client_saves("http://h", "", 3335, on_saves, &r)
+         && stub_req.count == 0 && r.calls == 0,
+         "listed without a game or a token");
+}
+
 int main(void)
 {
    test_url();
@@ -1405,6 +1537,7 @@ int main(void)
    test_rom_content();
    test_download();
    test_firmware();
+   test_saves();
    test_pair_start();
    test_pair_wait();
 

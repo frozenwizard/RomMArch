@@ -126,6 +126,14 @@ typedef struct
    uint64_t length;
 } romm_content_ctx_t;
 
+typedef struct
+{
+   romm_saves_cb_t cb;
+   void *user_data;
+   /* What is listed, for the log: "saves" or "save states" */
+   const char *what;
+} romm_saves_ctx_t;
+
 static unsigned romm_json_get_uint(const char *data, size_t len,
       const char *path, unsigned fallback)
 {
@@ -1285,4 +1293,117 @@ bool romm_client_firmware_content(const char *server, const char *token,
    snprintf(path, sizeof(path), "/api/firmware/%u/content/%s",
          firmware_id, name);
    return romm_client_download(server, token, path, cb, user_data);
+}
+
+typedef struct
+{
+   romm_save_t *list;
+   romm_save_t cur;
+} romm_saves_parse_t;
+
+static void romm_saves_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_save_t *s = &((romm_saves_parse_t*)ctx)->cur;
+
+   if (type != RJSON_STRING && type != RJSON_NUMBER)
+      return;
+   if (string_is_equal(key, "id"))
+      s->id = romm_json_uint(value);
+   else if (string_is_equal(key, "rom_id"))
+      s->rom_id = romm_json_uint(value);
+   else if (string_is_equal(key, "file_size_bytes"))
+      s->size = (uint64_t)strtoull(value, NULL, 10);
+   else if (string_is_equal(key, "file_name"))
+      strlcpy(s->file_name, value, sizeof(s->file_name));
+   else if (string_is_equal(key, "emulator"))
+      strlcpy(s->emulator, value, sizeof(s->emulator));
+   else if (string_is_equal(key, "slot"))
+      strlcpy(s->slot, value, sizeof(s->slot));
+   else if (string_is_equal(key, "content_hash"))
+      strlcpy(s->content_hash, value, sizeof(s->content_hash));
+   else if (string_is_equal(key, "updated_at"))
+      strlcpy(s->updated_at, value, sizeof(s->updated_at));
+}
+
+static void romm_saves_item_end(void *ctx)
+{
+   romm_saves_parse_t *parse = (romm_saves_parse_t*)ctx;
+
+   if (parse->cur.id && *parse->cur.file_name)
+      RBUF_PUSH(parse->list, parse->cur);
+   memset(&parse->cur, 0, sizeof(parse->cur));
+}
+
+static void romm_saves_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_saves_ctx_t *ctx      = (romm_saves_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_saves_parse_t *parse;
+
+   if (!(parse = (romm_saves_parse_t*)calloc(1, sizeof(*parse))))
+      status = ROMM_ERR_RESPONSE;
+   else if (status == ROMM_OK
+         && !romm_json_items(data->data, data->len, NULL,
+               romm_saves_member, romm_saves_item_end, parse))
+      status = ROMM_ERR_RESPONSE;
+
+   if (status == ROMM_OK)
+      RARCH_DBG(ROMM_PFX "RomM has %u %s for the game.\n",
+            (unsigned)RBUF_LEN(parse->list), ctx->what);
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't list %s (status %d, HTTP %d).\n",
+            ctx->what, status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? parse->list : NULL,
+         status == ROMM_OK ? RBUF_LEN(parse->list) : 0);
+   if (parse)
+   {
+      RBUF_FREE(parse->list);
+      free(parse);
+   }
+   free(ctx);
+}
+
+static bool romm_list_saves(const char *server, const char *token,
+      const char *path_fmt, const char *what, unsigned rom_id,
+      romm_saves_cb_t cb, void *user_data)
+{
+   char path[64];
+   romm_saves_ctx_t *ctx;
+
+   if (!rom_id)
+      return false;
+   snprintf(path, sizeof(path), path_fmt, rom_id);
+   if (!(ctx = (romm_saves_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   ctx->what      = what;
+
+   if (!romm_get(server, token, path, romm_saves_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+bool romm_client_saves(const char *server, const char *token,
+      unsigned rom_id, romm_saves_cb_t cb, void *user_data)
+{
+   return romm_list_saves(server, token, "/api/saves?rom_id=%u", "saves",
+         rom_id, cb, user_data);
+}
+
+bool romm_client_states(const char *server, const char *token,
+      unsigned rom_id, romm_saves_cb_t cb, void *user_data)
+{
+   return romm_list_saves(server, token, "/api/states?rom_id=%u",
+         "save states", rom_id, cb, user_data);
 }

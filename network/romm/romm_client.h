@@ -122,6 +122,26 @@ typedef struct
    char name[256];
 } romm_firmware_t;
 
+/* A save or save state the user has in RomM for a game. */
+typedef struct
+{
+   unsigned id;
+   unsigned rom_id;
+   uint64_t size;
+   /* The name RomM keeps it under. A save uploaded to a slot has the
+    * upload time in it, such as "Game [2026-10-12_20-15-00].srm". */
+   char file_name[456];
+   /* The emulator its client said made it, such as "Snes9x"; empty
+    * when none. */
+   char emulator[64];
+   /* Saves only: the slot it went to, empty when none. */
+   char slot[256];
+   /* Saves only: MD5 of its contents in hex, empty when unknown. */
+   char content_hash[33];
+   /* When RomM last changed it, such as "2026-10-12T20:15:00+00:00". */
+   char updated_at[40];
+} romm_save_t;
+
 /* @version is RomM's version string, empty unless @status is ROMM_OK.
  * @http_status is 0 when there was no response. */
 typedef void (*romm_heartbeat_cb_t)(void *user_data,
@@ -175,6 +195,12 @@ typedef void (*romm_content_cb_t)(void *user_data,
 typedef void (*romm_firmware_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_firmware_t *firmware, size_t count);
+
+/* @saves holds @count entries, valid only during the call; NULL
+ * unless @status is ROMM_OK. */
+typedef void (*romm_saves_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_save_t *saves, size_t count);
 
 /* @data holds @len bytes, valid only during the call; NULL unless
  * @status is ROMM_OK. */
@@ -267,6 +293,16 @@ bool romm_client_firmware(const char *server, const char *token,
 bool romm_client_firmware_content(const char *server, const char *token,
       unsigned firmware_id, const char *file_name,
       romm_download_cb_t cb, void *user_data);
+
+/* Lists the saves the user has in RomM for game @rom_id, from every
+ * client and slot. @cb runs on the main thread. */
+bool romm_client_saves(const char *server, const char *token,
+      unsigned rom_id, romm_saves_cb_t cb, void *user_data);
+
+/* Lists the save states the user has in RomM for game @rom_id. @cb
+ * runs on the main thread. */
+bool romm_client_states(const char *server, const char *token,
+      unsigned rom_id, romm_saves_cb_t cb, void *user_data);
 
 RETRO_END_DECLS
 
