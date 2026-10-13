@@ -140,6 +140,15 @@ int main(void)
    check("no RomM address set: nothing matches",
          header_is("http://romm.lan:8090/api/sync/retroarch/", NULL));
 
+   setup("https://", "http://", "rmm_tok", "", "");
+   check("an address that is only a scheme matches no server",
+         header_is("https://dav.example.net/dav/", NULL));
+   check("nor does a web address that is only a scheme",
+         header_is("http://dav.example.net/dav/", NULL));
+   setup("romm.lan:8090", "", "rmm_tok", "", "");
+   check("an address without a scheme matches nothing",
+         header_is("romm.lan:8090/api/sync/retroarch/", NULL));
+
    setup("http://romm.lan:8090", "", "rmm_tok", "", "");
    check("a sync with RomM probes it with the token",
          begin_has_auth("http://romm.lan:8090/api/sync/retroarch"));

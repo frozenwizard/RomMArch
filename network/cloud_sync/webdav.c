@@ -545,11 +545,14 @@ static char *webdav_create_digest_auth_header(const char *method, const char *ur
 /* Whether @url is @server or under it. */
 static bool webdav_url_is_under(const char *url, const char *server)
 {
-   size_t _len = strlen(server);
+   const char *host = strstr(server, "://");
+   size_t      _len = strlen(server);
    while (_len && server[_len - 1] == '/')
       _len--;
-   return _len
-      && !strncmp(url, server, _len)
+   /* A scheme alone ("https://") would match every server. */
+   if (!host || (size_t)(host - server) + STRLEN_CONST("://") >= _len)
+      return false;
+   return !strncmp(url, server, _len)
       && (url[_len] == '/' || url[_len] == '\0');
 }
 
