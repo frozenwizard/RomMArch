@@ -169,14 +169,37 @@ enum romm_cloud_sync_setup
    ROMM_CLOUD_SYNC_FAILED
 };
 
+/* Whether @scope is in @list, as pairing names missing scopes
+ * ("a, b"). */
+static bool romm_scope_listed(const char *list, const char *scope)
+{
+   size_t      _len = strlen(scope);
+   const char *p    = list;
+   while ((p = strstr(p, scope)))
+   {
+      if (     (p == list || p[-1] == ' ')
+            && (p[_len] == ',' || p[_len] == '\0'))
+         return true;
+      p += _len;
+   }
+   return false;
+}
+
 /* Points Cloud Sync at RomM's WebDAV, which takes the device token, for
  * RetroArch's configs only: saves and states sync per game id instead.
  * Cloud Sync the user has on for another service is left as it is. */
 static enum romm_cloud_sync_setup romm_setup_cloud_sync(
-      settings_t *settings)
+      settings_t *settings, const char *missing_scopes)
 {
    char url[sizeof(settings->arrays.webdav_url)];
 
+   /* RomM's WebDAV wants both; without them every sync would fail. */
+   if (     romm_scope_listed(missing_scopes, "assets.read")
+         || romm_scope_listed(missing_scopes, "assets.write"))
+   {
+      RARCH_WARN("[RomM] Cloud Sync left as it was: it needs the assets permissions pairing left out.\n");
+      return ROMM_CLOUD_SYNC_FAILED;
+   }
    if (!romm_client_url(url, sizeof(url),
          settings->arrays.romm_server_url, "/api/sync/retroarch/"))
    {
@@ -235,7 +258,7 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
    strlcpy(settings->arrays.romm_device_id, device_id,
          sizeof(settings->arrays.romm_device_id));
 #ifdef HAVE_CLOUDSYNC
-   cloud_sync = romm_setup_cloud_sync(settings);
+   cloud_sync = romm_setup_cloud_sync(settings, missing_scopes);
 #endif
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
