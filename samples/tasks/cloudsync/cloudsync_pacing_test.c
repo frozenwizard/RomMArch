@@ -30,6 +30,8 @@
  *    synced directory in one run, and lists what dir_list_new() listed:
  *    nested and hidden files, ignored names left out, two roots; a root
  *    that cannot be read still stops the sync;
+ *  - in the configs category, the walk leaves out the credentials file
+ *    and its key file along with retroarch.cfg;
  *  - pushed on the task queue and run to its end, the sync releases
  *    everything it held (LeakSanitizer): the state used to be left
  *    behind by every sync, because it was freed from a callback that
@@ -515,6 +517,65 @@ static void walk_lane(void)
    if (system(cmd) != 0) { }
 }
 
+/* The configs category walks the folder retroarch.cfg is in, which also
+ * holds the credentials file and its key file: the walk leaves out all
+ * three and lists the rest, and those names are only special there. */
+static void config_lane(void)
+{
+   static const char *const files[] = {
+      "retroarch.cfg", "retroarch-keychain.cfg", "retroarch-keychain.key",
+      "remaps/mGBA/mGBA.rmp", "mGBA/mGBA.opt" };
+   char      root[160], path[256], cmd[400];
+   int       listed[5] = {0};
+   size_t    i, k;
+   task_cloud_sync_state_t *st = (task_cloud_sync_state_t*)calloc(1, sizeof(*st));
+   struct string_list      *dl = string_list_new();
+   union string_list_elem_attr attr;
+   retro_task_t *task;
+
+   snprintf(root, sizeof(root), "%s/config_root", dir);
+   snprintf(cmd, sizeof(cmd), "mkdir -p %s/remaps/mGBA %s/mGBA", root, root);
+   if (system(cmd) != 0)
+      return;
+   for (k = 0; k < 5; k++)
+   {
+      snprintf(path, sizeof(path), "%s/%s", root, files[k]);
+      write_file(path, 16, (unsigned)k);
+   }
+
+   attr.i = 0;
+   string_list_append(dl, "config", attr);
+   dl->elems[0].userdata = strdup(root);
+   st->dirlist = dl;
+   retro_atomic_int_init(&st->waiting, 0);
+   retro_atomic_int_init(&st->phase, (int)CLOUD_SYNC_PHASE_BUILD_CURRENT_MANIFEST);
+   task  = task_init();
+   grant = 20;
+   walk_run(st, task);
+   for (i = 0; st->current_manifest && i < st->current_manifest->size; i++)
+      for (k = 0; k < 5; k++)
+      {
+         snprintf(path, sizeof(path), "config/%s", files[k]);
+         if (!strcmp(st->current_manifest->list[i].alt, path))
+            listed[k]++;
+      }
+   check("config: the main config and keychain files left out",
+         !listed[0] && !listed[1] && !listed[2]);
+   check("config: remaps and core options listed, once each",
+         listed[3] == 1 && listed[4] == 1
+         && st->current_manifest && st->current_manifest->size == 2);
+   check("config: keychain names ignored only in config",
+            task_cloud_sync_should_ignore_file("config/retroarch-keychain.key")
+         && !task_cloud_sync_should_ignore_file("saves/retroarch-keychain.key")
+         && !task_cloud_sync_should_ignore_file("config/mGBA/retroarch-keychain.cfg"));
+   task_cloud_sync_cleanup(task);
+   free(task->title);
+   free(task);
+
+   snprintf(cmd, sizeof(cmd), "rm -rf %s", root);
+   if (system(cmd) != 0) { }
+}
+
 /* A whole sync's tail through the real task queue: the diff, the local
  * manifest and the end, then retirement. Run under LeakSanitizer in CI. */
 static void queue_lane(void)
@@ -594,6 +655,7 @@ int main(void)
 
    fetch_lane();
    walk_lane();
+   config_lane();
    queue_lane();
 
    rmdir(dir);
