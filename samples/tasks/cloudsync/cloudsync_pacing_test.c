@@ -396,13 +396,15 @@ static size_t reference_keys(const char *root, const char *name,
    return at;
 }
 
-static task_cloud_sync_state_t *walk_state(const char *root_a, const char *root_b)
+/* A walk over @root_a as category @category_a, and @root_b as states. */
+static task_cloud_sync_state_t *walk_state_in(const char *category_a,
+      const char *root_a, const char *root_b)
 {
    task_cloud_sync_state_t *st = (task_cloud_sync_state_t*)calloc(1, sizeof(*st));
    struct string_list *dl      = string_list_new();
    union string_list_elem_attr attr;
    attr.i = 0;
-   string_list_append(dl, "saves", attr);
+   string_list_append(dl, category_a, attr);
    dl->elems[0].userdata = strdup(root_a);
    if (root_b)
    {
@@ -413,6 +415,11 @@ static task_cloud_sync_state_t *walk_state(const char *root_a, const char *root_
    retro_atomic_int_init(&st->waiting, 0);
    retro_atomic_int_init(&st->phase, (int)CLOUD_SYNC_PHASE_BUILD_CURRENT_MANIFEST);
    return st;
+}
+
+static task_cloud_sync_state_t *walk_state(const char *root_a, const char *root_b)
+{
+   return walk_state_in("saves", root_a, root_b);
 }
 
 static unsigned walk_run(task_cloud_sync_state_t *st, retro_task_t *task)
@@ -525,35 +532,35 @@ static void config_lane(void)
    static const char *const files[] = {
       "retroarch.cfg", "retroarch-keychain.cfg", "retroarch-keychain.key",
       "remaps/mGBA/mGBA.rmp", "mGBA/mGBA.opt" };
-   char      root[160], path[256], cmd[400];
-   int       listed[5] = {0};
+   static const char *const dirs[] = { "remaps/mGBA", "remaps", "mGBA" };
+   char      root[160], path[256];
+   int       listed[ARRAY_SIZE(files)] = {0};
    size_t    i, k;
-   task_cloud_sync_state_t *st = (task_cloud_sync_state_t*)calloc(1, sizeof(*st));
-   struct string_list      *dl = string_list_new();
-   union string_list_elem_attr attr;
+   task_cloud_sync_state_t *st;
    retro_task_t *task;
 
    snprintf(root, sizeof(root), "%s/config_root", dir);
-   snprintf(cmd, sizeof(cmd), "mkdir -p %s/remaps/mGBA %s/mGBA", root, root);
-   if (system(cmd) != 0)
-      return;
-   for (k = 0; k < 5; k++)
+   for (k = 0; k < ARRAY_SIZE(dirs); k++)
+   {
+      snprintf(path, sizeof(path), "%s/%s", root, dirs[k]);
+      if (!path_mkdir(path))
+      {
+         check("config: the folders could be made", 0);
+         return;
+      }
+   }
+   for (k = 0; k < ARRAY_SIZE(files); k++)
    {
       snprintf(path, sizeof(path), "%s/%s", root, files[k]);
       write_file(path, 16, (unsigned)k);
    }
 
-   attr.i = 0;
-   string_list_append(dl, "config", attr);
-   dl->elems[0].userdata = strdup(root);
-   st->dirlist = dl;
-   retro_atomic_int_init(&st->waiting, 0);
-   retro_atomic_int_init(&st->phase, (int)CLOUD_SYNC_PHASE_BUILD_CURRENT_MANIFEST);
+   st    = walk_state_in("config", root, NULL);
    task  = task_init();
    grant = 20;
    walk_run(st, task);
    for (i = 0; st->current_manifest && i < st->current_manifest->size; i++)
-      for (k = 0; k < 5; k++)
+      for (k = 0; k < ARRAY_SIZE(files); k++)
       {
          snprintf(path, sizeof(path), "config/%s", files[k]);
          if (!strcmp(st->current_manifest->list[i].alt, path))
@@ -572,8 +579,17 @@ static void config_lane(void)
    free(task->title);
    free(task);
 
-   snprintf(cmd, sizeof(cmd), "rm -rf %s", root);
-   if (system(cmd) != 0) { }
+   for (k = 0; k < ARRAY_SIZE(files); k++)
+   {
+      snprintf(path, sizeof(path), "%s/%s", root, files[k]);
+      filestream_delete(path);
+   }
+   for (k = 0; k < ARRAY_SIZE(dirs); k++)
+   {
+      snprintf(path, sizeof(path), "%s/%s", root, dirs[k]);
+      path_rmdir(path);
+   }
+   path_rmdir(root);
 }
 
 /* A whole sync's tail through the real task queue: the diff, the local
