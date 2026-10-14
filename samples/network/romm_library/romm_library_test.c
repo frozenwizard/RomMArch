@@ -1294,6 +1294,46 @@ static void test_sync_shared_playlist(void)
    CHECK(sync_run_out() && r.status == ROMM_OK && count_entries(pl) == 3,
          "shared: status %d, %u entries", r.status, count_entries(pl));
 
+   /* Mega Drive's games all deleted while Genesis is unchanged: its
+    * game leaves the playlist. */
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+         " {\"id\": 30, \"rom_count\": 0,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [1, 3]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && written_count == 1
+         && count_entries(pl) == 2, "Mega Drive empty: status %d,"
+         " %u rewrites, %u entries", r.status, written_count,
+         count_entries(pl));
+
+   /* It has its game again; then Genesis is gone from RomM. */
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, platforms);
+   sync_answer(200, "{\"rom_id_index\": [1, 3]}");
+   sync_answer(200, "{\"items\": []}");
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 2, "Mega Drive game", "2026-10-02T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   CHECK(sync_run_out() && count_entries(pl) == 3, "back: %u entries",
+         count_entries(pl));
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, "[{\"id\": 30, \"rom_count\": 1,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [2]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && written_count == 1
+         && count_entries(pl) == 1, "Genesis gone: status %d,"
+         " %u rewrites, %u entries", r.status, written_count,
+         count_entries(pl));
+
    filestream_delete(pl);
    filestream_delete(manifest);
    filestream_delete(TEST_DIR "/romm");

@@ -1476,6 +1476,62 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    return true;
 }
 
+/* Does @lib list platform @id in playlist @name? */
+static bool romm_lib_lists_platform(const romm_library_t *lib,
+      unsigned id, const char *name)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (     lib->platforms[i].platform.id == id
+            && string_is_equal(lib->platforms[i].playlist, name))
+         return true;
+   return false;
+}
+
+/* Rewrites each playlist this sync left alone that the last one also
+ * wrote for a platform it no longer holds, such as Mega Drive with its
+ * games all deleted while Genesis keeps the playlist: the file still
+ * lists that platform's games. */
+static bool romm_lib_sync_drop_gone(romm_lib_sync_t *sync)
+{
+   size_t i, j;
+
+   for (i = 0; i < RBUF_LEN(sync->lib.platforms); i++)
+   {
+      const romm_library_platform_t *p = &sync->lib.platforms[i];
+      char path[PATH_MAX_LENGTH];
+      char core_path[PATH_MAX_LENGTH];
+      char core_name[NAME_MAX_LENGTH];
+      bool core_changed;
+      bool gone = false;
+
+      if (sync->written[i])
+         continue;
+      for (j = 0; !gone && j < RBUF_LEN(sync->old.platforms); j++)
+         gone = string_is_equal(sync->old.platforms[j].playlist, p->playlist)
+            && !romm_lib_lists_platform(&sync->lib,
+                  sync->old.platforms[j].platform.id, p->playlist);
+      if (!gone)
+         continue;
+
+      fill_pathname_join(path, sync->playlist_dir, p->playlist,
+            sizeof(path));
+      romm_lib_default_core(sync, path, &p->platform, core_path,
+            sizeof(core_path), core_name, sizeof(core_name), &core_changed);
+      sync->rewritten++;
+      if (!romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
+            p->playlist, core_path, core_name))
+         return false;
+      for (j = 0; j < RBUF_LEN(sync->lib.platforms); j++)
+         if (string_is_equal(sync->lib.platforms[j].playlist, p->playlist))
+            sync->written[j] = true;
+      if (sync->playlist_written)
+         sync->playlist_written(path);
+      romm_lib_stamp_playlist(&sync->lib, p->playlist, path);
+   }
+   return true;
+}
+
 /* The last sync's entry for platform @id, if it wrote one. */
 static const romm_library_platform_t *romm_lib_find_platform(
       const romm_library_t *lib, unsigned id)
@@ -1587,6 +1643,13 @@ static void romm_lib_sync_handler(retro_task_t *task)
          sync->state = ROMM_LIB_SYNC_NEXT;
          break;
       case ROMM_LIB_SYNC_SAVE:
+         if (!romm_lib_sync_drop_gone(sync))
+         {
+            RARCH_WARN(ROMM_LIB_PFX "Couldn't rewrite a playlist shared "
+                  "with a platform gone from it.\n");
+            romm_lib_sync_finish(sync, ROMM_ERR_WRITE);
+            break;
+         }
          romm_lib_sync_remove_stale(sync);
          if (*sync->thumbnails_dir)
             romm_lib_sync_plan_covers(sync);
