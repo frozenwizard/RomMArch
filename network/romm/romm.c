@@ -162,6 +162,8 @@ void romm_check_connection(void)
 }
 
 #ifdef HAVE_CLOUDSYNC
+#define ROMM_CLOUD_SYNC_PATH "/api/sync/retroarch/"
+
 enum romm_cloud_sync_setup
 {
    ROMM_CLOUD_SYNC_SET_UP = 0,
@@ -185,6 +187,14 @@ static bool romm_scope_listed(const char *list, const char *scope)
    return false;
 }
 
+/* Whether Cloud Sync is pointed at RomM's WebDAV, as pairing points it,
+ * at this server's address or an earlier one. */
+static bool romm_cloud_sync_is_romms(settings_t *settings)
+{
+   return string_is_equal(settings->arrays.cloud_sync_driver, "webdav")
+      && string_ends_with(settings->arrays.webdav_url, ROMM_CLOUD_SYNC_PATH);
+}
+
 /* Whether to point Cloud Sync at RomM's WebDAV, whose address goes in
  * @url. Cloud Sync the user has on for another service is left as it
  * is. */
@@ -200,14 +210,13 @@ static enum romm_cloud_sync_setup romm_cloud_sync_check(
       return ROMM_CLOUD_SYNC_FAILED;
    }
    if (!romm_client_url(url, len,
-         settings->arrays.romm_server_url, "/api/sync/retroarch/"))
+         settings->arrays.romm_server_url, ROMM_CLOUD_SYNC_PATH))
    {
       RARCH_WARN("[RomM] The server address is too long for Cloud Sync's; Cloud Sync left as it was.\n");
       return ROMM_CLOUD_SYNC_FAILED;
    }
    if (     settings->bools.cloud_sync_enable
-         && !(   string_is_equal(settings->arrays.cloud_sync_driver, "webdav")
-              && string_is_equal(settings->arrays.webdav_url, url)))
+         && !romm_cloud_sync_is_romms(settings))
    {
       RARCH_LOG("[RomM] Cloud Sync is on with the %s driver at another address; left as it is.\n",
             settings->arrays.cloud_sync_driver);
@@ -280,6 +289,32 @@ static bool romm_cloud_sync_wait(void)
    return true;
 }
 #endif
+
+void romm_cloud_sync_follow_server(void)
+{
+#ifdef HAVE_CLOUDSYNC
+   settings_t *settings = config_get_ptr();
+   char url[sizeof(settings->arrays.webdav_url)];
+
+   if (     !settings->bools.cloud_sync_enable
+         || !romm_cloud_sync_is_romms(settings)
+         || !romm_client_url(url, sizeof(url),
+               settings->arrays.romm_server_url, ROMM_CLOUD_SYNC_PATH)
+         || string_is_equal(url, settings->arrays.webdav_url))
+      return;
+   if (task_cloud_sync_in_progress())
+   {
+      RARCH_WARN("[RomM] Cloud Sync is running, so it stays at %s until the next start.\n",
+            settings->arrays.webdav_url);
+      return;
+   }
+   RARCH_LOG("[RomM] Cloud Sync follows RomM to %s.\n", url);
+   configuration_set_string(settings,
+         settings->arrays.webdav_url, url);
+   /* A new address may be a new server: forget the last sync. */
+   task_push_cloud_sync_update_driver();
+#endif
+}
 
 static void romm_on_pair_approved(void *user_data, enum romm_status status,
       const char *token, const char *device_id, const char *missing_scopes)

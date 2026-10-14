@@ -155,6 +155,9 @@ void android_app_set_window_settings(bool notch_write_over,
 #ifdef HAVE_WIFI
 #include "../network/wifi_driver.h"
 #endif
+#ifdef HAVE_ROMM
+#include "../network/romm/romm.h"
+#endif
 #endif
 
 #if defined(HAVE_OVERLAY)
@@ -10651,6 +10654,11 @@ static void general_write_handler(rarch_setting_t *setting)
          /* Reset wallpaper by menu context rebuild */
          menu_driver_context_rebuild();
          break;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      case MENU_ENUM_LABEL_ROMM_SERVER_URL:
+         romm_cloud_sync_follow_server();
+         break;
+#endif
 #if HAVE_CLOUDSYNC
       case MENU_ENUM_LABEL_CLOUD_SYNC_DRIVER:
          {

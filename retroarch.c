@@ -6983,6 +6983,9 @@ int rarch_main(int argc, char *argv[], void *data)
          settings->bools.ui_companion_start_on_boot
          );
 #ifdef HAVE_CLOUDSYNC
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   romm_cloud_sync_follow_server();
+#endif
    if (settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
       task_push_cloud_sync();
 #endif

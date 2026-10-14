@@ -28,6 +28,10 @@ void romm_check_connection(void);
  * keeps the device's token and saves the configuration. */
 void romm_pair(void);
 
+/* Points Cloud Sync, when it is on and pointed at RomM's WebDAV, at the
+ * server address as it now is. */
+void romm_cloud_sync_follow_server(void);
+
 /* Syncs the game library from the configured RomM server into the
  * playlist folder, reporting the outcome as a notification. */
 void romm_refresh_library(void);
