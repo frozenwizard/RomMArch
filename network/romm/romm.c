@@ -331,6 +331,14 @@ void romm_cloud_sync_follow_server(void)
 #endif
 }
 
+/* RetroArch doesn't save its configuration while a game's overrides
+ * are on, and unloading them reloads it from disk. */
+static bool romm_overrides_active(void)
+{
+   return (runloop_state_get_ptr()->flags
+         & RUNLOOP_FLAG_OVERRIDES_ACTIVE) != 0;
+}
+
 static void romm_on_pair_approved(void *user_data, enum romm_status status,
       int http_status, const char *token, const char *device_id,
       const char *missing_scopes)
@@ -361,6 +369,14 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
       RARCH_WARN("[RomM] Pairing approved by %s, but the server address is now %s; not kept.\n",
             romm_pair_server, settings->arrays.romm_server_url);
       romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_SERVER_CHANGED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   /* A game with overrides started while the pairing waited. */
+   if (romm_overrides_active())
+   {
+      RARCH_WARN("[RomM] Pairing approved while a game's overrides are on, which keep the configuration from being saved; not kept.\n");
+      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_OVERRIDES),
             MESSAGE_QUEUE_CATEGORY_WARNING);
       return;
    }
@@ -451,6 +467,13 @@ void romm_pair(void)
    char *identifier     = settings->arrays.romm_device_identifier;
    char device_name[128];
 
+   if (romm_overrides_active())
+   {
+      RARCH_WARN("[RomM] Not pairing while a game's overrides are on, which keep the configuration from being saved.\n");
+      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_OVERRIDES),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
    /* Pressed again, say after fixing an address: start over. */
    romm_pair_stop();
    if (string_is_empty(settings->arrays.romm_server_url))

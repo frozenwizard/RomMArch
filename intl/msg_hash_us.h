@@ -33689,6 +33689,10 @@ MSG_HASH(
    "The server address changed while pairing, so the pairing wasn't kept. Pair again."
    )
 MSG_HASH(
+   MSG_ROMM_PAIR_OVERRIDES,
+   "Close the game, then pair again: its overrides keep RetroArch from saving the pairing."
+   )
+MSG_HASH(
    MSG_ROMM_NOT_PAIRED,
    "Pair this device with RomM first."
    )
