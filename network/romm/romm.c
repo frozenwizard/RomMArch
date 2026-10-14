@@ -59,6 +59,8 @@ static void *romm_pair_wait = NULL;
 static char romm_pair_server[NAME_MAX_LENGTH];
 static char romm_pair_web[NAME_MAX_LENGTH];
 static bool romm_syncing = false;
+/* Check Connection is waiting on RomM. */
+static bool romm_checking = false;
 /* The running sync was started at startup rather than by the user. */
 static bool romm_syncing_quietly = false;
 
@@ -116,6 +118,7 @@ static void romm_check_token_cb(void *user_data,
    char *version = (char*)user_data;
    char msg[512];
 
+   romm_checking = false;
    if (status == ROMM_OK)
    {
       snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED_AS),
@@ -142,6 +145,7 @@ static void romm_check_connection_cb(void *user_data,
 
    if (status != ROMM_OK)
    {
+      romm_checking = false;
       romm_notify_failure(status, http_status);
       return;
    }
@@ -156,6 +160,7 @@ static void romm_check_connection_cb(void *user_data,
       free(version_copy);
    }
 
+   romm_checking = false;
    snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED), version);
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
 }
@@ -165,6 +170,12 @@ void romm_check_connection(void)
    settings_t *settings = config_get_ptr();
    const char *server   = settings->arrays.romm_server_url;
 
+   if (romm_checking)
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_CHECK_IN_PROGRESS),
+            MESSAGE_QUEUE_CATEGORY_INFO);
+      return;
+   }
    if (string_is_empty(server))
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
@@ -174,6 +185,8 @@ void romm_check_connection(void)
 
    if (!romm_client_heartbeat(server, romm_check_connection_cb, NULL))
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+   else
+      romm_checking = true;
 }
 
 #ifdef HAVE_CLOUDSYNC

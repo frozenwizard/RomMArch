@@ -33649,6 +33649,10 @@ MSG_HASH(
    "Connected to RomM %s as %s."
    )
 MSG_HASH(
+   MSG_ROMM_CHECK_IN_PROGRESS,
+   "Already checking the connection to RomM."
+   )
+MSG_HASH(
    MSG_ROMM_UNAUTHORIZED,
    "RomM no longer accepts this device. Pair it again."
    )
