@@ -21,3 +21,6 @@ ARCHS = arm64
 ONLY_ACTIVE_ARCH = YES
 
 OTHER_CFLAGS[sdk=macosx*] = $(inherited) -DHAVE_ROMM
+
+// RomM's device name (romm_apple.m)
+OTHER_LDFLAGS[sdk=macosx*] = $(inherited) -framework SystemConfiguration

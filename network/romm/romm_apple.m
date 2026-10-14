@@ -14,6 +14,7 @@
 
 #import <Foundation/Foundation.h>
 #import <AppKit/AppKit.h>
+#import <SystemConfiguration/SystemConfiguration.h>
 
 #include <compat/strl.h>
 
@@ -32,9 +33,9 @@ size_t romm_platform_device_name(char *s, size_t len)
 {
    @autoreleasepool
    {
-      NSString *name = [[NSHost currentHost] localizedName];
-      if (!name.length)
-         name = [[NSProcessInfo processInfo] hostName];
+      /* NSHost would look the host up in DNS, which can take seconds. */
+      NSString *name = CFBridgingRelease(
+            SCDynamicStoreCopyComputerName(NULL, NULL));
       return strlcpy(s, name.length ? name.UTF8String : "Mac", len);
    }
 }
