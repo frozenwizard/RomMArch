@@ -36,6 +36,8 @@
 #define ROMM_LIBRARY_VERSION 1
 #define ROMM_LIBRARY_PAGE 250
 #define ROMM_LIBRARY_COVERS_AT_ONCE 4
+/* Games whose covers are looked for on disk per step of the sync */
+#define ROMM_LIBRARY_COVERS_PER_STEP 256
 /* RomM's timestamps have whole seconds, and a game can be saved with
  * one a moment older than the newest the last sync saw. */
 #define ROMM_LIBRARY_CURSOR_MARGIN 60
@@ -74,6 +76,8 @@ enum romm_lib_sync_state
    /* All its games, a page at a time */
    ROMM_LIB_SYNC_ROMS,
    ROMM_LIB_SYNC_WRITE,
+   /* The covers to fetch and to delete, a slice of games at a time */
+   ROMM_LIB_SYNC_COVERS,
    ROMM_LIB_SYNC_SAVE
 };
 
@@ -106,6 +110,13 @@ typedef struct
    bool finished;
    /* Covers the sync found missing or changed, for the covers task */
    romm_lib_cover_t *covers;
+   /* Where cover planning is: its phase, the last sync's games by id,
+    * the cover files this sync lists, and the next game. */
+   unsigned cover_phase;
+   const romm_rom_t **cover_old;
+   char **cover_dests;
+   size_t cover_platform;
+   size_t cover_game;
    romm_library_find_core_t find_core;
    romm_library_playlist_cb_t playlist_changed;
    char *token;
@@ -956,86 +967,141 @@ static void romm_lib_covers_dedupe(romm_lib_cover_t **jobs)
    RBUF_RESIZE(*jobs, j);
 }
 
+/* The next game of @lib from the cover planning's place in it, with
+ * its platform; NULL after the last. */
+static const romm_rom_t *romm_lib_next_game(romm_lib_sync_t *sync,
+      const romm_library_t *lib, const romm_library_platform_t **platform)
+{
+   while (sync->cover_platform < RBUF_LEN(lib->platforms))
+   {
+      const romm_library_platform_t *p =
+            &lib->platforms[sync->cover_platform];
+      if (sync->cover_game < RBUF_LEN(p->roms))
+      {
+         *platform = p;
+         return &p->roms[sync->cover_game++];
+      }
+      sync->cover_platform++;
+      sync->cover_game = 0;
+   }
+   return NULL;
+}
+
+/* Lists @rom's cover, in @p's folder, and plans fetching it unless it
+ * is on disk and unchanged in RomM. */
+static void romm_lib_plan_cover(romm_lib_sync_t *sync,
+      const romm_library_platform_t *p, const romm_rom_t *rom)
+{
+   const romm_rom_t **old;
+   romm_lib_cover_t job;
+   char dest[PATH_MAX_LENGTH];
+   char *query;
+   char *dest_copy;
+
+   if (     !*rom->cover
+         || !romm_library_cover_path(dest, sizeof(dest),
+               sync->thumbnails_dir, p->playlist, rom)
+         || !(dest_copy = strdup(dest)))
+      return;
+   RBUF_PUSH(sync->cover_dests, dest_copy);
+
+   old = sync->cover_old ? (const romm_rom_t**)bsearch(&rom,
+         sync->cover_old, RBUF_LEN(sync->cover_old),
+         sizeof(*sync->cover_old), romm_lib_cmp_rom_id) : NULL;
+   if (     romm_lib_cover_exists(dest)
+         && old && string_is_equal((*old)->cover, rom->cover))
+      return;
+
+   /* Only a cache buster, with a space in it. */
+   job.url_path = strdup(rom->cover);
+   job.dest     = strdup(dest);
+   if (!job.url_path || !job.dest)
+   {
+      free(job.url_path);
+      free(job.dest);
+      return;
+   }
+   if ((query = strchr(job.url_path, '?')))
+      *query = '\0';
+   RBUF_PUSH(sync->covers, job);
+}
+
+/* Deletes the cover of @rom, which the last sync listed in @p, unless
+ * this sync lists it. */
+static void romm_lib_drop_cover(romm_lib_sync_t *sync,
+      const romm_library_platform_t *p, const romm_rom_t *rom)
+{
+   char dest[PATH_MAX_LENGTH];
+   char *key = dest;
+
+   if (     !*rom->cover
+         || !romm_library_cover_path(dest, sizeof(dest),
+               sync->thumbnails_dir, p->playlist, rom))
+      return;
+   if (!sync->cover_dests || !bsearch(&key, sync->cover_dests,
+         RBUF_LEN(sync->cover_dests), sizeof(*sync->cover_dests),
+         romm_lib_cmp_str))
+      romm_lib_cover_delete(dest, NULL);
+}
+
 /* Lists the covers to fetch: those not on disk, and those RomM changed
  * since the last sync. Deletes the covers of games no longer listed,
- * or listed under another name. */
-static void romm_lib_sync_plan_covers(romm_lib_sync_t *sync)
+ * or listed under another name. Each game is looked for on disk, so
+ * this goes a slice of games per call; true once done. */
+static bool romm_lib_sync_plan_covers(romm_lib_sync_t *sync)
 {
-   const romm_rom_t **old_roms = NULL;
-   char **dests                = NULL;
-   char dest[PATH_MAX_LENGTH];
+   const romm_library_platform_t *p;
+   const romm_rom_t *rom;
+   unsigned budget = ROMM_LIBRARY_COVERS_PER_STEP;
    size_t i, j;
 
-   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
-      for (j = 0; j < RBUF_LEN(sync->old.platforms[i].roms); j++)
-         RBUF_PUSH(old_roms, &sync->old.platforms[i].roms[j]);
-   if (old_roms)
-      qsort(old_roms, RBUF_LEN(old_roms), sizeof(*old_roms),
-            romm_lib_cmp_rom_id);
-
-   for (i = 0; i < RBUF_LEN(sync->lib.platforms); i++)
+   if (!sync->cover_phase)
    {
-      const romm_library_platform_t *p = &sync->lib.platforms[i];
-      for (j = 0; j < RBUF_LEN(p->roms); j++)
+      /* Covers an earlier sync is still fetching aren't on disk, so
+       * this one plans them again. */
+      if (romm_lib_covers_running)
       {
-         const romm_rom_t *rom = &p->roms[j];
-         const romm_rom_t **old;
-         romm_lib_cover_t job;
-         char *query;
-         char *dest_copy;
-
-         if (     !*rom->cover
-               || !romm_library_cover_path(dest, sizeof(dest),
-                     sync->thumbnails_dir, p->playlist, rom)
-               || !(dest_copy = strdup(dest)))
-            continue;
-         RBUF_PUSH(dests, dest_copy);
-
-         old = old_roms ? (const romm_rom_t**)bsearch(&rom, old_roms,
-               RBUF_LEN(old_roms), sizeof(*old_roms), romm_lib_cmp_rom_id)
-               : NULL;
-         if (     romm_lib_cover_exists(dest)
-               && old && string_is_equal((*old)->cover, rom->cover))
-            continue;
-
-         /* Only a cache buster, with a space in it. */
-         job.url_path = strdup(rom->cover);
-         job.dest     = strdup(dest);
-         if (!job.url_path || !job.dest)
-         {
-            free(job.url_path);
-            free(job.dest);
-            continue;
-         }
-         if ((query = strchr(job.url_path, '?')))
-            *query = '\0';
-         RBUF_PUSH(sync->covers, job);
+         RARCH_LOG(ROMM_LIB_PFX "Stopping the covers still being "
+               "fetched; this sync fetches them.\n");
+         task_queue_cancel_task(romm_lib_covers_running);
       }
-   }
-   romm_lib_covers_dedupe(&sync->covers);
-
-   if (dests)
-      qsort(dests, RBUF_LEN(dests), sizeof(*dests), romm_lib_cmp_str);
-   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
-   {
-      const romm_library_platform_t *p = &sync->old.platforms[i];
-      for (j = 0; j < RBUF_LEN(p->roms); j++)
-      {
-         char *key = dest;
-         if (     !*p->roms[j].cover
-               || !romm_library_cover_path(dest, sizeof(dest),
-                     sync->thumbnails_dir, p->playlist, &p->roms[j]))
-            continue;
-         if (!dests || !bsearch(&key, dests, RBUF_LEN(dests),
-               sizeof(*dests), romm_lib_cmp_str))
-            romm_lib_cover_delete(dest, NULL);
-      }
+      for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+         for (j = 0; j < RBUF_LEN(sync->old.platforms[i].roms); j++)
+            RBUF_PUSH(sync->cover_old, &sync->old.platforms[i].roms[j]);
+      if (sync->cover_old)
+         qsort(sync->cover_old, RBUF_LEN(sync->cover_old),
+               sizeof(*sync->cover_old), romm_lib_cmp_rom_id);
+      sync->cover_phase = 1;
    }
 
-   for (i = 0; i < RBUF_LEN(dests); i++)
-      free(dests[i]);
-   RBUF_FREE(dests);
-   RBUF_FREE(old_roms);
+   if (sync->cover_phase == 1)
+   {
+      while ((rom = romm_lib_next_game(sync, &sync->lib, &p)))
+      {
+         romm_lib_plan_cover(sync, p, rom);
+         if (!--budget)
+            return false;
+      }
+      romm_lib_covers_dedupe(&sync->covers);
+      if (sync->cover_dests)
+         qsort(sync->cover_dests, RBUF_LEN(sync->cover_dests),
+               sizeof(*sync->cover_dests), romm_lib_cmp_str);
+      sync->cover_platform = 0;
+      sync->cover_game     = 0;
+      sync->cover_phase    = 2;
+   }
+
+   if (sync->cover_phase == 2)
+   {
+      while ((rom = romm_lib_next_game(sync, &sync->old, &p)))
+      {
+         romm_lib_drop_cover(sync, p, rom);
+         if (!--budget)
+            return false;
+      }
+      sync->cover_phase = 3;
+   }
+   return true;
 }
 
 /* One download in flight. */
@@ -1644,7 +1710,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
             sync->platform++;
          if (sync->platform >= count)
          {
-            sync->state = ROMM_LIB_SYNC_SAVE;
+            sync->state = ROMM_LIB_SYNC_COVERS;
             break;
          }
          task_set_progress(task, (int8_t)(sync->platform * 100 / count));
@@ -1704,6 +1770,10 @@ static void romm_lib_sync_handler(retro_task_t *task)
          sync->platform++;
          sync->state = ROMM_LIB_SYNC_NEXT;
          break;
+      case ROMM_LIB_SYNC_COVERS:
+         if (!*sync->thumbnails_dir || romm_lib_sync_plan_covers(sync))
+            sync->state = ROMM_LIB_SYNC_SAVE;
+         break;
       case ROMM_LIB_SYNC_SAVE:
          if (!romm_lib_sync_drop_gone(sync))
          {
@@ -1713,18 +1783,6 @@ static void romm_lib_sync_handler(retro_task_t *task)
             break;
          }
          romm_lib_sync_remove_stale(sync);
-         if (*sync->thumbnails_dir)
-         {
-            /* Covers an earlier sync is still fetching aren't on disk,
-             * so this one plans them again. */
-            if (romm_lib_covers_running)
-            {
-               RARCH_LOG(ROMM_LIB_PFX "Stopping the covers still being "
-                     "fetched; this sync fetches them.\n");
-               task_queue_cancel_task(romm_lib_covers_running);
-            }
-            romm_lib_sync_plan_covers(sync);
-         }
          strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
          sync->lib.synced_at = (int64_t)time(NULL);
          romm_lib_sync_finish(sync,
@@ -1770,6 +1828,11 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
 
    if (sync)
    {
+      size_t i;
+      for (i = 0; i < RBUF_LEN(sync->cover_dests); i++)
+         free(sync->cover_dests[i]);
+      RBUF_FREE(sync->cover_dests);
+      RBUF_FREE(sync->cover_old);
       romm_library_free(&sync->old);
       romm_library_free(&sync->lib);
       romm_lib_covers_free(sync->covers);

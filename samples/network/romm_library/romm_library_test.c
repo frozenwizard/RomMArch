@@ -1147,6 +1147,57 @@ static void test_covers_superseded(void)
    filestream_delete(TEST_DIR);
 }
 
+/* 300 games' covers are planned over steps of the sync, 256 games at
+ * most per step, and all of them fetched. */
+static void test_covers_in_steps(void)
+{
+   romm_lib_sync_t *sync;
+   sync_result_t r;
+   char manifest[256];
+   char *page;
+   unsigned steps = 0;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 300,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   page = roms_page(8, 1, 250);
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(8, 251, 50);
+   sync_answer(200, page);
+   free(page);
+
+   sync = (romm_lib_sync_t*)stub_task->state;
+   while (sync->state != ROMM_LIB_SYNC_COVERS && steps++ < 5)
+      sync_step();
+   sync_step();
+   CHECK(sync->state == ROMM_LIB_SYNC_COVERS && sync->cover_phase == 1
+         && sync->cover_game == 256 && RBUF_LEN(sync->covers) == 256,
+         "first step: state %d phase %u game %u, %u covers", sync->state,
+         sync->cover_phase, (unsigned)sync->cover_game,
+         (unsigned)RBUF_LEN(sync->covers));
+   CHECK(sync_run_out() && r.status == ROMM_OK, "sync: status %d",
+         r.status);
+   CHECK(stub_task && RBUF_LEN(((romm_lib_covers_t*)stub_task->state)->jobs)
+         == 300, "covers task: %u jobs", stub_task ? (unsigned)RBUF_LEN(
+            ((romm_lib_covers_t*)stub_task->state)->jobs) : 0);
+   if (stub_task)
+   {
+      stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
+      CHECK(sync_step() && !stub_task, "covers task didn't stop");
+   }
+
+   filestream_delete(TEST_DIR "/Sega - Mega Drive - Genesis.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 /* A game's folder and .rar copies have one cover file between them:
  * one download, the first's. */
 static void test_covers_shared_name(void)
@@ -1642,6 +1693,7 @@ int main(void)
    test_covers();
    test_covers_superseded();
    test_covers_shared_name();
+   test_covers_in_steps();
 
    if (failures)
    {
