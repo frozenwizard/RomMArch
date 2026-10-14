@@ -50,8 +50,10 @@
 #include "../../menu/menu_driver.h"
 #endif
 
-/* Set from the moment pairing starts until its wait ends. */
+/* Set from the moment pairing starts until its wait ends, with the
+ * server it began with. */
 static bool romm_pairing = false;
+static char romm_pair_server[NAME_MAX_LENGTH];
 static bool romm_syncing = false;
 /* The running sync was started at startup rather than by the user. */
 static bool romm_syncing_quietly = false;
@@ -346,6 +348,15 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
       romm_notify_failure(status, http_status);
       return;
    }
+   /* The token is for the server that issued it. */
+   if (!string_is_equal(romm_pair_server, settings->arrays.romm_server_url))
+   {
+      RARCH_WARN("[RomM] Pairing approved by %s, but the server address is now %s; not kept.\n",
+            romm_pair_server, settings->arrays.romm_server_url);
+      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_SERVER_CHANGED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
 
    strlcpy(settings->arrays.romm_token, token,
          sizeof(settings->arrays.romm_token));
@@ -391,7 +402,6 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
 static void romm_on_pair_started(void *user_data, enum romm_status status,
       int http_status, const romm_pairing_t *pairing)
 {
-   settings_t *settings = config_get_ptr();
    char title[256];
 
    if (status != ROMM_OK)
@@ -403,7 +413,7 @@ static void romm_on_pair_started(void *user_data, enum romm_status status,
 
    snprintf(title, sizeof(title),
          msg_hash_to_str(MSG_ROMM_PAIR_APPROVE), pairing->user_code);
-   if (!romm_client_pair_wait(settings->arrays.romm_server_url, pairing,
+   if (!romm_client_pair_wait(romm_pair_server, pairing,
          title, romm_on_pair_approved, NULL))
    {
       romm_pairing = false;
@@ -445,6 +455,8 @@ void romm_pair(void)
       return;
    }
    romm_pairing = true;
+   strlcpy(romm_pair_server, settings->arrays.romm_server_url,
+         sizeof(romm_pair_server));
 }
 
 /* The menu shows playlists from a cached copy and lists them in its

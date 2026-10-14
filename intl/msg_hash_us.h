@@ -33689,6 +33689,10 @@ MSG_HASH(
    "The pairing code expired before it was approved."
    )
 MSG_HASH(
+   MSG_ROMM_PAIR_SERVER_CHANGED,
+   "The server address changed while pairing, so the pairing wasn't kept. Pair again."
+   )
+MSG_HASH(
    MSG_ROMM_NOT_PAIRED,
    "Pair this device with RomM first."
    )
