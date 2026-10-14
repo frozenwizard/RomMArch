@@ -906,6 +906,56 @@ static int romm_lib_cmp_rom_id(const void *a, const void *b)
    return x < y ? -1 : x > y;
 }
 
+static int romm_lib_cmp_cover_dest(const void *a, const void *b)
+{
+   const romm_lib_cover_t *x = *(const romm_lib_cover_t* const*)a;
+   const romm_lib_cover_t *y = *(const romm_lib_cover_t* const*)b;
+   int c                     = strcmp(x->dest, y->dest);
+   return c ? c : (x < y ? -1 : x > y);
+}
+
+/* Keeps one job per cover file, the first: games can share one, such
+ * as a PS1 game's folder and .rar copies, and two downloads to one file
+ * race, the later deleting the earlier when their formats differ. */
+static void romm_lib_covers_dedupe(romm_lib_cover_t **jobs)
+{
+   romm_lib_cover_t **sorted = NULL;
+   const char *dest          = NULL;
+   size_t count              = RBUF_LEN(*jobs);
+   size_t i, j;
+
+   if (count < 2)
+      return;
+   for (i = 0; i < count; i++)
+      RBUF_PUSH(sorted, &(*jobs)[i]);
+   if (RBUF_LEN(sorted) != count)
+   {
+      RBUF_FREE(sorted);
+      return;
+   }
+   qsort(sorted, count, sizeof(*sorted), romm_lib_cmp_cover_dest);
+   for (i = 0; i < count; i++)
+   {
+      if (dest && string_is_equal(sorted[i]->dest, dest))
+      {
+         free(sorted[i]->url_path);
+         sorted[i]->url_path = NULL;
+      }
+      else
+         dest = sorted[i]->dest;
+   }
+   RBUF_FREE(sorted);
+
+   for (i = j = 0; i < count; i++)
+   {
+      if ((*jobs)[i].url_path)
+         (*jobs)[j++] = (*jobs)[i];
+      else
+         free((*jobs)[i].dest);
+   }
+   RBUF_RESIZE(*jobs, j);
+}
+
 /* Lists the covers to fetch: those not on disk, and those RomM changed
  * since the last sync. Deletes the covers of games no longer listed,
  * or listed under another name. */
@@ -962,6 +1012,7 @@ static void romm_lib_sync_plan_covers(romm_lib_sync_t *sync)
          RBUF_PUSH(sync->covers, job);
       }
    }
+   romm_lib_covers_dedupe(&sync->covers);
 
    if (dests)
       qsort(dests, RBUF_LEN(dests), sizeof(*dests), romm_lib_cmp_str);

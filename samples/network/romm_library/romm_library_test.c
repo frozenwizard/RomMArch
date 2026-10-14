@@ -1147,6 +1147,63 @@ static void test_covers_superseded(void)
    filestream_delete(TEST_DIR);
 }
 
+/* A game's folder and .rar copies have one cover file between them:
+ * one download, the first's. */
+static void test_covers_shared_name(void)
+{
+   const char *page =
+      "{\"items\": [{\"id\": 1, \"platform_id\": 15,"
+      " \"fs_name\": \"Game 1 & Co (USA).rar\","
+      " \"has_simple_single_file\": true,"
+      " \"updated_at\": \"2026-10-02T04:00:00+00:00\","
+      " \"path_cover_large\": \"/assets/1/big.png?ts=1\"},"
+      " {\"id\": 2, \"platform_id\": 15,"
+      " \"fs_name\": \"Game 1 & Co (USA)\","
+      " \"has_simple_single_file\": false,"
+      " \"updated_at\": \"2026-10-02T04:00:00+00:00\","
+      " \"path_cover_large\": \"/assets/2/big.png?ts=1\"},"
+      " {\"id\": 3, \"platform_id\": 15,"
+      " \"fs_name\": \"Game 3 (USA).bin\","
+      " \"has_simple_single_file\": true,"
+      " \"updated_at\": \"2026-10-02T04:00:00+00:00\","
+      " \"path_cover_large\": \"/assets/3/big.png?ts=1\"}]}";
+   sync_result_t r;
+   char manifest[256];
+   unsigned n;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+
+   covers_sync(&r, NULL, page);
+   CHECK(stub_task != NULL, "no covers task");
+   if (stub_task)
+   {
+      n = stub_log_count + 1;
+      sync_step();
+      CHECK(stub_log_count == n + 1, "%u downloads", stub_log_count - n + 1);
+      CHECK(!strcmp(stub_log[(n - 1) % STUB_LOG_MAX].url,
+            "http://romm.local:8090/assets/1/big.png")
+            && !strcmp(stub_log[n % STUB_LOG_MAX].url,
+            "http://romm.local:8090/assets/3/big.png"), "downloads %s %s",
+            stub_log[(n - 1) % STUB_LOG_MAX].url,
+            stub_log[n % STUB_LOG_MAX].url);
+      answer_download(n, 200, PNG_DATA);
+      answer_download(n + 1, 200, JPG_DATA);
+      CHECK(sync_step() && !stub_task, "covers task didn't finish");
+   }
+
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).png");
+   filestream_delete(COVER_DIR "Game 3 (USA).jpg");
+   filestream_delete(COVER_DIR);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 static void test_cursor(void)
 {
    char s[32];
@@ -1584,6 +1641,7 @@ int main(void)
    test_cover_path();
    test_covers();
    test_covers_superseded();
+   test_covers_shared_name();
 
    if (failures)
    {
