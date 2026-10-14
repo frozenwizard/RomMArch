@@ -201,8 +201,27 @@ static void test_write_playlist(void)
          NULL, roms, 1), "write into a missing folder reported done");
 }
 
+/* Replaces @old with @new in the file at @path. */
+static void file_replace(const char *path, const char *old, const char *new_s)
+{
+   char *doc   = NULL;
+   int64_t len = 0;
+   char *at;
+
+   if (filestream_read_file(path, (void**)&doc, &len) && doc
+         && (at = strstr(doc, old)))
+   {
+      char edited[8192];
+      snprintf(edited, sizeof(edited), "%.*s%s%s", (int)(at - doc), doc,
+            new_s, at + strlen(old));
+      filestream_write_file(path, edited, (int64_t)strlen(edited));
+   }
+   free(doc);
+}
+
 /* A core the user sets for one game survives the playlist being
- * rewritten, a rename in RomM included. */
+ * rewritten, a rename in RomM included, and so do the playlist's
+ * display settings, but not a thumbnail match the covers don't fit. */
 static void test_game_core_kept(void)
 {
    const char *path = "romm_library_test_cores.lpl";
@@ -234,6 +253,14 @@ static void test_game_core_kept(void)
       doc = NULL;
    }
 
+   file_replace(path, "\"sort_mode\": 2", "\"sort_mode\": 1");
+   file_replace(path, "\"right_thumbnail_mode\": 0",
+         "\"right_thumbnail_mode\": 3");
+   file_replace(path, "\"label_display_mode\": 0",
+         "\"label_display_mode\": 2");
+   file_replace(path, "\"thumbnail_match_mode\": 1",
+         "\"thumbnail_match_mode\": 0");
+
    strlcpy(roms[1].fs_name, "Lunar - The Silver Star (USA)",
          sizeof(roms[1].fs_name));
    CHECK(romm_library_write_playlist(path, "x.lpl", NULL, NULL, roms, 2),
@@ -249,6 +276,16 @@ static void test_game_core_kept(void)
             && !strcmp(s, "X"), "game's core name: %s", s);
       CHECK(lpl_get(doc, len, 0, "core_path", s, sizeof(s))
             && !strcmp(s, "DETECT"), "other game's core: %s", s);
+      CHECK(lpl_get(doc, len, -1, "sort_mode", s, sizeof(s))
+            && !strcmp(s, "1"), "sort mode %s", s);
+      CHECK(lpl_get(doc, len, -1, "right_thumbnail_mode", s, sizeof(s))
+            && !strcmp(s, "3"), "right thumbnail mode %s", s);
+      CHECK(lpl_get(doc, len, -1, "label_display_mode", s, sizeof(s))
+            && !strcmp(s, "2"), "label display mode %s", s);
+      CHECK(lpl_get(doc, len, -1, "left_thumbnail_mode", s, sizeof(s))
+            && !strcmp(s, "0"), "left thumbnail mode %s", s);
+      CHECK(lpl_get(doc, len, -1, "thumbnail_match_mode", s, sizeof(s))
+            && !strcmp(s, "1"), "thumbnail match mode %s", s);
       free(doc);
    }
    filestream_delete(path);

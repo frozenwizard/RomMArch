@@ -61,7 +61,8 @@ size_t romm_library_playlist_name(char *s, size_t len,
 /* Writes @roms, in order, as the playlist at @path, replacing it. Each
  * entry names @db_name (the playlist's file name) as its database, so
  * covers are looked up under thumbnails/<db_name without .lpl>. A core
- * the user set for a game in the playlist being replaced is kept. */
+ * the user set for a game in the playlist being replaced is kept, and
+ * so is how it shows its games (labels, thumbnails, sorting). */
 bool romm_library_write_playlist(const char *path, const char *db_name,
       const char *default_core_path, const char *default_core_name,
       const romm_rom_t *roms, size_t count);

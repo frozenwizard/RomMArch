@@ -333,8 +333,27 @@ static int romm_lib_cmp_game_core(const void *a, const void *b)
    return x < y ? -1 : x > y;
 }
 
-/* The cores the user set for single games in the playlist at @path. */
-static romm_lib_game_core_t *romm_lib_read_game_cores(const char *path)
+/* How a playlist shows its games, which Playlist Management changes. */
+typedef struct
+{
+   int label_display_mode;
+   int right_thumbnail_mode;
+   int left_thumbnail_mode;
+   int sort_mode;
+} romm_lib_display_t;
+
+static void romm_lib_read_mode(const char *doc, size_t len,
+      const char *key, int *mode)
+{
+   char num[16];
+   if (romm_json_get(doc, len, key, num, sizeof(num)))
+      *mode = (int)strtol(num, NULL, 10);
+}
+
+/* What the user set in the playlist at @path: how it shows its games,
+ * into @display, and the cores of single games, returned. */
+static romm_lib_game_core_t *romm_lib_read_playlist(const char *path,
+      romm_lib_display_t *display)
 {
    romm_lib_game_cores_t cores;
    char *doc   = NULL;
@@ -344,6 +363,13 @@ static romm_lib_game_core_t *romm_lib_read_game_cores(const char *path)
    if (     !path_is_valid(path)
          || !filestream_read_file(path, (void**)&doc, &len) || !doc)
       return NULL;
+   romm_lib_read_mode(doc, (size_t)len, "label_display_mode",
+         &display->label_display_mode);
+   romm_lib_read_mode(doc, (size_t)len, "right_thumbnail_mode",
+         &display->right_thumbnail_mode);
+   romm_lib_read_mode(doc, (size_t)len, "left_thumbnail_mode",
+         &display->left_thumbnail_mode);
+   romm_lib_read_mode(doc, (size_t)len, "sort_mode", &display->sort_mode);
    romm_json_items(doc, (size_t)len, "items", romm_lib_game_core_member,
          romm_lib_game_core_end, &cores);
    free(cores.core_path);
@@ -370,13 +396,21 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
       const char *default_core_path, const char *default_core_name,
       const romm_rom_t *roms, size_t count)
 {
-   romm_lib_game_core_t *game_cores = romm_lib_read_game_cores(path);
+   romm_lib_game_core_t *game_cores;
+   romm_lib_display_t display;
    rjsonwriter_t *writer;
    const char *buf;
    int buf_len    = 0;
    bool ok        = false;
    size_t written = 0;
    size_t i;
+
+   /* RomM's title order unless the user picked another. */
+   display.label_display_mode   = LABEL_DISPLAY_MODE_DEFAULT;
+   display.right_thumbnail_mode = PLAYLIST_THUMBNAIL_MODE_DEFAULT;
+   display.left_thumbnail_mode  = PLAYLIST_THUMBNAIL_MODE_DEFAULT;
+   display.sort_mode            = PLAYLIST_SORT_MODE_OFF;
+   game_cores = romm_lib_read_playlist(path, &display);
 
    if (!(writer = rjsonwriter_open_memory()))
    {
@@ -385,7 +419,7 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    }
 
    /* The format playlist_write_file() writes, version 1.5. Covers are
-    * named after the file, and RomM's title order is kept. */
+    * named after the file. */
    rjsonwriter_raw(writer, "{\n", 2);
    romm_lib_json_member(writer, 2, "version", "1.5", false);
    romm_lib_json_member(writer, 2, "default_core_path",
@@ -393,14 +427,14 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    romm_lib_json_member(writer, 2, "default_core_name",
          default_core_name ? default_core_name : "", false);
    romm_lib_json_member_int(writer, "label_display_mode",
-         LABEL_DISPLAY_MODE_DEFAULT);
+         display.label_display_mode);
    romm_lib_json_member_int(writer, "right_thumbnail_mode",
-         PLAYLIST_THUMBNAIL_MODE_DEFAULT);
+         display.right_thumbnail_mode);
    romm_lib_json_member_int(writer, "left_thumbnail_mode",
-         PLAYLIST_THUMBNAIL_MODE_DEFAULT);
+         display.left_thumbnail_mode);
    romm_lib_json_member_int(writer, "thumbnail_match_mode",
          PLAYLIST_THUMBNAIL_MATCH_MODE_WITH_FILENAME);
-   romm_lib_json_member_int(writer, "sort_mode", PLAYLIST_SORT_MODE_OFF);
+   romm_lib_json_member_int(writer, "sort_mode", display.sort_mode);
    rjsonwriter_add_spaces(writer, 2);
    rjsonwriter_add_string(writer, "items");
    rjsonwriter_raw(writer, ": [\n", 4);
