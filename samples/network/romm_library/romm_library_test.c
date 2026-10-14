@@ -325,6 +325,8 @@ static void test_manifest(void)
    lib.synced_at = 1791500000LL;
    p = lib_platform(15, "segacd", "Sega - Mega-CD - Sega CD",
          "Sega - Mega-CD - Sega CD.lpl");
+   p.playlist_size  = 77551;
+   p.playlist_mtime = 1791500001LL;
    r = rom(3335, true, "Final Fight CD (USA).zip", "Final Fight CD",
          "0beca6fd");
    r.platform_id = 15;
@@ -363,10 +365,13 @@ static void test_manifest(void)
                && !strcmp(a->platform.slug, b->platform.slug)
                && !strcmp(a->platform.name, b->platform.name)
                && !strcmp(a->platform.libretro_slug, b->platform.libretro_slug)
-               && !strcmp(a->playlist, b->playlist),
-               "platform %u: %u %s [%s] [%s] %s", (unsigned)i,
+               && !strcmp(a->playlist, b->playlist)
+               && a->playlist_size == b->playlist_size
+               && a->playlist_mtime == b->playlist_mtime,
+               "platform %u: %u %s [%s] [%s] %s %lld %lld", (unsigned)i,
                b->platform.id, b->platform.slug, b->platform.name,
-               b->platform.libretro_slug, b->playlist);
+               b->platform.libretro_slug, b->playlist,
+               (long long)b->playlist_size, (long long)b->playlist_mtime);
          CHECK(RBUF_LEN(a->roms) == RBUF_LEN(b->roms), "platform %u: %u games",
                (unsigned)i, (unsigned)RBUF_LEN(b->roms));
          for (j = 0; j < RBUF_LEN(a->roms) && j < RBUF_LEN(b->roms); j++)
@@ -1100,6 +1105,7 @@ static void test_sync_incremental(void)
    char *doc       = NULL;
    int64_t len     = 0;
    unsigned before;
+   unsigned i;
 
    path_mkdir(TEST_DIR);
    romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
@@ -1122,7 +1128,6 @@ static void test_sync_incremental(void)
 
    /* Nothing changed: the ids and an empty change list, asked for
     * since a minute before the newest game, and no rewrite. */
-   filestream_write_file(pl, "untouched", 9);
    written_count = 0;
    memset(&r, 0, sizeof(r));
    sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
@@ -1138,12 +1143,39 @@ static void test_sync_incremental(void)
          "changes request %s", stub_req.url);
    CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
          "unchanged: status %d games %u", r.status, (unsigned)r.games);
-   CHECK(filestream_read_file(pl, (void**)&doc, &len) && len == 9
-         && !written_count, "unchanged playlist rewritten");
-   free(doc);
-   doc = NULL;
+   CHECK(!written_count, "unchanged playlist rewritten");
+
+   /* Written over since, as the menu does from a stale copy, or written
+    * again as it was, a moment later: rewritten, though RomM didn't
+    * change. */
+   for (i = 0; i < 2; i++)
+   {
+      if (!i)
+         filestream_write_file(pl, "{\"items\": []}", 13);
+      else if (filestream_read_file(pl, (void**)&doc, &len) && doc)
+      {
+         int64_t mtime = 0;
+         filestream_write_file(pl, doc, len);
+         if (path_get_mtime(pl, &mtime))
+            path_set_mtime(pl, mtime - 10);
+         free(doc);
+         doc = NULL;
+      }
+      written_count = 0;
+      memset(&r, 0, sizeof(r));
+      sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
+            on_sync, &r);
+      sync_answer(200, "[{\"id\": 8, \"rom_count\": 3,"
+            " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+      sync_answer(200, "{\"rom_id_index\": [100, 101, 102]}");
+      sync_answer(200, "{\"items\": []}");
+      CHECK(sync_run_out() && r.status == ROMM_OK && written_count == 1
+            && count_entries(pl) == 3, "%s: %u rewrites, %u entries",
+            i ? "touched" : "overwritten", written_count, count_entries(pl));
+   }
 
    /* A game added first in RomM's order, one renamed, one removed. */
+   written_count = 0;
    memset(&r, 0, sizeof(r));
    sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);

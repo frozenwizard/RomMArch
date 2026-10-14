@@ -513,6 +513,10 @@ static void romm_lib_load_platform_member(void *ctx, const char *key,
       p->platform.id = (unsigned)strtoul(value, NULL, 10);
    else if (string_is_equal(key, "rom_count"))
       p->platform.rom_count = (unsigned)strtoul(value, NULL, 10);
+   else if (string_is_equal(key, "playlist_size"))
+      p->playlist_size = (int64_t)strtoll(value, NULL, 10);
+   else if (string_is_equal(key, "playlist_mtime"))
+      p->playlist_mtime = (int64_t)strtoll(value, NULL, 10);
    else if (string_is_equal(key, "slug"))
       strlcpy(p->platform.slug, value, sizeof(p->platform.slug));
    else if (string_is_equal(key, "name"))
@@ -656,8 +660,10 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
       if (i)
          rjsonwriter_raw(writer, ",\n", 2);
       rjsonwriter_add_spaces(writer, 4);
-      rjsonwriter_rawf(writer, "{\"id\": %u, \"rom_count\": %u, ",
-            p->platform.id, p->platform.rom_count);
+      rjsonwriter_rawf(writer, "{\"id\": %u, \"rom_count\": %u, "
+            "\"playlist_size\": %lld, \"playlist_mtime\": %lld, ",
+            p->platform.id, p->platform.rom_count,
+            (long long)p->playlist_size, (long long)p->playlist_mtime);
       rjsonwriter_add_string(writer, "slug");
       rjsonwriter_raw(writer, ": ", 2);
       rjsonwriter_add_string(writer, p->platform.slug);
@@ -1381,6 +1387,32 @@ static void romm_lib_default_core(romm_lib_sync_t *sync, const char *path,
       && !(!*core_path && string_is_equal(file_path, FILE_PATH_DETECT));
 }
 
+/* The size of the file at @path, -1 when there is none, and its
+ * modification time where the file system gives one. */
+static void romm_lib_file_stamp(const char *path, int64_t *size,
+      int64_t *mtime)
+{
+   *mtime = 0;
+   if ((*size = path_get_size(path)) >= 0)
+      path_get_mtime(path, mtime);
+}
+
+/* Records the playlist file @name, at @path, as this sync leaves it. */
+static void romm_lib_stamp_playlist(romm_library_t *lib, const char *name,
+      const char *path)
+{
+   int64_t size, mtime;
+   size_t i;
+
+   romm_lib_file_stamp(path, &size, &mtime);
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (string_is_equal(lib->platforms[i].playlist, name))
+      {
+         lib->platforms[i].playlist_size  = size;
+         lib->platforms[i].playlist_mtime = mtime;
+      }
+}
+
 /* Moves the fetched games into the library and, unless it would come
  * out as it is, writes their playlist; a platform with none the user
  * can see gets no playlist. */
@@ -1391,6 +1423,7 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    char path[PATH_MAX_LENGTH];
    char core_path[PATH_MAX_LENGTH];
    char core_name[NAME_MAX_LENGTH];
+   int64_t size, mtime;
    bool core_changed;
    bool write;
    size_t i;
@@ -1410,11 +1443,16 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    romm_lib_default_core(sync, path, &entry.platform,
          core_path, sizeof(core_path), core_name, sizeof(core_name),
          &core_changed);
+   /* A file changed since, such as one the menu wrote back from a stale
+    * copy, may not list what the manifest does. */
+   romm_lib_file_stamp(path, &size, &mtime);
    write = !old
       || core_changed
       || !string_is_equal(old->playlist, entry.playlist)
       || !romm_lib_same_roms(old->roms, sync->roms)
-      || !path_is_valid(path);
+      || size < 0
+      || size != old->playlist_size
+      || mtime != old->playlist_mtime;
    /* A playlist shared with a platform written earlier in this sync
     * was written without this one's games. */
    for (i = 0; !write && i < RBUF_LEN(sync->lib.platforms); i++)
@@ -1425,14 +1463,16 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    sync->roms = NULL;
    RBUF_PUSH(sync->lib.platforms, entry);
    RBUF_PUSH(sync->written, write);
-   if (!write)
-      return true;
-   sync->rewritten++;
-   if (!romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
-         entry.playlist, core_path, core_name))
-      return false;
-   if (sync->playlist_written)
-      sync->playlist_written(path);
+   if (write)
+   {
+      sync->rewritten++;
+      if (!romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
+            entry.playlist, core_path, core_name))
+         return false;
+      if (sync->playlist_written)
+         sync->playlist_written(path);
+   }
+   romm_lib_stamp_playlist(&sync->lib, entry.playlist, path);
    return true;
 }
 

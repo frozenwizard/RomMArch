@@ -32,6 +32,10 @@ typedef struct
    romm_platform_t platform;
    /* Its playlist's file name in the playlist folder. */
    char playlist[256];
+   /* That file's size and modification time as the sync left it; a
+    * file that differs was written by something else since. */
+   int64_t playlist_size;
+   int64_t playlist_mtime;
    /* Its games in RomM's order (an RBUF). */
    romm_rom_t *roms;
 } romm_library_platform_t;
