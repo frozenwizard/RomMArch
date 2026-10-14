@@ -33665,10 +33665,6 @@ MSG_HASH(
    "Approve this device in RomM: code %s"
    )
 MSG_HASH(
-   MSG_ROMM_PAIR_IN_PROGRESS,
-   "Already waiting for RomM to approve this device."
-   )
-MSG_HASH(
    MSG_ROMM_PAIRED,
    "This device is paired with RomM."
    )

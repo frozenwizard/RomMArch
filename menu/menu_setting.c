@@ -10657,6 +10657,10 @@ static void general_write_handler(rarch_setting_t *setting)
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
       case MENU_ENUM_LABEL_ROMM_SERVER_URL:
          romm_cloud_sync_follow_server();
+         romm_pair_follow_address();
+         break;
+      case MENU_ENUM_LABEL_ROMM_WEB_URL:
+         romm_pair_follow_address();
          break;
 #endif
 #if HAVE_CLOUDSYNC

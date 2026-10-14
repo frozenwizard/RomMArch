@@ -1373,11 +1373,20 @@ static void test_pair_wait(void)
          "deadline: finished with status %d after %u polls",
          r.status, stub_req.count);
 
+   /* Cancelled between polls: ends at once, without polling again. */
+   pair_wait(&r, 600);
+   expect_poll(t0 + 5 * SEC);
+   answer(400, "{\"detail\": \"authorization_pending\"}");
+   romm_client_pair_cancel(stub_task);
+   CHECK(run_task() && stub_req.count == 1 && r.calls == 1
+         && r.status == ROMM_ERR_CANCELLED && !*r.token,
+         "cancelled between polls: status %d after %u polls",
+         r.status, stub_req.count);
+
    /* Cancelled with a poll out: waits for its answer, then stops. */
    pair_wait(&r, 600);
    expect_poll(t0 + 5 * SEC);
-   stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
-   stub_now = stub_task->when;
+   romm_client_pair_cancel(stub_task);
    CHECK(!run_task(), "finished while its poll was still out");
    answer(400, "{\"detail\": \"authorization_pending\"}");
    stub_now = stub_task->when;

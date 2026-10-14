@@ -51,9 +51,13 @@
 #endif
 
 /* Set from the moment pairing starts until its wait ends, with the
- * server it began with. */
+ * addresses it began with and, once RomM gave a code, the wait.
+ * Callbacks of a pairing since replaced carry an older generation. */
 static bool romm_pairing = false;
+static unsigned romm_pair_gen = 0;
+static void *romm_pair_wait = NULL;
 static char romm_pair_server[NAME_MAX_LENGTH];
+static char romm_pair_web[NAME_MAX_LENGTH];
 static bool romm_syncing = false;
 /* The running sync was started at startup rather than by the user. */
 static bool romm_syncing_quietly = false;
@@ -339,7 +343,10 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
 #endif
    char msg[512];
 
-   romm_pairing = false;
+   if ((uintptr_t)user_data != romm_pair_gen)
+      return;
+   romm_pairing   = false;
+   romm_pair_wait = NULL;
 
    if (status == ROMM_ERR_CANCELLED)
       return;
@@ -404,6 +411,8 @@ static void romm_on_pair_started(void *user_data, enum romm_status status,
 {
    char title[256];
 
+   if ((uintptr_t)user_data != romm_pair_gen)
+      return;
    if (status != ROMM_OK)
    {
       romm_pairing = false;
@@ -413,8 +422,8 @@ static void romm_on_pair_started(void *user_data, enum romm_status status,
 
    snprintf(title, sizeof(title),
          msg_hash_to_str(MSG_ROMM_PAIR_APPROVE), pairing->user_code);
-   if (!romm_client_pair_wait(romm_pair_server, pairing,
-         title, romm_on_pair_approved, NULL))
+   if (!(romm_pair_wait = romm_client_pair_wait(romm_pair_server, pairing,
+         title, romm_on_pair_approved, user_data)))
    {
       romm_pairing = false;
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
@@ -423,18 +432,27 @@ static void romm_on_pair_started(void *user_data, enum romm_status status,
    romm_platform_open_url(pairing->approve_url);
 }
 
+/* Ends the pairing running, if any; its callbacks are then ignored. */
+static void romm_pair_stop(void)
+{
+   if (!romm_pairing)
+      return;
+   RARCH_LOG("[RomM] The pairing running ends.\n");
+   romm_pairing = false;
+   romm_pair_gen++;
+   if (romm_pair_wait)
+      romm_client_pair_cancel(romm_pair_wait);
+   romm_pair_wait = NULL;
+}
+
 void romm_pair(void)
 {
    settings_t *settings = config_get_ptr();
    char *identifier     = settings->arrays.romm_device_identifier;
    char device_name[128];
 
-   if (romm_pairing)
-   {
-      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_IN_PROGRESS),
-            MESSAGE_QUEUE_CATEGORY_INFO);
-      return;
-   }
+   /* Pressed again, say after fixing an address: start over. */
+   romm_pair_stop();
    if (string_is_empty(settings->arrays.romm_server_url))
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
@@ -449,7 +467,8 @@ void romm_pair(void)
 
    if (!romm_client_pair_start(settings->arrays.romm_server_url,
          settings->arrays.romm_web_url, identifier, device_name,
-         PACKAGE_VERSION, romm_on_pair_started, NULL))
+         PACKAGE_VERSION, romm_on_pair_started,
+         (void*)(uintptr_t)romm_pair_gen))
    {
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
       return;
@@ -457,6 +476,21 @@ void romm_pair(void)
    romm_pairing = true;
    strlcpy(romm_pair_server, settings->arrays.romm_server_url,
          sizeof(romm_pair_server));
+   strlcpy(romm_pair_web, settings->arrays.romm_web_url,
+         sizeof(romm_pair_web));
+}
+
+void romm_pair_follow_address(void)
+{
+   settings_t *settings = config_get_ptr();
+
+   /* The menu also calls this as a field opens, unchanged. */
+   if (     romm_pairing
+         && (  !string_is_equal(romm_pair_server,
+                  settings->arrays.romm_server_url)
+            || !string_is_equal(romm_pair_web,
+                  settings->arrays.romm_web_url)))
+      romm_pair();
 }
 
 /* The menu shows playlists from a cached copy and lists them in its

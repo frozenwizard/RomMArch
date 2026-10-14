@@ -634,7 +634,7 @@ static void romm_pair_wait_cleanup(retro_task_t *task)
    task->state = NULL;
 }
 
-bool romm_client_pair_wait(const char *server,
+void *romm_client_pair_wait(const char *server,
       const romm_pairing_t *pairing, const char *title,
       romm_pair_wait_cb_t cb, void *user_data)
 {
@@ -646,20 +646,20 @@ bool romm_client_pair_wait(const char *server,
    int body_len = 0;
 
    if (!pairing || string_is_empty(pairing->device_code))
-      return false;
+      return NULL;
    if (!(ctx = (romm_pair_wait_ctx_t*)calloc(1, sizeof(*ctx))))
-      return false;
+      return NULL;
    if (!romm_client_url(ctx->url, sizeof(ctx->url), server,
          "/api/auth/device/token"))
    {
       free(ctx);
-      return false;
+      return NULL;
    }
 
    if (!(writer = rjsonwriter_open_memory()))
    {
       free(ctx);
-      return false;
+      return NULL;
    }
    rjsonwriter_raw(writer, "{", 1);
    rjsonwriter_add_string(writer, "device_code");
@@ -671,7 +671,7 @@ bool romm_client_pair_wait(const char *server,
    {
       rjsonwriter_free(writer);
       free(ctx);
-      return false;
+      return NULL;
    }
    memcpy(ctx->body, body, (size_t)body_len);
    rjsonwriter_free(writer);
@@ -679,7 +679,7 @@ bool romm_client_pair_wait(const char *server,
    if (!(task = task_init()))
    {
       free(ctx);
-      return false;
+      return NULL;
    }
 
    now            = cpu_features_get_time_usec();
@@ -709,10 +709,18 @@ bool romm_client_pair_wait(const char *server,
       free(task->title);
       free(task);
       free(ctx);
-      return false;
+      return NULL;
    }
    RARCH_LOG(ROMM_PFX "Waiting for the pairing to be approved.\n");
-   return true;
+   return task;
+}
+
+void romm_client_pair_cancel(void *wait)
+{
+   retro_task_t *task = (retro_task_t*)wait;
+   task_queue_cancel_task(task);
+   /* Now rather than at the next poll */
+   task->when = 0;
 }
 
 typedef struct

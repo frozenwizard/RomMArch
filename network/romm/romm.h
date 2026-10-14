@@ -28,6 +28,10 @@ void romm_check_connection(void);
  * keeps the device's token and saves the configuration. */
 void romm_pair(void);
 
+/* The server or sign-in address has changed: a pairing running starts
+ * over with it. */
+void romm_pair_follow_address(void);
+
 /* Points Cloud Sync, when it is on and pointed at RomM's WebDAV, at the
  * server address as it now is. */
 void romm_cloud_sync_follow_server(void);

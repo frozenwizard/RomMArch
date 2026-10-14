@@ -86,6 +86,11 @@ bool task_queue_push(retro_task_t *task)
    return true;
 }
 
+void task_queue_cancel_task(void *task)
+{
+   task_set_flags((retro_task_t*)task, RETRO_TASK_FLG_CANCELLED, true);
+}
+
 void task_set_flags(retro_task_t *task, uint8_t flags, bool set)
 {
    if (set)

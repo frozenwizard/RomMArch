@@ -275,10 +275,15 @@ bool romm_client_pair_start(const char *server, const char *web,
 /* Polls @server until the user approves or denies @pairing, or it
  * expires; @cb runs on the main thread with the device's token. A
  * @title is shown in the task notification for as long as it waits;
- * NULL waits silently. */
-bool romm_client_pair_wait(const char *server,
+ * NULL waits silently. Returns the wait, or NULL. */
+void *romm_client_pair_wait(const char *server,
       const romm_pairing_t *pairing, const char *title,
       romm_pair_wait_cb_t cb, void *user_data);
+
+/* Ends @wait, whose callback hasn't run yet, as soon as a poll still
+ * out has answered; the callback gets ROMM_ERR_CANCELLED. Main thread
+ * only. */
+void romm_client_pair_cancel(void *wait);
 
 /* Lists the platforms @token's user can see on @server, in RomM's
  * order; @cb runs on the main thread. */
