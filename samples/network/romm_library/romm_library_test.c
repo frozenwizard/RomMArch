@@ -673,6 +673,41 @@ static void test_sync(void)
    filestream_delete(TEST_DIR);
 }
 
+/* A full page RomM sent is followed by another, though the client
+ * left out a game in it that has no file name. */
+static void test_sync_short_page(void)
+{
+   sync_result_t r;
+   char manifest[256];
+   char *page;
+   char *fs_name;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 253,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   page = roms_page(8, 1, 250);
+   if ((fs_name = strstr(page, "\"fs_name\": \"Game 5 (USA)")))
+      fs_name[6] = 'X';
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(8, 251, 3);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "&offset=250") != NULL, "page 2 %s",
+         stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 252,
+         "short page: status %d games %u", r.status, (unsigned)r.games);
+
+   filestream_delete(TEST_DIR "/Sega - Mega Drive - Genesis.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 static void test_sync_reconcile(void)
 {
    sync_result_t r;
@@ -1331,6 +1366,7 @@ int main(void)
    test_game_core_kept();
    test_manifest();
    test_sync();
+   test_sync_short_page();
    test_sync_reconcile();
    test_cursor();
    test_sync_incremental();

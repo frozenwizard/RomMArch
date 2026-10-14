@@ -202,10 +202,11 @@ typedef void (*romm_platforms_cb_t)(void *user_data,
       const romm_platform_t *platforms, size_t count);
 
 /* @roms holds @count entries, valid only during the call; NULL unless
- * @status is ROMM_OK. */
+ * @status is ROMM_OK. @more is set when RomM's page was full, counting
+ * games left out of @roms, so another may follow. */
 typedef void (*romm_roms_cb_t)(void *user_data,
       enum romm_status status, int http_status,
-      const romm_rom_t *roms, size_t count);
+      const romm_rom_t *roms, size_t count, bool more);
 
 /* @ids holds @count game ids, valid only during the call; NULL unless
  * @status is ROMM_OK. */
@@ -293,8 +294,7 @@ bool romm_client_platforms(const char *server, const char *token,
 /* Fetches up to @limit of the games on platform @platform_id, from
  * @offset in RomM's title order, leaving out games whose files are
  * missing. With @updated_after (UTC, such as "2026-10-03T00:23:20Z"),
- * only games changed since then. Fewer than @limit means the last
- * page. @cb runs on the main thread. */
+ * only games changed since then. @cb runs on the main thread. */
 bool romm_client_roms(const char *server, const char *token,
       unsigned platform_id, const char *updated_after,
       unsigned offset, unsigned limit,

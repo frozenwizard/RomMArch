@@ -506,12 +506,13 @@ typedef struct
    enum romm_status status;
    int http_status;
    bool has_list;
+   bool more;
    size_t count;
    romm_rom_t roms[4];
 } roms_result_t;
 
 static void on_roms(void *user_data, enum romm_status status,
-      int http_status, const romm_rom_t *roms, size_t count)
+      int http_status, const romm_rom_t *roms, size_t count, bool more)
 {
    roms_result_t *r = (roms_result_t*)user_data;
    size_t i;
@@ -520,6 +521,7 @@ static void on_roms(void *user_data, enum romm_status status,
    r->http_status = http_status;
    r->has_list    = roms != NULL;
    r->count       = count;
+   r->more        = more;
    for (i = 0; i < count && i < 4; i++)
       r->roms[i] = roms[i];
 }
@@ -579,9 +581,9 @@ static void test_roms(void)
             "&with_rom_id_index=false&with_total=false&limit=250&offset=500"),
          "URL %s", stub_req.url);
    answer(200, roms_reply);
-   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 2,
-         "list: calls %u status %d count %u", r.calls, r.status,
-         (unsigned)r.count);
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 2
+         && !r.more, "list: calls %u status %d count %u more %d", r.calls,
+         r.status, (unsigned)r.count, r.more);
    g = &r.roms[0];
    CHECK(g->id == 3335 && g->platform_id == 15 && g->single_file
          && !strcmp(g->crc, "0beca6fd")
@@ -598,6 +600,16 @@ static void test_roms(void)
          && !strcmp(g->name, "Lunar - The Silver Star (USA)"),
          "folder: %u %d [%s] [%s] [%s]", g->id, g->single_file, g->crc,
          g->cover, g->name);
+
+   /* A full page is not the last, though a game was left out of it. */
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_roms("http://h", "t", 15, NULL, 0, 3, on_roms, &r),
+         "page of 3 not started");
+   answer(200, roms_reply);
+   CHECK(r.status == ROMM_OK && r.count == 2 && r.more,
+         "full page: status %d count %u more %d", r.status,
+         (unsigned)r.count, r.more);
 
    roms(&r, "2026-10-03T00:22:20Z");
    CHECK(strstr(stub_req.url, "&offset=500&updated_after=2026-10-03T00:22:20Z")

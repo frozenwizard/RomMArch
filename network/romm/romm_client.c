@@ -96,6 +96,7 @@ typedef struct
 {
    romm_roms_cb_t cb;
    void *user_data;
+   unsigned limit;
 } romm_roms_ctx_t;
 
 typedef struct
@@ -812,6 +813,8 @@ typedef struct
 {
    romm_rom_t *list;
    romm_rom_t cur;
+   /* Items RomM sent, those left out of @list included */
+   size_t listed;
 } romm_roms_parse_t;
 
 static void romm_roms_member(void *ctx, const char *key,
@@ -846,6 +849,7 @@ static void romm_roms_item_end(void *ctx)
    romm_roms_parse_t *parse = (romm_roms_parse_t*)ctx;
    romm_rom_t *r            = &parse->cur;
 
+   parse->listed++;
    if (r->id && *r->fs_name)
    {
       if (!*r->name)
@@ -882,7 +886,8 @@ static void romm_roms_cb(retro_task_t *task, void *task_data,
 
    ctx->cb(ctx->user_data, status, http_status,
          status == ROMM_OK ? parse->list : NULL,
-         status == ROMM_OK ? RBUF_LEN(parse->list) : 0);
+         status == ROMM_OK ? RBUF_LEN(parse->list) : 0,
+         status == ROMM_OK && parse->listed >= ctx->limit);
    if (parse)
    {
       RBUF_FREE(parse->list);
@@ -926,6 +931,7 @@ bool romm_client_roms(const char *server, const char *token,
       return false;
    ctx->cb        = cb;
    ctx->user_data = user_data;
+   ctx->limit     = limit;
 
    if (!romm_get(server, token, path, romm_roms_cb, ctx))
    {

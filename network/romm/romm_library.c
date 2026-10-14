@@ -1281,7 +1281,7 @@ static void romm_lib_sync_ids_cb(void *user_data,
 
 static void romm_lib_sync_roms_cb(void *user_data,
       enum romm_status status, int http_status,
-      const romm_rom_t *roms, size_t count)
+      const romm_rom_t *roms, size_t count, bool more)
 {
    romm_lib_sync_t *sync = (romm_lib_sync_t*)user_data;
    size_t i;
@@ -1296,7 +1296,7 @@ static void romm_lib_sync_roms_cb(void *user_data,
    }
    for (i = 0; i < count; i++)
       RBUF_PUSH(sync->roms, roms[i]);
-   if (count == ROMM_LIBRARY_PAGE)
+   if (more)
       sync->offset += ROMM_LIBRARY_PAGE;
    else if (sync->state == ROMM_LIB_SYNC_CHANGES)
       sync->state = ROMM_LIB_SYNC_MERGE;
