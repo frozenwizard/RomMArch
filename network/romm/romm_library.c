@@ -107,7 +107,7 @@ typedef struct
    /* Covers the sync found missing or changed, for the covers task */
    romm_lib_cover_t *covers;
    romm_library_find_core_t find_core;
-   romm_library_playlist_cb_t playlist_written;
+   romm_library_playlist_cb_t playlist_changed;
    char *token;
    char *covers_title;
    char server[NAME_MAX_LENGTH];
@@ -807,7 +807,11 @@ static void romm_lib_sync_remove_stale(romm_lib_sync_t *sync)
          continue;
       fill_pathname_join(path, sync->playlist_dir, name, sizeof(path));
       if (path_is_valid(path) && !filestream_delete(path))
+      {
          RARCH_LOG(ROMM_LIB_PFX "Removed %s, gone from RomM.\n", name);
+         if (sync->playlist_changed)
+            sync->playlist_changed(path);
+      }
    }
 }
 
@@ -1469,8 +1473,8 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
       if (!romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
             entry.playlist, core_path, core_name))
          return false;
-      if (sync->playlist_written)
-         sync->playlist_written(path);
+      if (sync->playlist_changed)
+         sync->playlist_changed(path);
    }
    romm_lib_stamp_playlist(&sync->lib, entry.playlist, path);
    return true;
@@ -1525,8 +1529,8 @@ static bool romm_lib_sync_drop_gone(romm_lib_sync_t *sync)
       for (j = 0; j < RBUF_LEN(sync->lib.platforms); j++)
          if (string_is_equal(sync->lib.platforms[j].playlist, p->playlist))
             sync->written[j] = true;
-      if (sync->playlist_written)
-         sync->playlist_written(path);
+      if (sync->playlist_changed)
+         sync->playlist_changed(path);
       romm_lib_stamp_playlist(&sync->lib, p->playlist, path);
    }
    return true;
@@ -1744,7 +1748,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->user_data = user_data;
    sync->task      = task;
    sync->find_core = params->find_core;
-   sync->playlist_written = params->playlist_written;
+   sync->playlist_changed = params->playlist_changed;
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));

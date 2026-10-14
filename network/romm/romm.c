@@ -531,9 +531,9 @@ void romm_pair_follow_address(void)
 
 /* The menu shows a playlist from a copy in memory, and writes that
  * copy back whole when a game's core is set, so a copy older than the
- * file the sync just wrote would undo the sync. Main thread, as the
- * sync's handler. */
-static void romm_playlist_written(const char *path)
+ * file the sync just wrote, or deleted, would undo the sync. Main
+ * thread, as the sync's handler. */
+static void romm_playlist_changed(const char *path)
 {
    playlist_t *cached = playlist_get_cached();
    bool refresh       = false;
@@ -547,7 +547,9 @@ static void romm_playlist_written(const char *path)
    if (cached && string_is_equal(path, playlist_get_conf_path(cached)))
    {
       playlist_config_t config;
-      if (playlist_config_copy(playlist_get_config(cached), &config))
+      if (!path_is_valid(path))
+         playlist_free_cached();
+      else if (playlist_config_copy(playlist_get_config(cached), &config))
       {
          playlist_free_cached();
          playlist_init_cached(&config);
@@ -645,7 +647,7 @@ static bool romm_start_library_sync(bool quiet)
    params.title          = msg_hash_to_str(MSG_ROMM_SYNCING);
    params.covers_title   = msg_hash_to_str(MSG_ROMM_FETCHING_COVERS);
    params.find_core      = romm_find_core;
-   params.playlist_written = romm_playlist_written;
+   params.playlist_changed = romm_playlist_changed;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
    romm_syncing         = true;

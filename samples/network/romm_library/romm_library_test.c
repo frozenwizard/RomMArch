@@ -428,11 +428,11 @@ static void test_manifest(void)
 /* What sync_start() passes as the installed-core finder. */
 static romm_library_find_core_t test_find_core;
 
-/* The playlists a sync said it wrote, and the last one. */
+/* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
 static char written_path[256];
 
-static void on_playlist_written(const char *path)
+static void on_playlist_changed(const char *path)
 {
    written_count++;
    strlcpy(written_path, path, sizeof(written_path));
@@ -451,7 +451,7 @@ static bool sync_start(const char *server, const char *token,
    params.title          = title;
    params.covers_title   = covers_title;
    params.find_core      = test_find_core;
-   params.playlist_written = on_playlist_written;
+   params.playlist_changed = on_playlist_changed;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -790,6 +790,7 @@ static void test_sync_reconcile(void)
    filestream_write_file(TEST_DIR "/Mine.lpl", "{}", 2);
 
    memset(&r, 0, sizeof(r));
+   written_count = 0;
    CHECK(sync_start("http://romm.local:8090", "t", TEST_DIR, NULL,
          NULL, NULL, on_sync, &r), "sync not started");
    sync_answer(200, "[{\"id\": 15, \"rom_count\": 2,"
@@ -806,6 +807,10 @@ static void test_sync_reconcile(void)
          "sync: status %d platforms %u", r.status, (unsigned)r.platforms);
    CHECK(!path_is_valid(TEST_DIR "/RomM - Gone.lpl"),
          "playlist of a platform gone from RomM kept");
+   CHECK(written_count == 3
+         && !strcmp(written_path, TEST_DIR "/RomM - Gone.lpl"),
+         "removal reported: %u changes, last %s", written_count,
+         written_path);
    CHECK(path_is_valid(TEST_DIR "/Mine.lpl"), "user's playlist removed");
    CHECK(count_entries(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl") == 2
          && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
