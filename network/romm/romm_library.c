@@ -116,6 +116,10 @@ typedef struct
    char manifest[PATH_MAX_LENGTH];
 } romm_lib_sync_t;
 
+/* The covers task running, which the next sync to plan covers stops.
+ * Main thread. */
+static retro_task_t *romm_lib_covers_running = NULL;
+
 /* D10: emulators that read games through RetroArch's file layer. */
 typedef struct
 {
@@ -1082,6 +1086,8 @@ static void romm_lib_covers_cleanup(retro_task_t *task)
 {
    romm_lib_covers_t *covers = (romm_lib_covers_t*)task->state;
 
+   if (romm_lib_covers_running == task)
+      romm_lib_covers_running = NULL;
    if (covers)
    {
       romm_lib_covers_free(covers->jobs);
@@ -1137,6 +1143,7 @@ static bool romm_lib_fetch_covers(const char *server, const char *token,
       free(covers);
       return false;
    }
+   romm_lib_covers_running = task;
    RARCH_LOG(ROMM_LIB_PFX "Covers to fetch: %u.\n", (unsigned)RBUF_LEN(jobs));
    return true;
 }
@@ -1656,7 +1663,17 @@ static void romm_lib_sync_handler(retro_task_t *task)
          }
          romm_lib_sync_remove_stale(sync);
          if (*sync->thumbnails_dir)
+         {
+            /* Covers an earlier sync is still fetching aren't on disk,
+             * so this one plans them again. */
+            if (romm_lib_covers_running)
+            {
+               RARCH_LOG(ROMM_LIB_PFX "Stopping the covers still being "
+                     "fetched; this sync fetches them.\n");
+               task_queue_cancel_task(romm_lib_covers_running);
+            }
             romm_lib_sync_plan_covers(sync);
+         }
          strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
          sync->lib.synced_at = (int64_t)time(NULL);
          romm_lib_sync_finish(sync,

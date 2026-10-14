@@ -1067,6 +1067,86 @@ static void test_covers(void)
    filestream_delete(TEST_DIR);
 }
 
+/* Runs a task stepped outside stub_task to its end. */
+static void task_run_out(retro_task_t *task)
+{
+   unsigned steps = 0;
+   while (!(task->flags & RETRO_TASK_FLG_FINISHED) && steps++ < 20)
+      task->handler(task);
+   task->callback(task, NULL, task->user_data, NULL);
+   task->cleanup(task);
+   free(task->title);
+   free(task);
+}
+
+/* A sync while the last one's covers are still being fetched stops
+ * that task and fetches the covers itself, once. */
+static void test_covers_superseded(void)
+{
+   const char *ids = "{\"rom_id_index\": [1, 2]}";
+   sync_result_t r;
+   retro_task_t *first;
+   char manifest[256];
+   char *page;
+   unsigned n, m;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+   page = covers_page("/assets/1/big.png?ts=1", "/assets/2/big.png?ts=1",
+         NULL);
+
+   covers_sync(&r, NULL, page);
+   first = stub_task;
+   CHECK(first && !strcmp(first->title, "Covers"), "no covers task");
+   if (!first)
+   {
+      free(page);
+      return;
+   }
+   n = stub_log_count + 1;
+   sync_step();
+   CHECK(stub_log_count == n + 1, "%u downloads", stub_log_count - n + 1);
+
+   covers_sync(&r, ids, page);
+   CHECK(first->flags & RETRO_TASK_FLG_CANCELLED, "first covers task left"
+         " running");
+   CHECK(stub_task && stub_task != first, "second sync fetches no covers");
+
+   /* The first task's downloads land; it starts no more. */
+   m = stub_log_count;
+   answer_download(n, 200, PNG_DATA);
+   answer_download(n + 1, 200, PNG_DATA);
+   task_run_out(first);
+   CHECK(stub_log_count == m, "cancelled task downloaded more");
+
+   if (stub_task)
+   {
+      sync_step();
+      CHECK(stub_log_count == m + 2, "second task: %u downloads",
+            stub_log_count - m);
+      answer_download(m + 1, 200, PNG_DATA);
+      answer_download(m + 2, 200, PNG_DATA);
+      CHECK(sync_step() && !stub_task, "second covers task didn't finish");
+   }
+   CHECK(!romm_lib_covers_running, "covers task still recorded");
+
+   /* Covers on disk: a third sync has none to fetch, nothing to stop. */
+   covers_sync(&r, ids, page);
+   CHECK(!stub_task, "covers task with all on disk");
+   free(page);
+
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).png");
+   filestream_delete(COVER_DIR "Game 2 _ Co (USA).png");
+   filestream_delete(COVER_DIR);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 static void test_cursor(void)
 {
    char s[32];
@@ -1503,6 +1583,7 @@ int main(void)
    test_sync_default_core();
    test_cover_path();
    test_covers();
+   test_covers_superseded();
 
    if (failures)
    {
