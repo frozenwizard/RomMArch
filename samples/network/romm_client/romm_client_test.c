@@ -372,7 +372,7 @@ static void test_whoami(void)
 
    whoami(&r);
    answer(403, "{\"detail\": \"Forbidden\"}");
-   CHECK(r.status == ROMM_ERR_UNAUTHORIZED, "403: status %d", r.status);
+   CHECK(r.status == ROMM_ERR_FORBIDDEN, "403: status %d", r.status);
 
    whoami(&r);
    answer(200, "{\"id\": 1}");
@@ -482,7 +482,7 @@ static void test_platforms(void)
 
    platforms(&r);
    answer(403, "{\"detail\": \"Forbidden\"}");
-   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && r.http_status == 403,
+   CHECK(r.status == ROMM_ERR_FORBIDDEN && r.http_status == 403,
          "403: status %d", r.status);
 
    platforms(&r);
@@ -773,7 +773,7 @@ static void test_firmware(void)
    /* A token paired before firmware.read was asked for. */
    firmware(&r, 22);
    answer(403, "{\"detail\": \"Forbidden\"}");
-   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && !r.has_list, "403: status %d",
+   CHECK(r.status == ROMM_ERR_FORBIDDEN && !r.has_list, "403: status %d",
          r.status);
 
    firmware(&r, 22);
@@ -1515,7 +1515,7 @@ static void test_saves(void)
    memset(&r, 0, sizeof(r));
    romm_client_saves("http://h", "t", 3335, on_saves, &r);
    answer(403, "{\"detail\": \"Forbidden\"}");
-   CHECK(r.status == ROMM_ERR_UNAUTHORIZED && !r.has_list, "403: status %d",
+   CHECK(r.status == ROMM_ERR_FORBIDDEN && !r.has_list, "403: status %d",
          r.status);
 
    memset(&r, 0, sizeof(r));
@@ -1723,7 +1723,7 @@ static void test_upload(void)
    memset(&r, 0, sizeof(r));
    romm_client_save_upload(&up, on_upload, &r);
    answer(403, "{\"detail\": \"Forbidden\"}");
-   CHECK(r.status == ROMM_ERR_UNAUTHORIZED, "403: status %d", r.status);
+   CHECK(r.status == ROMM_ERR_FORBIDDEN, "403: status %d", r.status);
 
    memset(&r, 0, sizeof(r));
    romm_client_save_upload(&up, on_upload, &r);

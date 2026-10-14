@@ -169,8 +169,10 @@ static enum romm_status romm_response_status(
 {
    if (!data || data->status <= 0)
       return ROMM_ERR_UNREACHABLE;
-   if (data->status == 401 || data->status == 403)
+   if (data->status == 401)
       return ROMM_ERR_UNAUTHORIZED;
+   if (data->status == 403)
+      return ROMM_ERR_FORBIDDEN;
    if (data->status != expected)
       return ROMM_ERR_HTTP;
    return ROMM_OK;

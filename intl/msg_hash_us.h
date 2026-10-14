@@ -33653,6 +33653,14 @@ MSG_HASH(
    "RomM no longer accepts this device. Pair it again."
    )
 MSG_HASH(
+   MSG_ROMM_FORBIDDEN,
+   "RomM didn't give this device a permission it needs. Pair again with every permission ticked."
+   )
+MSG_HASH(
+   MSG_ROMM_FORBIDDEN_SCOPE,
+   "RomM didn't give this device the %s permission. Pair again with every permission ticked."
+   )
+MSG_HASH(
    MSG_ROMM_PAIR_APPROVE,
    "Approve this device in RomM: code %s"
    )

@@ -31,8 +31,11 @@ enum romm_status
    ROMM_ERR_HTTP,
    /* A body RomM wouldn't send, such as another web server's page. */
    ROMM_ERR_RESPONSE,
-   /* RomM turned the token down: revoked, expired or missing scopes. */
+   /* RomM turned the token down: revoked or expired. */
    ROMM_ERR_UNAUTHORIZED,
+   /* RomM took the token but refused the request: a scope the approver
+    * left out. */
+   ROMM_ERR_FORBIDDEN,
    /* Pairing: the user turned the device down. */
    ROMM_ERR_DENIED,
    /* Pairing: the code ran out before the user approved it. */
@@ -299,8 +302,8 @@ bool romm_client_rom_ids(const char *server, const char *token,
       unsigned platform_id, romm_rom_ids_cb_t cb, void *user_data);
 
 /* Fetches game @rom_id with its files; a game RomM deleted, or that
- * the user may no longer see, answers HTTP 404 or 403. @cb runs on
- * the main thread. */
+ * the user may no longer see, answers HTTP 404. @cb runs on the main
+ * thread. */
 bool romm_client_rom_files(const char *server, const char *token,
       unsigned rom_id, romm_rom_files_cb_t cb, void *user_data);
 

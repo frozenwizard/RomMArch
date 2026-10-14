@@ -89,6 +89,9 @@ static void romm_notify_failure(enum romm_status status, int http_status)
       case ROMM_ERR_UNAUTHORIZED:
          strlcpy(msg, msg_hash_to_str(MSG_ROMM_UNAUTHORIZED), sizeof(msg));
          break;
+      case ROMM_ERR_FORBIDDEN:
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_FORBIDDEN), sizeof(msg));
+         break;
       case ROMM_ERR_WRITE:
          strlcpy(msg, msg_hash_to_str(MSG_ROMM_WRITE_FAILED), sizeof(msg));
          break;
@@ -112,6 +115,12 @@ static void romm_check_token_cb(void *user_data,
       snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED_AS),
             version, username);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   }
+   else if (status == ROMM_ERR_FORBIDDEN)
+   {
+      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_FORBIDDEN_SCOPE),
+            "me.read");
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
    }
    else
       romm_notify_failure(status, http_status);
@@ -522,7 +531,8 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    if (status != ROMM_OK)
    {
       if (     !quiet
-            || status == ROMM_ERR_UNAUTHORIZED || status == ROMM_ERR_WRITE)
+            || status == ROMM_ERR_UNAUTHORIZED
+            || status == ROMM_ERR_FORBIDDEN || status == ROMM_ERR_WRITE)
          romm_notify_failure(status, http_status);
       return;
    }
@@ -1024,7 +1034,7 @@ static void romm_on_launch_prepared(void *user_data,
       case ROMM_ERR_CANCELLED:
          return;
       case ROMM_ERR_HTTP:
-         if (http_status == 404 || http_status == 403)
+         if (http_status == 404)
             msg = MSG_ROMM_GAME_GONE;
          break;
       case ROMM_ERR_UNSUPPORTED:
