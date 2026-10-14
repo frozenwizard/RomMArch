@@ -317,7 +317,8 @@ void romm_cloud_sync_follow_server(void)
 }
 
 static void romm_on_pair_approved(void *user_data, enum romm_status status,
-      const char *token, const char *device_id, const char *missing_scopes)
+      int http_status, const char *token, const char *device_id,
+      const char *missing_scopes)
 {
    settings_t *settings = config_get_ptr();
 #ifdef HAVE_CLOUDSYNC
@@ -333,7 +334,7 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
       return;
    if (status != ROMM_OK)
    {
-      romm_notify_failure(status, 0);
+      romm_notify_failure(status, http_status);
       return;
    }
 

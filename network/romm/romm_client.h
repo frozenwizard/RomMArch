@@ -185,11 +185,12 @@ typedef void (*romm_whoami_cb_t)(void *user_data,
       enum romm_status status, int http_status, const char *username);
 
 /* @token and @device_id are empty unless @status is ROMM_OK.
+ * @http_status is that of the last poll RomM answered, 0 when none.
  * @missing_scopes names, comma separated, the scopes pairing asked
  * for that the approver left out; empty when there are none. */
 typedef void (*romm_pair_wait_cb_t)(void *user_data,
-      enum romm_status status, const char *token, const char *device_id,
-      const char *missing_scopes);
+      enum romm_status status, int http_status, const char *token,
+      const char *device_id, const char *missing_scopes);
 
 /* @platforms holds @count entries, valid only during the call; NULL
  * unless @status is ROMM_OK. */

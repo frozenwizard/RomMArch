@@ -103,17 +103,20 @@ typedef struct
 {
    unsigned calls;
    enum romm_status status;
+   int http_status;
    char token[128];
    char device_id[64];
    char missing_scopes[256];
 } pair_wait_result_t;
 
 static void on_pair_wait(void *user_data, enum romm_status status,
-      const char *token, const char *device_id, const char *missing_scopes)
+      int http_status, const char *token, const char *device_id,
+      const char *missing_scopes)
 {
    pair_wait_result_t *r = (pair_wait_result_t*)user_data;
    r->calls++;
-   r->status = status;
+   r->status      = status;
+   r->http_status = http_status;
    strlcpy(r->token, token, sizeof(r->token));
    strlcpy(r->device_id, device_id, sizeof(r->device_id));
    strlcpy(r->missing_scopes, missing_scopes, sizeof(r->missing_scopes));
@@ -1304,7 +1307,7 @@ static void test_pair_wait(void)
    CHECK(r.calls == 0, "callback before the task finished");
    CHECK(stub_task->when <= stub_now, "approval not handled right away");
    CHECK(run_task(), "approved but not finished");
-   CHECK(r.calls == 1 && r.status == ROMM_OK
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.http_status == 200
          && !strcmp(r.token, "rmm_0123abcd")
          && !strcmp(r.device_id, "5d1e-device") && !*r.missing_scopes,
          "approved: calls %u status %d token %s device %s missing %s",
@@ -1349,8 +1352,9 @@ static void test_pair_wait(void)
 
    pair_wait(&r, 600);
    expect_poll(t0 + 5 * SEC);
-   answer(500, "Internal Server Error");
-   CHECK(run_task() && r.status == ROMM_ERR_HTTP, "500: status %d", r.status);
+   answer(502, "Bad Gateway");
+   CHECK(run_task() && r.status == ROMM_ERR_HTTP && r.http_status == 502,
+         "502: status %d HTTP %d", r.status, r.http_status);
 
    pair_wait(&r, 600);
    expect_poll(t0 + 5 * SEC);

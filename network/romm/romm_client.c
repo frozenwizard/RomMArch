@@ -76,6 +76,7 @@ typedef struct
    retro_time_t deadline;
    unsigned interval;
    enum romm_status status;
+   int http_status;
    bool finished;
    bool poll_pending;
    char url[1024];
@@ -506,6 +507,8 @@ static void romm_pair_poll_cb(retro_task_t *task, void *task_data,
    char detail[64];
 
    ctx->poll_pending = false;
+   if (status != ROMM_ERR_UNREACHABLE)
+      ctx->http_status = data->status;
 
    if (status == ROMM_OK)
    {
@@ -614,7 +617,7 @@ static void romm_pair_wait_cb(retro_task_t *task, void *task_data,
    if (*ctx->missing_scopes)
       RARCH_WARN(ROMM_PFX "Pairing left out %s.\n", ctx->missing_scopes);
 
-   ctx->cb(ctx->user_data, ctx->status,
+   ctx->cb(ctx->user_data, ctx->status, ctx->http_status,
          ctx->status == ROMM_OK ? ctx->token     : "",
          ctx->status == ROMM_OK ? ctx->device_id : "",
          ctx->missing_scopes);
