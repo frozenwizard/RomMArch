@@ -71,6 +71,9 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
 typedef bool (*romm_library_find_core_t)(const char *const *cores,
       char *path, size_t path_len, char *name, size_t name_len);
 
+/* The playlist at @path was just written. */
+typedef void (*romm_library_playlist_cb_t)(const char *path);
+
 typedef struct
 {
    const char *server;
@@ -84,6 +87,9 @@ typedef struct
    /* Gives a playlist without a default core one; NULL leaves it to
     * RetroArch. */
    romm_library_find_core_t find_core;
+   /* Runs as each playlist is rewritten, so a copy of it in memory can
+    * be read again before anything writes that back; may be NULL. */
+   romm_library_playlist_cb_t playlist_written;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it, valid only during the

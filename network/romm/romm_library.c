@@ -107,6 +107,7 @@ typedef struct
    /* Covers the sync found missing or changed, for the covers task */
    romm_lib_cover_t *covers;
    romm_library_find_core_t find_core;
+   romm_library_playlist_cb_t playlist_written;
    char *token;
    char *covers_title;
    char server[NAME_MAX_LENGTH];
@@ -1393,8 +1394,12 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
    if (!write)
       return true;
    sync->rewritten++;
-   return romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
-         entry.playlist, core_path, core_name);
+   if (!romm_lib_write_named_playlist(&sync->lib, sync->playlist_dir,
+         entry.playlist, core_path, core_name))
+      return false;
+   if (sync->playlist_written)
+      sync->playlist_written(path);
+   return true;
 }
 
 /* The last sync's entry for platform @id, if it wrote one. */
@@ -1602,6 +1607,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->user_data = user_data;
    sync->task      = task;
    sync->find_core = params->find_core;
+   sync->playlist_written = params->playlist_written;
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));

@@ -529,38 +529,43 @@ void romm_pair_follow_address(void)
       romm_pair();
 }
 
-/* The menu shows playlists from a cached copy and lists them in its
- * sidebar; both have to be reloaded after a sync rewrote the files. */
-static void romm_reload_playlists(const romm_library_t *lib)
+/* The menu shows a playlist from a copy in memory, and writes that
+ * copy back whole when a game's core is set, so a copy older than the
+ * file the sync just wrote would undo the sync. Main thread, as the
+ * sync's handler. */
+static void romm_playlist_written(const char *path)
 {
-   settings_t *settings     = config_get_ptr();
-   playlist_t *cached       = playlist_get_cached();
+   playlist_t *cached = playlist_get_cached();
+   bool refresh       = false;
+
+   /* A read under way may have the file as it was. */
+   if (playlist_init_cached_pending())
+   {
+      playlist_init_cached_defer_abort();
+      refresh = true;
+   }
+   if (cached && string_is_equal(path, playlist_get_conf_path(cached)))
+   {
+      playlist_config_t config;
+      if (playlist_config_copy(playlist_get_config(cached), &config))
+      {
+         playlist_free_cached();
+         playlist_init_cached(&config);
+      }
+      refresh = true;
+   }
+#ifdef HAVE_MENU
+   if (refresh)
+      menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+#endif
+}
+
+/* The menu lists the playlists in its sidebar. */
+static void romm_reload_playlists(void)
+{
 #ifdef HAVE_MENU
    struct menu_state *menu_st = menu_state_get_ptr();
-#endif
-   size_t i;
 
-   if (cached)
-   {
-      for (i = 0; i < RBUF_LEN(lib->platforms); i++)
-      {
-         char path[PATH_MAX_LENGTH];
-         fill_pathname_join(path, settings->paths.directory_playlist,
-               lib->platforms[i].playlist, sizeof(path));
-         if (string_is_equal(path, playlist_get_conf_path(cached)))
-         {
-            playlist_config_t config;
-            if (playlist_config_copy(playlist_get_config(cached), &config))
-            {
-               playlist_free_cached();
-               playlist_init_cached(&config);
-            }
-            break;
-         }
-      }
-   }
-
-#ifdef HAVE_MENU
    if (menu_st->driver_ctx && menu_st->driver_ctx->environ_cb)
       menu_st->driver_ctx->environ_cb(MENU_ENVIRON_RESET_HORIZONTAL_LIST,
             NULL, menu_st->userdata);
@@ -606,7 +611,7 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    char msg[256];
 
    romm_syncing = false;
-   romm_reload_playlists(lib);
+   romm_reload_playlists();
 
    if (status == ROMM_ERR_CANCELLED)
       return;
@@ -640,6 +645,7 @@ static bool romm_start_library_sync(bool quiet)
    params.title          = msg_hash_to_str(MSG_ROMM_SYNCING);
    params.covers_title   = msg_hash_to_str(MSG_ROMM_FETCHING_COVERS);
    params.find_core      = romm_find_core;
+   params.playlist_written = romm_playlist_written;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
    romm_syncing         = true;

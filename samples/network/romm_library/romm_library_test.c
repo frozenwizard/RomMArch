@@ -386,6 +386,16 @@ static void test_manifest(void)
 /* What sync_start() passes as the installed-core finder. */
 static romm_library_find_core_t test_find_core;
 
+/* The playlists a sync said it wrote, and the last one. */
+static unsigned written_count;
+static char written_path[256];
+
+static void on_playlist_written(const char *path)
+{
+   written_count++;
+   strlcpy(written_path, path, sizeof(written_path));
+}
+
 static bool sync_start(const char *server, const char *token,
       const char *playlist_dir, const char *thumbnails_dir,
       const char *title, const char *covers_title,
@@ -399,6 +409,7 @@ static bool sync_start(const char *server, const char *token,
    params.title          = title;
    params.covers_title   = covers_title;
    params.find_core      = test_find_core;
+   params.playlist_written = on_playlist_written;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1075,6 +1086,7 @@ static void test_sync_incremental(void)
    /* Nothing changed: the ids and an empty change list, asked for
     * since a minute before the newest game, and no rewrite. */
    filestream_write_file(pl, "untouched", 9);
+   written_count = 0;
    memset(&r, 0, sizeof(r));
    sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL,
          on_sync, &r);
@@ -1089,8 +1101,8 @@ static void test_sync_incremental(void)
          "changes request %s", stub_req.url);
    CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
          "unchanged: status %d games %u", r.status, (unsigned)r.games);
-   CHECK(filestream_read_file(pl, (void**)&doc, &len) && len == 9,
-         "unchanged playlist rewritten");
+   CHECK(filestream_read_file(pl, (void**)&doc, &len) && len == 9
+         && !written_count, "unchanged playlist rewritten");
    free(doc);
    doc = NULL;
 
@@ -1109,6 +1121,8 @@ static void test_sync_incremental(void)
    CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
          "changed: status %d games %u", r.status, (unsigned)r.games);
    CHECK(count_entries(pl) == 3, "%u entries", count_entries(pl));
+   CHECK(written_count == 1 && !strcmp(written_path, pl),
+         "rewrite reported %u times, last %s", written_count, written_path);
    if (filestream_read_file(pl, (void**)&doc, &len) && doc)
    {
       CHECK(lpl_get(doc, len, 0, "path", s, sizeof(s))
