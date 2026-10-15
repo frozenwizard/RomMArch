@@ -1536,6 +1536,15 @@ void romm_content_unloaded(const char *next_content)
    /* A fetch freed the rest when it began; what it holds is its own. */
    if (romm_fetching)
       return;
+   /* Content loaded or closed meanwhile drops a launch waiting on the
+    * choice of save; its next Run asks again. */
+   if (romm_conflict_pending)
+   {
+      RARCH_LOG("[RomM] Other content loaded or closed: %s no longer "
+            "waits on the choice of save.\n", romm_conflict_content);
+      romm_conflict_pending = false;
+      romm_conflict_gen++;
+   }
    /* A game in memory whose saves are syncing before it loads stays. */
    if (romm_launching)
    {
