@@ -752,8 +752,10 @@ void romm_refresh_library(void)
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
 }
 
-/* The entry being fetched, loaded once it's in memory */
+/* The entry being fetched, loaded once it's in memory and its saves
+ * are synced; and whether the fetch is what's running */
 static bool romm_launching = false;
+static bool romm_fetching  = false;
 static char romm_launch_core[PATH_MAX_LENGTH];
 static char romm_launch_content[PATH_MAX_LENGTH];
 static char romm_launch_label[NAME_MAX_LENGTH];
@@ -1163,6 +1165,7 @@ static void romm_on_launch_prepared(void *user_data,
    enum msg_hash_enums msg = MSG_UNKNOWN;
 
    romm_launching = false;
+   romm_fetching  = false;
    switch (status)
    {
       case ROMM_OK:
@@ -1291,6 +1294,7 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
       return -1;
    }
    romm_launching = true;
+   romm_fetching  = true;
    return 0;
 }
 
@@ -1530,6 +1534,15 @@ bool romm_launch_without_core(const char *content_path, const char *label,
 void romm_content_unloaded(const char *next_content)
 {
    /* A fetch freed the rest when it began; what it holds is its own. */
-   if (!romm_launching)
-      romm_launch_release(next_content);
+   if (romm_fetching)
+      return;
+   /* A game in memory whose saves are syncing before it loads stays. */
+   if (romm_launching)
+   {
+      RARCH_LOG("[RomM] Content closed while %s's saves sync; only it "
+            "stays in memory.\n", romm_launch_content);
+      romm_launch_release(romm_launch_content);
+      return;
+   }
+   romm_launch_release(next_content);
 }
