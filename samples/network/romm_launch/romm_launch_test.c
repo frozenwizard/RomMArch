@@ -6,7 +6,8 @@
  * RomM's own .m3u and discs in subfolders, and how a RAR, a deleted
  * game, a folder with nothing to launch, a bad CRC32 and a cancel end
  * it. Zips holding disc images are unpacked (one disc, two discs, the
- * disc a history entry names, a bad CRC32), zipped cartridges are not.
+ * disc a history entry names, a bad CRC32) and stay ready to load as
+ * what they held; zipped cartridges are not unpacked.
  * BIOS files the core lacks are fetched into the system folder first,
  * each written whole or not at all.
  * Also that the previous game is released, and that unloading
@@ -190,7 +191,7 @@ static void test_single_file(void)
 
    start(&r, "romm://314/Double Dragon (U) [!].zip");
    CHECK(!path_is_valid("romm://1/old game.gb"), "previous game kept");
-   CHECK(!romm_launch_is_ready("romm://314/Double Dragon (U) [!].zip"),
+   CHECK(!romm_launch_is_ready("romm://314/Double Dragon (U) [!].zip", NULL, 0),
          "ready before fetching");
 
    answer_str(200, "{\"id\": 314, \"platform_id\": 6,"
@@ -212,7 +213,7 @@ static void test_single_file(void)
          && !strcmp(r.launch_path, "romm://314/Double Dragon (U) [!].zip"),
          "single: calls %u status %d path %s", r.calls, r.status,
          r.launch_path);
-   CHECK(romm_launch_is_ready("romm://314/Double Dragon (U) [!].zip")
+   CHECK(romm_launch_is_ready("romm://314/Double Dragon (U) [!].zip", NULL, 0)
          && vfs_file_is("romm://314/Double Dragon (U) [!].zip",
             "PK\3\4zipped", 10), "game not in memory");
 }
@@ -283,7 +284,7 @@ static void test_cue_bin(void)
    CHECK(run_out() && r.status == ROMM_ERR_CHECKSUM, "bad CRC: status %d",
          r.status);
    CHECK(!path_is_valid("romm://4320/Alundra (USA) (v1.1).cue")
-         && !romm_launch_is_ready("romm://4320/Alundra (USA) (v1.1).m3u"),
+         && !romm_launch_is_ready("romm://4320/Alundra (USA) (v1.1).m3u", NULL, 0),
          "half-fetched game left in memory");
    free(bin);
 }
@@ -459,6 +460,7 @@ static void test_zipped_disc(void)
    launch_result_t r;
    uint8_t *zip;
    size_t zip_len, i;
+   char path[256];
 
    for (i = 0; i < t1_size; i++)
       t1[i] = (uint8_t)((i * 13) ^ (i >> 9));
@@ -490,6 +492,11 @@ static void test_zipped_disc(void)
          && vfs_file_is("romm://3335/Game.cue", cue, strlen(cue)),
          "members not unpacked");
    CHECK(!path_is_valid("romm://3335/Game.zip"), "zip kept");
+   CHECK(romm_launch_is_ready("romm://3335/Game.zip", path, sizeof(path))
+         && !strcmp(path, "romm://3335/Game.cue"),
+         "unpacked zip not ready as its disc: %s", path);
+   CHECK(!romm_launch_is_ready("romm://3336/Game.zip", path, sizeof(path)),
+         "another game ready");
 
    /* History names the .cue it launched; the zip comes again. */
    start(&r, "romm://3335/Game.cue");
@@ -510,6 +517,8 @@ static void test_zipped_disc(void)
          && !path_is_valid("romm://3335/Game (Track 01).bin")
          && !path_is_valid("romm://3335/Game.zip"),
          "bad member: status %d", r.status);
+   CHECK(!romm_launch_is_ready("romm://3335/Game.zip", path, sizeof(path)),
+         "ready after a failed fetch");
    free(zip);
    free(t1);
 }
@@ -522,6 +531,7 @@ static void test_zipped_discs(void)
    launch_result_t r;
    uint8_t *zip;
    size_t zip_len;
+   char path[256];
 
    m[0].name = "Disc 1.cue";
    m[1].name = "Disc 1.bin";
@@ -540,6 +550,9 @@ static void test_zipped_discs(void)
             "Disc 1.cue\nDisc 2/Disc 2.cue\n", 29)
          && path_is_valid("romm://3336/Disc 2/Disc 2.bin"),
          "two discs: status %d path %s", r.status, r.launch_path);
+   CHECK(romm_launch_is_ready("romm://3336/Two Discs.zip", path, sizeof(path))
+         && !strcmp(path, "romm://3336/Two Discs.m3u"),
+         "unpacked discs not ready as their list: %s", path);
    free(zip);
 
    m[0].name = "Game.gb";
@@ -552,6 +565,8 @@ static void test_zipped_discs(void)
          && vfs_file_is("romm://20/Game.zip", zip, zip_len)
          && !path_is_valid("romm://20/Game.gb"),
          "cartridge: status %d path %s", r.status, r.launch_path);
+   CHECK(romm_launch_is_ready("romm://20/Game.zip", path, sizeof(path))
+         && !strcmp(path, "romm://20/Game.zip"), "cartridge ready as %s", path);
    free(zip);
 }
 

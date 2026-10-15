@@ -108,6 +108,11 @@ typedef struct
    char prefix[64];
 } romm_launch_t;
 
+/* The game last fetched, and what it loads as: a zip holding a disc is
+ * gone once unpacked. */
+static char romm_launch_held_content[PATH_MAX_LENGTH];
+static char romm_launch_held_path[PATH_MAX_LENGTH];
+
 unsigned romm_launch_rom_id(const char *content_path)
 {
    const char *p;
@@ -123,10 +128,19 @@ unsigned romm_launch_rom_id(const char *content_path)
    return (unsigned)id;
 }
 
-bool romm_launch_is_ready(const char *content_path)
+bool romm_launch_is_ready(const char *content_path, char *launch_path,
+      size_t len)
 {
-   return (retro_vfs_stat_romm(content_path, NULL)
-         & RETRO_VFS_STAT_IS_VALID) != 0;
+   const char *path = content_path;
+
+   if (     content_path
+         && !strcasecmp(content_path, romm_launch_held_content))
+      path = romm_launch_held_path;
+   if (!(retro_vfs_stat_romm(path, NULL) & RETRO_VFS_STAT_IS_VALID))
+      return false;
+   if (launch_path)
+      strlcpy(launch_path, path, len);
+   return true;
 }
 
 void romm_launch_release(const char *keep_path)
@@ -722,9 +736,15 @@ static void romm_launch_cb(retro_task_t *task, void *task_data,
    romm_launch_t *launch = (romm_launch_t*)user_data;
 
    if (launch->status == ROMM_OK)
+   {
+      strlcpy(romm_launch_held_content, launch->content_path,
+            sizeof(romm_launch_held_content));
+      strlcpy(romm_launch_held_path, launch->launch_path,
+            sizeof(romm_launch_held_path));
       RARCH_LOG(ROMM_LAUNCH_PFX "Fetched %s into memory in %u ms.\n",
             launch->rom.fs_name, (unsigned)((cpu_features_get_time_usec()
                - launch->started) / 1000));
+   }
    else
    {
       /* No half-fetched game is left behind. */

@@ -1217,6 +1217,7 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    bool started;
    char title[NAME_MAX_LENGTH];
    char unpack_title[NAME_MAX_LENGTH];
+   char launch_path[PATH_MAX_LENGTH];
 
    /* Run again on a game waiting on a save conflict: RomM's save.
     * Any other launch drops the waiting one. */
@@ -1244,11 +1245,11 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
             MESSAGE_QUEUE_CATEGORY_WARNING);
       return -1;
    }
-   if (romm_launch_is_ready(content_path))
+   if (romm_launch_is_ready(content_path, launch_path, sizeof(launch_path)))
    {
       strlcpy(romm_launch_content, content_path,
             sizeof(romm_launch_content));
-      return romm_load_with_saves(core_path, content_path, content_path,
+      return romm_load_with_saves(core_path, content_path, launch_path,
             label ? label : "");
    }
 

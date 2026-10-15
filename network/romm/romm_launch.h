@@ -50,8 +50,10 @@ typedef void (*romm_launch_cb_t)(void *user_data,
 /* The RomM game id in a romm://<id>/... path; 0 if it has none. */
 unsigned romm_launch_rom_id(const char *content_path);
 
-/* Has @content_path's game been fetched into memory already? */
-bool romm_launch_is_ready(const char *content_path);
+/* Has @content_path's game been fetched into memory already? If so,
+ * @launch_path gets what to load, as the fetch gave it. */
+bool romm_launch_is_ready(const char *content_path, char *launch_path,
+      size_t len);
 
 /* Frees the memory of every fetched game but @keep_path's; of them all
  * when @keep_path is NULL or not a RomM game. */
