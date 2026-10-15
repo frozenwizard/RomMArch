@@ -935,6 +935,113 @@ static void test_resolve(void)
    filestream_delete(p.record_path);
 }
 
+/* A file here equal to RomM's newest, never recorded. */
+static void test_match(void)
+{
+   romm_saves_sync_params_t p;
+   romm_saves_record_t rec;
+   romm_saves_game_t *g;
+   sync_result_t r;
+   char md5[33];
+   char state_md5[33];
+   char saves[512];
+   char states[512];
+   char body[256];
+
+   path_mkdir(DIR);
+   path_mkdir(DIR "/saves");
+   path_mkdir(DIR "/saves/Snes9x");
+   path_mkdir(DIR "/states");
+   path_mkdir(DIR "/states/Snes9x");
+   filestream_write_file(SRM, "SAME", 4);
+   filestream_write_file(STATE1, "SAMESTATE", 9);
+   romm_saves_md5_file(SRM, md5);
+   romm_saves_md5_file(STATE1, state_md5);
+   snprintf(saves, sizeof(saves), "[{\"id\": 70, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (U) [2026-10-13_08-00-00].srm\","
+         " \"emulator\": \"snes9x\", \"slot\": \"autosave\","
+         " \"content_hash\": \"%s\","
+         " \"updated_at\": \"2026-10-13T08:00:00+00:00\"}]", md5);
+   snprintf(states, sizeof(states), "[{\"id\": 80, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA).state1\","
+         " \"emulator\": \"Snes9x\", \"content_hash\": \"%s\","
+         " \"updated_at\": \"2026-10-13T08:00:00+00:00\"}]", state_md5);
+
+   /* RomM is told this device holds the save, as a download would,
+    * so its next upload to the slot isn't refused; then it's
+    * recorded. States have no such record in RomM. */
+   memset(&r, 0, sizeof(r));
+   sync_params(&p, false);
+   stub_reset();
+   CHECK(romm_saves_sync(&p, on_sync, &r), "match sync not started");
+   answer(200, saves);
+   answer(200, states);
+   snprintf(body, sizeof(body),
+         "{\"device_id\":\"e409\",\"content_hash\":\"%s\"}", md5);
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url,
+            "http://romm.local:8090/api/saves/70/downloaded")
+         && !strcmp(stub_req.body, body), "confirmation %s %s %s",
+         stub_req.method, stub_req.url, stub_req.body);
+   CHECK(!r.calls, "finished before RomM was told");
+   answer(200, "{\"id\": 70, \"rom_id\": 3335, \"file_name\": \"x.srm\","
+         " \"updated_at\": \"2026-10-13T08:00:00+00:00\"}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && !r.result.failed
+         && !r.result.downloaded && stub_req.count == 3,
+         "match: calls %u failed %u requests %u", r.calls, r.result.failed,
+         stub_req.count);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && romm_saves_game_file(g, ".srm", false)
+         && romm_saves_game_file(g, ".srm", false)->remote_id == 70
+         && !strcmp(romm_saves_game_file(g, ".srm", false)->md5, md5)
+         && romm_saves_game_file(g, ".state1", false)
+         && romm_saves_game_file(g, ".state1", false)->remote_id == 80,
+         "record after the match");
+   romm_saves_record_free(&rec);
+
+   /* RomM can't be told: not recorded, so the next sync tries again. */
+   filestream_delete(p.record_path);
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, saves);
+   answer(200, "[]");
+   answer(500, "Internal Server Error");
+   CHECK(r.calls == 1 && r.result.failed == 1, "failed confirmation:"
+         " failed %u", r.result.failed);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && !romm_saves_game_file(g, ".srm", false),
+         "a match RomM wasn't told of was recorded");
+   romm_saves_record_free(&rec);
+
+   /* Without a device id there is nothing to tell. */
+   p.device_id = NULL;
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, saves);
+   answer(200, "[]");
+   CHECK(r.calls == 1 && !r.result.failed && stub_req.count == 2,
+         "match without a device: failed %u requests %u", r.result.failed,
+         stub_req.count);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && romm_saves_game_file(g, ".srm", false)
+         && romm_saves_game_file(g, ".srm", false)->remote_id == 70,
+         "record after a match without a device");
+   romm_saves_record_free(&rec);
+
+   filestream_delete(SRM);
+   filestream_delete(STATE1);
+   filestream_delete(DIR "/saves/Snes9x");
+   filestream_delete(DIR "/saves");
+   filestream_delete(DIR "/states/Snes9x");
+   filestream_delete(DIR "/states");
+   filestream_delete(p.record_path);
+}
+
 int main(void)
 {
    test_time();
@@ -944,6 +1051,7 @@ int main(void)
    test_plan();
    test_sync();
    test_resolve();
+   test_match();
    filestream_delete(DIR);
 
    if (failures)

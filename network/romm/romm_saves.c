@@ -722,6 +722,20 @@ static void romm_saves_sync_uploaded(void *user_data,
    romm_saves_sync_step(sync);
 }
 
+/* RomM knows this device holds the save it matched. */
+static void romm_saves_sync_confirmed(void *user_data,
+      enum romm_status status, int http_status, const romm_save_t *save)
+{
+   romm_saves_sync_t *sync       = (romm_saves_sync_t*)user_data;
+   const romm_saves_step_t *step = &sync->steps[sync->next - 1];
+
+   if (status == ROMM_OK)
+      romm_saves_sync_record(sync, step, &step->remote, step->md5);
+   else
+      sync->result.failed++;
+   romm_saves_sync_step(sync);
+}
+
 /* Sends @step's file; @overwrite sends a save over a newer one. */
 static bool romm_saves_sync_upload(romm_saves_sync_t *sync,
       romm_saves_step_t *step, bool overwrite)
@@ -886,6 +900,17 @@ static void romm_saves_sync_step(romm_saves_sync_t *sync)
       switch (step->type)
       {
          case ROMM_SAVES_MATCH:
+            /* Unless RomM knows this device holds it, it refuses the
+             * device's next upload to its slot. */
+            if (!step->is_state && *sync->device_id)
+            {
+               if (romm_client_save_downloaded(sync->server, sync->token,
+                     step->remote.id, sync->device_id, step->md5,
+                     romm_saves_sync_confirmed, sync))
+                  return;
+               sync->result.failed++;
+               break;
+            }
             romm_saves_sync_record(sync, step, &step->remote, step->md5);
             break;
          case ROMM_SAVES_CONFLICT:

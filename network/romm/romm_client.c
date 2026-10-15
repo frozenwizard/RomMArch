@@ -1511,43 +1511,48 @@ bool romm_client_state_content(const char *server, const char *token,
    return romm_client_download(server, token, path, cb, user_data);
 }
 
+/* RomM's reply to a request answered with a save, into @save. */
+static enum romm_status romm_save_reply(const http_transfer_data_t *data,
+      romm_save_t *save)
+{
+   enum romm_status status = romm_response_status(data, 200);
+   char value[32];
+
+   memset(save, 0, sizeof(*save));
+   if (status == ROMM_ERR_HTTP && data->status == 409)
+      return ROMM_ERR_CONFLICT;
+   if (status != ROMM_OK)
+      return status;
+   if (romm_json_get(data->data, data->len, "id", value, sizeof(value)))
+      save->id = romm_json_uint(value);
+   if (romm_json_get(data->data, data->len, "rom_id",
+         value, sizeof(value)))
+      save->rom_id = romm_json_uint(value);
+   if (romm_json_get(data->data, data->len, "file_size_bytes",
+         value, sizeof(value)))
+      save->size = (uint64_t)strtoull(value, NULL, 10);
+   romm_json_get(data->data, data->len, "file_name", save->file_name,
+         sizeof(save->file_name));
+   romm_json_get(data->data, data->len, "emulator", save->emulator,
+         sizeof(save->emulator));
+   romm_json_get(data->data, data->len, "slot", save->slot,
+         sizeof(save->slot));
+   romm_json_get(data->data, data->len, "content_hash",
+         save->content_hash, sizeof(save->content_hash));
+   romm_json_get(data->data, data->len, "updated_at", save->updated_at,
+         sizeof(save->updated_at));
+   return save->id && *save->file_name ? ROMM_OK : ROMM_ERR_RESPONSE;
+}
+
 static void romm_upload_cb(retro_task_t *task, void *task_data,
       void *user_data, const char *err)
 {
    romm_upload_ctx_t *ctx     = (romm_upload_ctx_t*)user_data;
    http_transfer_data_t *data = (http_transfer_data_t*)task_data;
-   enum romm_status status    = romm_response_status(data, 200);
+   romm_save_t save;
+   enum romm_status status    = romm_save_reply(data, &save);
    int http_status            = status == ROMM_ERR_UNREACHABLE
          ? 0 : data->status;
-   romm_save_t save;
-   char value[32];
-
-   memset(&save, 0, sizeof(save));
-   if (status == ROMM_ERR_HTTP && data->status == 409)
-      status = ROMM_ERR_CONFLICT;
-   else if (status == ROMM_OK)
-   {
-      if (romm_json_get(data->data, data->len, "id", value, sizeof(value)))
-         save.id = romm_json_uint(value);
-      if (romm_json_get(data->data, data->len, "rom_id",
-            value, sizeof(value)))
-         save.rom_id = romm_json_uint(value);
-      if (romm_json_get(data->data, data->len, "file_size_bytes",
-            value, sizeof(value)))
-         save.size = (uint64_t)strtoull(value, NULL, 10);
-      romm_json_get(data->data, data->len, "file_name", save.file_name,
-            sizeof(save.file_name));
-      romm_json_get(data->data, data->len, "emulator", save.emulator,
-            sizeof(save.emulator));
-      romm_json_get(data->data, data->len, "slot", save.slot,
-            sizeof(save.slot));
-      romm_json_get(data->data, data->len, "content_hash",
-            save.content_hash, sizeof(save.content_hash));
-      romm_json_get(data->data, data->len, "updated_at", save.updated_at,
-            sizeof(save.updated_at));
-      if (!save.id || !*save.file_name)
-         status = ROMM_ERR_RESPONSE;
-   }
 
    if (status == ROMM_OK)
       RARCH_LOG(ROMM_PFX "Uploaded %s %u as %s.\n", ctx->what, save.id,
@@ -1704,4 +1709,82 @@ bool romm_client_state_upload(const romm_upload_t *up,
       romm_save_cb_t cb, void *user_data)
 {
    return romm_upload(up, true, cb, user_data);
+}
+
+static void romm_save_downloaded_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_upload_ctx_t *ctx     = (romm_upload_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   romm_save_t save;
+   enum romm_status status    = romm_save_reply(data, &save);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "Told RomM this device has save %u.\n", save.id);
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't tell RomM this device has a save "
+            "(status %d, HTTP %d).\n", status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? &save : NULL);
+   free(ctx);
+}
+
+bool romm_client_save_downloaded(const char *server, const char *token,
+      unsigned save_id, const char *device_id, const char *content_hash,
+      romm_save_cb_t cb, void *user_data)
+{
+   char path[64];
+   char url[2048];
+   char headers[512];
+   rjsonwriter_t *writer;
+   romm_upload_ctx_t *ctx;
+   const char *body;
+   int body_len = 0;
+   bool pushed  = false;
+
+   if (     !save_id || string_is_empty(token)
+         || string_is_empty(device_id))
+      return false;
+   snprintf(path, sizeof(path), "/api/saves/%u/downloaded", save_id);
+   if (     !romm_client_url(url, sizeof(url), server, path)
+         || (size_t)snprintf(headers, sizeof(headers),
+               "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
+            >= sizeof(headers))
+      return false;
+   if (!(ctx = (romm_upload_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   ctx->what      = "save";
+
+   if (!(writer = rjsonwriter_open_memory()))
+   {
+      free(ctx);
+      return false;
+   }
+   rjsonwriter_raw(writer, "{", 1);
+   rjsonwriter_add_string(writer, "device_id");
+   rjsonwriter_raw(writer, ":", 1);
+   rjsonwriter_add_string(writer, device_id);
+   if (!string_is_empty(content_hash))
+   {
+      rjsonwriter_raw(writer, ",", 1);
+      rjsonwriter_add_string(writer, "content_hash");
+      rjsonwriter_raw(writer, ":", 1);
+      rjsonwriter_add_string(writer, content_hash);
+   }
+   rjsonwriter_raw(writer, "}", 1);
+
+   if ((body = rjsonwriter_get_memory_buffer(writer, &body_len)))
+      pushed = task_push_http_transfer_with_content(url, "POST",
+            body, (size_t)body_len, "application/json", true, false,
+            headers, romm_save_downloaded_cb, ctx) != NULL;
+   rjsonwriter_free(writer);
+
+   if (!pushed)
+      free(ctx);
+   return pushed;
 }

@@ -360,6 +360,14 @@ bool romm_client_save_content(const char *server, const char *token,
       unsigned save_id, const char *device_id,
       romm_download_cb_t cb, void *user_data);
 
+/* Tells RomM that this device, @device_id, holds save @save_id, whose
+ * MD5 is @content_hash (or NULL), as if it had fetched it: RomM
+ * refuses the device's next upload to the save's slot otherwise. @cb
+ * runs on the main thread. */
+bool romm_client_save_downloaded(const char *server, const char *token,
+      unsigned save_id, const char *device_id, const char *content_hash,
+      romm_save_cb_t cb, void *user_data);
+
 /* Fetches save state @state_id into memory. @cb runs on the main
  * thread. */
 bool romm_client_state_content(const char *server, const char *token,

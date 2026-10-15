@@ -1826,6 +1826,67 @@ static void test_upload(void)
          && stub_req.count == 0 && r.calls == 0, "upload started");
 }
 
+static void test_save_downloaded(void)
+{
+   upload_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_save_downloaded("http://romm.local:8090/",
+         "rmm_0123abcd", 21, "e409ecd7-f8f1-458e-bf82-09c5f8604113",
+         "0f343b0931126a20f133d67c2b018a3b", on_upload, &r),
+         "confirmation not started");
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url,
+            "http://romm.local:8090/api/saves/21/downloaded")
+         && !strcmp(stub_req.content_type, "application/json")
+         && strstr(stub_req.headers,
+            "Authorization: Bearer rmm_0123abcd\r\n"),
+         "request %s %s (%s) %s", stub_req.method, stub_req.url,
+         stub_req.content_type, stub_req.headers);
+   CHECK(!strcmp(stub_req.body,
+         "{\"device_id\":\"e409ecd7-f8f1-458e-bf82-09c5f8604113\","
+         "\"content_hash\":\"0f343b0931126a20f133d67c2b018a3b\"}"),
+         "body %s", stub_req.body);
+   answer(200, "{\"id\": 21, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-12_21-30-00].srm\","
+         " \"slot\": \"autosave\","
+         " \"updated_at\": \"2026-10-13T02:30:00+00:00\"}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_save
+         && r.save.id == 21
+         && !strcmp(r.save.updated_at, "2026-10-13T02:30:00+00:00"),
+         "confirmed: status %d id %u", r.status, r.save.id);
+
+   /* No hash: RomM then records the version without one. */
+   stub_reset();
+   romm_client_save_downloaded("http://h", "t", 21, "e409", NULL,
+         on_upload, &r);
+   CHECK(!strcmp(stub_req.body, "{\"device_id\":\"e409\"}"), "body %s",
+         stub_req.body);
+
+   /* A token without devices.write; a device RomM doesn't know. */
+   memset(&r, 0, sizeof(r));
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_FORBIDDEN && !r.has_save, "403: status %d",
+         r.status);
+   memset(&r, 0, sizeof(r));
+   romm_client_save_downloaded("http://h", "t", 21, "e409", NULL,
+         on_upload, &r);
+   answer(404, "{\"detail\": \"Device with ID e409 not found\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 404,
+         "404: status %d", r.status);
+
+   stub_reset();
+   CHECK(!romm_client_save_downloaded("http://h", "t", 0, "e409", NULL,
+            on_upload, &r)
+         && !romm_client_save_downloaded("http://h", "t", 21, "", NULL,
+            on_upload, &r)
+         && !romm_client_save_downloaded("http://h", "", 21, "e409", NULL,
+            on_upload, &r)
+         && stub_req.count == 0, "confirmation started without a save,"
+         " device or token");
+}
+
 int main(void)
 {
    test_url();
@@ -1843,6 +1904,7 @@ int main(void)
    test_firmware();
    test_saves();
    test_upload();
+   test_save_downloaded();
    test_pair_start();
    test_pair_wait();
 
