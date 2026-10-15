@@ -21,7 +21,8 @@
 
 RETRO_BEGIN_DECLS
 
-/* The platform side of the RomM frontend (romm_apple.m). */
+/* The platform side of the RomM frontend: romm_apple.m on Apple,
+ * romm_platform.c on Windows and Linux. */
 
 /* Opens @url in the user's web browser. */
 bool romm_platform_open_url(const char *url);
