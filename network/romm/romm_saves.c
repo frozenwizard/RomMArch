@@ -583,7 +583,7 @@ struct romm_saves_sync
 static romm_saves_sync_t **romm_saves_queue = NULL;
 
 static void romm_saves_sync_step(romm_saves_sync_t *sync);
-static void romm_saves_sync_begin(romm_saves_sync_t *sync);
+static bool romm_saves_sync_begin(romm_saves_sync_t *sync);
 
 static void romm_saves_sync_free(romm_saves_sync_t *sync)
 {
@@ -625,8 +625,9 @@ static void romm_saves_sync_end(romm_saves_sync_t *sync)
       RARCH_WARN(ROMM_SAVES_PFX "Couldn't sync saves of game %u "
             "(status %d, HTTP %d).\n", sync->rom_id, sync->status,
             sync->http_status);
-   sync->cb(sync->user_data, sync->status, sync->http_status,
-         &sync->result);
+   if (sync->cb)
+      sync->cb(sync->user_data, sync->status, sync->http_status,
+            &sync->result);
 
    /* Next in line. */
    for (i = 1; i < RBUF_LEN(romm_saves_queue); i++)
@@ -634,7 +635,10 @@ static void romm_saves_sync_end(romm_saves_sync_t *sync)
    RBUF_RESIZE(romm_saves_queue, RBUF_LEN(romm_saves_queue) - 1);
    romm_saves_sync_free(sync);
    if (RBUF_LEN(romm_saves_queue))
-      romm_saves_sync_begin(romm_saves_queue[0]);
+   {
+      if (!romm_saves_sync_begin(romm_saves_queue[0]))
+         romm_saves_sync_end(romm_saves_queue[0]);
+   }
    else
       RBUF_FREE(romm_saves_queue);
 }
@@ -979,16 +983,17 @@ static void romm_saves_sync_saves_cb(void *user_data,
    romm_saves_sync_end(sync);
 }
 
-static void romm_saves_sync_begin(romm_saves_sync_t *sync)
+/* False when the first request can't start; the sync is then still
+ * to be ended. */
+static bool romm_saves_sync_begin(romm_saves_sync_t *sync)
 {
    /* Read now: a sync that fails still writes the record back. */
    romm_saves_record_load(&sync->rec, sync->record_path);
-   if (!romm_client_saves(sync->server, sync->token, sync->rom_id,
+   if (romm_client_saves(sync->server, sync->token, sync->rom_id,
          romm_saves_sync_saves_cb, sync))
-   {
-      sync->status = ROMM_ERR_UNREACHABLE;
-      romm_saves_sync_end(sync);
-   }
+      return true;
+   sync->status = ROMM_ERR_UNREACHABLE;
+   return false;
 }
 
 bool romm_saves_sync(const romm_saves_sync_params_t *p,
@@ -1023,7 +1028,10 @@ bool romm_saves_sync(const romm_saves_sync_params_t *p,
    strlcpy(sync->record_path, p->record_path, sizeof(sync->record_path));
 
    RBUF_PUSH(romm_saves_queue, sync);
-   if (RBUF_LEN(romm_saves_queue) == 1)
-      romm_saves_sync_begin(sync);
-   return true;
+   if (RBUF_LEN(romm_saves_queue) > 1 || romm_saves_sync_begin(sync))
+      return true;
+   /* Callers expect @cb after this returns, never before. */
+   sync->cb = NULL;
+   romm_saves_sync_end(sync);
+   return false;
 }

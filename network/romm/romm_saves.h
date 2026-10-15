@@ -220,7 +220,8 @@ romm_saves_step_t *romm_saves_plan(const romm_saves_plan_params_t *p);
  * closes, sends what changed here. Files that changed on both sides
  * are counted, not touched. The record is updated after each file.
  * Syncs run one at a time, in the order asked for. @cb runs on the
- * main thread. */
+ * main thread, never before this returns; false when the sync can't
+ * start, and @cb then doesn't run. */
 bool romm_saves_sync(const romm_saves_sync_params_t *p,
       romm_saves_sync_cb_t cb, void *user_data);
 

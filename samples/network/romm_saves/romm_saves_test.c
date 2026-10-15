@@ -716,6 +716,35 @@ static void test_sync(void)
    answer(200, "[]");
    CHECK(r2.calls == 1 && r2.status == ROMM_OK, "queued sync not run");
 
+   /* A sync that can't start says so, and never calls back; the game
+    * is still owed. */
+   memset(&r, 0, sizeof(r));
+   sync_params(&p, true);
+   stub_reset();
+   stub_req.refuse = true;
+   CHECK(!romm_saves_sync(&p, on_sync, &r) && !r.calls
+         && !RBUF_LEN(romm_saves_queue), "refused start: calls %u",
+         r.calls);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && g->pending, "refused start left nothing owed");
+   romm_saves_record_free(&rec);
+
+   /* Queued behind one, it calls back as the one before ends. */
+   memset(&r, 0, sizeof(r));
+   memset(&r2, 0, sizeof(r2));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   CHECK(romm_saves_sync(&p, on_sync, &r2), "queued sync refused");
+   answer(200, "[]");
+   stub_req.refuse = true;
+   answer(200, "[]");
+   CHECK(r.calls == 1 && r2.calls == 1
+         && r2.status == ROMM_ERR_UNREACHABLE && !RBUF_LEN(romm_saves_queue),
+         "queued refused start: %u %u status %d", r.calls, r2.calls,
+         r2.status);
+   stub_req.refuse = false;
+
    sync_params(&p, false);
    p.token = "";
    CHECK(!romm_saves_sync(&p, on_sync, &r) && !romm_saves_sync(NULL,
