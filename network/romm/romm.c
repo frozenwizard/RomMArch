@@ -33,6 +33,7 @@
 #include "../../command.h"
 #include "../../configuration.h"
 #include "../../core_info.h"
+#include "../../defaults.h"
 #include "../../file_path_special.h"
 #include "../../msg_hash.h"
 #include "../../paths.h"
@@ -575,6 +576,54 @@ static void romm_reload_playlists(void)
 #endif
 }
 
+/* History and Favorites list RomM games the sync doesn't write: drops
+ * those gone from RomM, deleted or hidden from the user, and follows
+ * renames. */
+static void romm_follow_games(playlist_t *playlist,
+      const romm_rom_t *const *old, const romm_rom_t *const *lib)
+{
+   char path[PATH_MAX_LENGTH];
+   char label[NAME_MAX_LENGTH];
+   bool changed = false;
+   size_t i     = playlist_size(playlist);
+
+   while (i--)
+   {
+      const struct playlist_entry *entry = NULL;
+      const char *was_label;
+
+      playlist_get_index(playlist, i, &entry);
+      if (     !entry || !entry->path
+            || !string_starts_with(entry->path, ROMM_SCHEME))
+         continue;
+      was_label = entry->label ? entry->label : "";
+      if (!romm_library_follow_game(old, lib, entry->path, was_label,
+            path, sizeof(path), label, sizeof(label)))
+      {
+         RARCH_LOG("[RomM] %s is gone from RomM; removed from %s.\n",
+               entry->path, path_basename(playlist_get_conf_path(playlist)));
+         playlist_delete_index(playlist, i);
+         changed = true;
+      }
+      else if (   !string_is_equal(path, entry->path)
+               || !string_is_equal(label, was_label))
+      {
+         struct playlist_entry update = {0};
+         RARCH_LOG("[RomM] %s is now %s in %s.\n", entry->path, path,
+               path_basename(playlist_get_conf_path(playlist)));
+         update.path  = path;
+         update.label = label;
+         playlist_update(playlist, i, &update);
+         changed = true;
+      }
+   }
+   if (changed)
+   {
+      playlist_write_file(playlist);
+      romm_playlist_changed(playlist_get_conf_path(playlist));
+   }
+}
+
 static bool romm_find_core(const char *const *cores, char *path,
       size_t path_len, char *name, size_t name_len)
 {
@@ -613,6 +662,17 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    char msg[256];
 
    romm_syncing = false;
+   if (status == ROMM_OK)
+   {
+      const romm_rom_t **old_index = romm_library_index(old);
+      const romm_rom_t **index     = romm_library_index(lib);
+      if (g_defaults.content_history)
+         romm_follow_games(g_defaults.content_history, old_index, index);
+      if (g_defaults.content_favorites)
+         romm_follow_games(g_defaults.content_favorites, old_index, index);
+      RBUF_FREE(old_index);
+      RBUF_FREE(index);
+   }
    romm_reload_playlists();
 
    if (status == ROMM_ERR_CANCELLED)
