@@ -253,6 +253,10 @@ typedef void (*romm_download_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const void *data, size_t len);
 
+/* A request that brings nothing back. */
+typedef void (*romm_done_cb_t)(void *user_data,
+      enum romm_status status, int http_status);
+
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
       const char *path);
@@ -372,6 +376,12 @@ bool romm_client_save_downloaded(const char *server, const char *token,
  * thread. */
 bool romm_client_state_content(const char *server, const char *token,
       unsigned state_id, romm_download_cb_t cb, void *user_data);
+
+/* Deletes the @count save states in @ids from RomM. @cb runs on the
+ * main thread. */
+bool romm_client_states_delete(const char *server, const char *token,
+      const unsigned *ids, size_t count, romm_done_cb_t cb,
+      void *user_data);
 
 /* Uploads @up as a save. @up's strings and data are copied. @cb runs
  * on the main thread. */

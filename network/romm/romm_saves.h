@@ -116,7 +116,8 @@ typedef struct
  * since the last sync. Either way the copy not chosen is kept in
  * RomM, apart from what syncs use: a save as "<base> (conflict)
  * <suffix>" in the "conflict" slot, a state as "<base> (conflict
- * <time>)<suffix>". */
+ * <time>)<suffix>". Only the newest 10 kept saves of a game, and kept
+ * states of a game and emulator, stay. */
 enum romm_saves_resolve
 {
    /* Neither copy is touched; the file is counted as a conflict. */

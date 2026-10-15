@@ -346,14 +346,12 @@ romm_saves_local_t *romm_saves_list_local(const char *dir,
    return list;
 }
 
-/* Copies @name to @s without the time RomM adds to a save uploaded to
- * a slot, " [2026-10-12_21-18-25]". */
-static void romm_saves_strip_tag(char *s, size_t len, const char *name)
+/* Where in @name @pattern is, its 'd's standing for any digit; NULL
+ * if it's not there. */
+static const char *romm_saves_find(const char *name, const char *pattern)
 {
-   static const char pattern[] = " [dddd-dd-dd_dd-dd-dd]";
    const char *c;
 
-   strlcpy(s, name, len);
    for (c = name; *c; c++)
    {
       size_t i;
@@ -362,12 +360,24 @@ static void romm_saves_strip_tag(char *s, size_t len, const char *name)
                : c[i] != pattern[i])
             break;
       if (!pattern[i])
-      {
-         size_t at = (size_t)(c - name);
-         if (at < len)
-            strlcpy(s + at, c + sizeof(pattern) - 1, len - at);
-         return;
-      }
+         return c;
+   }
+   return NULL;
+}
+
+/* Copies @name to @s without the time RomM adds to a save uploaded to
+ * a slot, " [2026-10-12_21-18-25]". */
+static void romm_saves_strip_tag(char *s, size_t len, const char *name)
+{
+   static const char pattern[] = " [dddd-dd-dd_dd-dd-dd]";
+   const char *c;
+
+   strlcpy(s, name, len);
+   if ((c = romm_saves_find(name, pattern)))
+   {
+      size_t at = (size_t)(c - name);
+      if (at < len)
+         strlcpy(s + at, c + sizeof(pattern) - 1, len - at);
    }
 }
 
@@ -570,6 +580,8 @@ struct romm_saves_sync
    size_t next;
    /* The upload out was sent over newer saves. */
    bool overwriting;
+   /* A state was kept from a conflict: older kept ones may go. */
+   bool kept_state;
    char server[1024];
    char token[128];
    char device_id[64];
@@ -834,6 +846,13 @@ static void romm_saves_sync_kept(void *user_data, enum romm_status status,
    {
       RARCH_LOG(ROMM_SAVES_PFX "Kept the other copy of %s%s in RomM as "
             "%s.\n", sync->base, step->suffix, save->file_name);
+      if (step->is_state)
+      {
+         romm_save_t kept = *save;
+         strlcpy(kept.emulator, sync->emulator, sizeof(kept.emulator));
+         RBUF_PUSH(sync->remote_states, kept);
+         sync->kept_state = true;
+      }
       if (sync->resolve == ROMM_SAVES_RESOLVE_REMOTE
             ? romm_saves_sync_fetch(sync, step)
             : romm_saves_sync_upload(sync, step, true))
@@ -877,6 +896,7 @@ static bool romm_saves_sync_keep(romm_saves_sync_t *sync,
    snprintf(name, sizeof(name), "%s (conflict)%s", sync->base,
          step->suffix);
    up.slot = ROMM_SAVES_KEPT_SLOT;
+   up.keep = ROMM_SAVES_KEEP;
    return romm_client_save_upload(&up, romm_saves_sync_kept, sync);
 }
 
@@ -918,6 +938,59 @@ static bool romm_saves_sync_resolve(romm_saves_sync_t *sync,
       return false;
    started = romm_saves_sync_keep(sync, step, buf, (size_t)len);
    free(buf);
+   return started;
+}
+
+/* Whether @state is one kept from a conflict with this emulator. */
+static bool romm_saves_sync_is_kept(const romm_saves_sync_t *sync,
+      const romm_save_t *state)
+{
+   return string_is_equal(state->emulator, sync->emulator)
+      && romm_saves_find(state->file_name,
+            " (conflict dddd-dd-dd dd-dd-dd).state");
+}
+
+static int romm_saves_cmp_newest(const void *a, const void *b)
+{
+   const romm_save_t *sa = *(const romm_save_t *const *)a;
+   const romm_save_t *sb = *(const romm_save_t *const *)b;
+   if (romm_saves_newer(sa, sb))
+      return -1;
+   return romm_saves_newer(sb, sa) ? 1 : 0;
+}
+
+static void romm_saves_sync_pruned(void *user_data,
+      enum romm_status status, int http_status)
+{
+   romm_saves_sync_t *sync = (romm_saves_sync_t*)user_data;
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_SAVES_PFX "Deleted the oldest kept states of %s.\n",
+            sync->base);
+   romm_saves_sync_step(sync);
+}
+
+/* Deletes the states kept from conflicts with this emulator past the
+ * newest ROMM_SAVES_KEEP. False when there are none to delete. */
+static bool romm_saves_sync_prune(romm_saves_sync_t *sync)
+{
+   const romm_save_t **kept = NULL;
+   unsigned *ids            = NULL;
+   bool started             = false;
+   size_t i;
+
+   for (i = 0; i < RBUF_LEN(sync->remote_states); i++)
+      if (romm_saves_sync_is_kept(sync, &sync->remote_states[i]))
+         RBUF_PUSH(kept, &sync->remote_states[i]);
+   if (RBUF_LEN(kept) > ROMM_SAVES_KEEP)
+   {
+      qsort(kept, RBUF_LEN(kept), sizeof(*kept), romm_saves_cmp_newest);
+      for (i = ROMM_SAVES_KEEP; i < RBUF_LEN(kept); i++)
+         RBUF_PUSH(ids, kept[i]->id);
+      started = romm_client_states_delete(sync->server, sync->token, ids,
+            RBUF_LEN(ids), romm_saves_sync_pruned, sync);
+   }
+   RBUF_FREE(kept);
+   RBUF_FREE(ids);
    return started;
 }
 
@@ -971,6 +1044,12 @@ static void romm_saves_sync_step(romm_saves_sync_t *sync)
             sync->result.failed++;
             break;
       }
+   }
+   if (sync->kept_state)
+   {
+      sync->kept_state = false;
+      if (romm_saves_sync_prune(sync))
+         return;
    }
    romm_saves_sync_end(sync);
 }

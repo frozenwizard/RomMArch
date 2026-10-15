@@ -1887,6 +1887,65 @@ static void test_save_downloaded(void)
          " device or token");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+} done_result_t;
+
+static void on_done(void *user_data, enum romm_status status,
+      int http_status)
+{
+   done_result_t *r = (done_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+}
+
+static void test_states_delete(void)
+{
+   static const unsigned ids[] = { 101, 4294967295u, 7 };
+   done_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_states_delete("http://romm.local:8090", "rmm_0123abcd",
+         ids, 3, on_done, &r), "delete not started");
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url,
+            "http://romm.local:8090/api/states/delete")
+         && !strcmp(stub_req.content_type, "application/json")
+         && strstr(stub_req.headers,
+            "Authorization: Bearer rmm_0123abcd\r\n")
+         && !strcmp(stub_req.body,
+            "{\"states\": [101,4294967295,7]}"),
+         "request %s %s %s", stub_req.method, stub_req.url, stub_req.body);
+   answer(200, "[101, 4294967295, 7]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK, "deleted: status %d",
+         r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_states_delete("http://h", "t", ids, 1, on_done, &r);
+   CHECK(!strcmp(stub_req.body, "{\"states\": [101]}"), "one id %s",
+         stub_req.body);
+   answer(404, "{\"detail\": \"State with ID 101 not found\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 404,
+         "404: status %d", r.status);
+   memset(&r, 0, sizeof(r));
+   romm_client_states_delete("http://h", "t", ids, 1, on_done, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && r.http_status == 0,
+         "no response: status %d", r.status);
+
+   stub_reset();
+   CHECK(!romm_client_states_delete("http://h", "t", ids, 0, on_done, &r)
+         && !romm_client_states_delete("http://h", "t", NULL, 1, on_done,
+            &r)
+         && !romm_client_states_delete("http://h", "", ids, 1, on_done, &r)
+         && stub_req.count == 0, "delete started without states or token");
+}
+
 int main(void)
 {
    test_url();
@@ -1905,6 +1964,7 @@ int main(void)
    test_saves();
    test_upload();
    test_save_downloaded();
+   test_states_delete();
    test_pair_start();
    test_pair_wait();
 

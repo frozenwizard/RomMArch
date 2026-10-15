@@ -1544,6 +1544,69 @@ static enum romm_status romm_save_reply(const http_transfer_data_t *data,
    return save->id && *save->file_name ? ROMM_OK : ROMM_ERR_RESPONSE;
 }
 
+typedef struct
+{
+   romm_done_cb_t cb;
+   void *user_data;
+} romm_done_ctx_t;
+
+static void romm_states_delete_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_done_ctx_t *ctx       = (romm_done_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+
+   if (status != ROMM_OK)
+      RARCH_WARN(ROMM_PFX "Couldn't delete save states (status %d, HTTP "
+            "%d).\n", status, http_status);
+   ctx->cb(ctx->user_data, status, http_status);
+   free(ctx);
+}
+
+bool romm_client_states_delete(const char *server, const char *token,
+      const unsigned *ids, size_t count, romm_done_cb_t cb,
+      void *user_data)
+{
+   char url[2048];
+   char headers[512];
+   char *body;
+   size_t _len, cap, i;
+   romm_done_ctx_t *ctx;
+   bool pushed = false;
+
+   if (     !ids || !count || string_is_empty(token)
+         || !romm_client_url(url, sizeof(url), server,
+               "/api/states/delete")
+         || (size_t)snprintf(headers, sizeof(headers),
+               "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
+            >= sizeof(headers))
+      return false;
+   /* {"states": [ids]}: at most 11 bytes an id. */
+   cap = 16 + count * 12;
+   if (!(body = (char*)malloc(cap)))
+      return false;
+   _len = strlcpy(body, "{\"states\": [", cap);
+   for (i = 0; i < count; i++)
+      _len += (size_t)snprintf(body + _len, cap - _len, "%s%u",
+            i ? "," : "", ids[i]);
+   strlcpy(body + _len, "]}", cap - _len);
+
+   if ((ctx = (romm_done_ctx_t*)malloc(sizeof(*ctx))))
+   {
+      ctx->cb        = cb;
+      ctx->user_data = user_data;
+      if (!(pushed = task_push_http_transfer_with_content(url, "POST",
+            body, strlen(body), "application/json", true, false, headers,
+            romm_states_delete_cb, ctx) != NULL))
+         free(ctx);
+   }
+   free(body);
+   return pushed;
+}
+
 static void romm_upload_cb(retro_task_t *task, void *task_data,
       void *user_data, const char *err)
 {

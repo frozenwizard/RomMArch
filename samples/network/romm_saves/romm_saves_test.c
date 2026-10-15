@@ -759,6 +759,31 @@ static void test_sync(void)
    filestream_delete(p.record_path);
 }
 
+/* RomM's states for the prune test: the one syncs use, changed at
+ * @t60, one kept with another emulator and ten kept with this one,
+ * listed newest first; 101, the oldest, is listed last. */
+static void kept_states(char *list, size_t len, const char *t60)
+{
+   size_t n = (size_t)snprintf(list, len, "[{\"id\": 60,"
+         " \"rom_id\": 3335, \"file_name\": \"Super Metroid (USA)"
+         ".state1\", \"emulator\": \"Snes9x\","
+         " \"updated_at\": \"%s\"},"
+         " {\"id\": 120, \"rom_id\": 3335, \"file_name\": \"Super"
+         " Metroid (USA) (conflict 2026-10-01 00-00-00).state1\","
+         " \"emulator\": \"bsnes\","
+         " \"updated_at\": \"2026-10-01T00:00:00+00:00\"}", t60);
+   unsigned i;
+
+   for (i = 10; i >= 1; i--)
+      n += (size_t)snprintf(list + n, len - n, ", {\"id\": %u,"
+            " \"rom_id\": 3335, \"file_name\": \"Super Metroid (USA)"
+            " (conflict 2026-10-%02u 00-00-00).state%u\","
+            " \"emulator\": \"Snes9x\","
+            " \"updated_at\": \"2026-10-%02uT00:00:00+00:00\"}",
+            100 + i, i, i % 3 + 1, i);
+   strlcpy(list + n, "]", len - n);
+}
+
 static void test_resolve(void)
 {
    romm_saves_sync_params_t p;
@@ -804,7 +829,8 @@ static void test_resolve(void)
          " \"updated_at\": \"2026-10-13T04:00:00+00:00\"}]");
    answer(200, "[]");
    CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/saves"
-         "?rom_id=3335&emulator=Snes9x&slot=conflict")
+         "?rom_id=3335&emulator=Snes9x&slot=conflict"
+         "&autocleanup=true&autocleanup_limit=10")
          && strstr(stub_req.body,
             "filename=\"Super Metroid (USA) (conflict).srm\"")
          && strstr(stub_req.body, "\r\n\r\nMINE\r\n"),
@@ -891,6 +917,57 @@ static void test_resolve(void)
          " \"updated_at\": \"2026-10-13T06:00:02+00:00\"}");
    CHECK(r.calls == 1 && r.result.uploaded == 1, "state: up %u",
          r.result.uploaded);
+
+   /* Ten states kept already: the oldest of this emulator's goes
+    * once the eleventh is in, before the sync ends. Another
+    * emulator's and the state syncs use aren't counted. */
+   {
+      char list[4096];
+
+      kept_states(list, sizeof(list), "2026-10-13T06:30:00+00:00");
+      filestream_write_file(STATE1, "MYSTATE2", 8);
+      memset(&r, 0, sizeof(r));
+      stub_reset();
+      romm_saves_sync(&p, on_sync, &r);
+      answer(200, "[]");
+      answer(200, list);
+      answer(200, "STATE60B");
+      answer(200, "{\"id\": 111, \"rom_id\": 3335, \"file_name\":"
+            " \"Super Metroid (USA) (conflict 2026-10-13 07-00-00)"
+            ".state1\", \"updated_at\": \"2026-10-13T07:00:00+00:00\"}");
+      answer(200, "{\"id\": 60, \"rom_id\": 3335,"
+            " \"file_name\": \"Super Metroid (USA).state1\","
+            " \"updated_at\": \"2026-10-13T07:00:01+00:00\"}");
+      CHECK(!r.calls && !strcmp(stub_req.method, "POST")
+            && !strcmp(stub_req.url,
+               "http://romm.local:8090/api/states/delete")
+            && !strcmp(stub_req.body, "{\"states\": [101]}"),
+            "prune: calls %u %s %s", r.calls, stub_req.url, stub_req.body);
+      answer(200, "[101]");
+      CHECK(r.calls == 1 && r.result.uploaded == 1 && !r.result.failed,
+            "after the prune: calls %u up %u", r.calls, r.result.uploaded);
+
+      /* A failed delete doesn't fail the sync; the next keep retries. */
+      kept_states(list, sizeof(list), "2026-10-13T07:30:00+00:00");
+      filestream_write_file(STATE1, "MYSTATE3", 8);
+      memset(&r, 0, sizeof(r));
+      stub_reset();
+      romm_saves_sync(&p, on_sync, &r);
+      answer(200, "[]");
+      answer(200, list);
+      answer(200, "STATE60C");
+      answer(200, "{\"id\": 112, \"rom_id\": 3335, \"file_name\":"
+            " \"Super Metroid (USA) (conflict 2026-10-13 08-00-00)"
+            ".state1\", \"updated_at\": \"2026-10-13T08:00:00+00:00\"}");
+      answer(200, "{\"id\": 60, \"rom_id\": 3335,"
+            " \"file_name\": \"Super Metroid (USA).state1\","
+            " \"updated_at\": \"2026-10-13T08:00:01+00:00\"}");
+      CHECK(!strcmp(stub_req.body, "{\"states\": [101]}"), "prune %s",
+            stub_req.body);
+      answer(500, "Internal Server Error");
+      CHECK(r.calls == 1 && r.result.uploaded == 1 && !r.result.failed,
+            "failed prune: calls %u failed %u", r.calls, r.result.failed);
+   }
 
    /* Keeping fails: nothing else moves. */
    filestream_write_file(SRM, "MINE3", 5);
