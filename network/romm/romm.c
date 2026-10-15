@@ -21,6 +21,8 @@
 #include <features/features_cpu.h>
 #include <file/config_file.h>
 #include <file/file_path.h>
+#include <libretro.h>
+#include <lists/string_list.h>
 #include <queues/task_queue.h>
 #include <string/stdstring.h>
 
@@ -1019,18 +1021,75 @@ static void romm_on_saves_pushed(void *user_data, enum romm_status status,
             MESSAGE_QUEUE_CATEGORY_WARNING);
 }
 
-/* Is @game's save file one the content closing has? */
-static bool romm_played_is_live(const romm_played_t *game)
+/* The save RAM file of the content closing, as its save file list
+ * names it; false when it names none. */
+static bool romm_closing_savefile(char *s, size_t len)
+{
+   const struct string_list *list =
+      (const struct string_list*)savefile_ptr_get();
+   size_t i;
+
+   if (!list)
+      return false;
+   for (i = 0; i < list->size; i++)
+      if (list->elems[i].attr.i == RETRO_MEMORY_SAVE_RAM)
+      {
+         strlcpy(s, list->elems[i].data, len);
+         return true;
+      }
+   return false;
+}
+
+/* Is @game the content closing, whose save RAM is @live? Only its name
+ * is sure before it loads: overrides and the core's own name for
+ * itself can put its folder elsewhere. */
+static bool romm_played_is_closing(const romm_played_t *game,
+      const char *live)
 {
    char name[NAME_MAX_LENGTH];
-   char path[PATH_MAX_LENGTH];
 
    if (!game->rom_id)
       return false;
    strlcpy(name, game->base, sizeof(name));
    strlcat(name, FILE_PATH_SRM_EXTENSION, sizeof(name));
-   fill_pathname_join(path, game->save_dir, name, sizeof(path));
-   return content_savefile_is_live(path);
+   return string_is_equal_noncase(path_basename(live), name);
+}
+
+static void romm_strip_trailing_slash(char *s)
+{
+   size_t _len = strlen(s);
+   while (_len > 1 && (s[_len - 1] == '/' || s[_len - 1] == '\\'))
+      s[--_len] = '\0';
+}
+
+/* Takes for @game the folders the closing content used, its save RAM
+ * being @live. False when they're in memory beside the content. */
+static bool romm_played_follow(romm_played_t *game, const char *live)
+{
+   const char *dir = dir_get_ptr(RARCH_DIR_CURRENT_SAVESTATE);
+   char save_dir[PATH_MAX_LENGTH];
+   char state_dir[PATH_MAX_LENGTH];
+
+   fill_pathname_basedir(save_dir, live, sizeof(save_dir));
+   romm_strip_trailing_slash(save_dir);
+   strlcpy(state_dir, string_is_empty(dir) ? game->state_dir : dir,
+         sizeof(state_dir));
+   romm_strip_trailing_slash(state_dir);
+   if (     string_starts_with(save_dir, ROMM_SCHEME)
+         || string_starts_with(state_dir, ROMM_SCHEME))
+   {
+      RARCH_WARN("[RomM] Saves of game %u went beside the game, in "
+            "memory; not sent.\n", game->rom_id);
+      return false;
+   }
+   if (     !string_is_equal(save_dir, game->save_dir)
+         || !string_is_equal(state_dir, game->state_dir))
+      RARCH_WARN("[RomM] Game %u kept its saves in %s and states in %s, "
+            "not %s and %s; they're sent from there.\n", game->rom_id,
+            save_dir, state_dir, game->save_dir, game->state_dir);
+   strlcpy(game->save_dir, save_dir, sizeof(game->save_dir));
+   strlcpy(game->state_dir, state_dir, sizeof(game->state_dir));
+   return true;
 }
 
 /* A game whose owed saves are on their way up */
@@ -1134,14 +1193,20 @@ void romm_sync_owed_saves(void)
 
 void romm_content_closed(void)
 {
-   romm_played_t *game = romm_played_is_live(&romm_closing)
-      ? &romm_closing
-      : romm_played_is_live(&romm_running) ? &romm_running : NULL;
+   romm_played_t *game = NULL;
+   char live[PATH_MAX_LENGTH];
 
+   if (!romm_closing_savefile(live, sizeof(live)))
+      return;
+   if (romm_played_is_closing(&romm_closing, live))
+      game = &romm_closing;
+   else if (romm_played_is_closing(&romm_running, live))
+      game = &romm_running;
    if (!game)
       return;
-   if (!romm_sync_played(game, true, ROMM_SAVES_RESOLVE_NONE,
-         romm_on_saves_pushed, NULL))
+   if (     romm_played_follow(game, live)
+         && !romm_sync_played(game, true, ROMM_SAVES_RESOLVE_NONE,
+               romm_on_saves_pushed, NULL))
       romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NOT_SENT),
             MESSAGE_QUEUE_CATEGORY_WARNING);
    memset(game, 0, sizeof(*game));
