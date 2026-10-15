@@ -1323,19 +1323,7 @@ bool romm_library_follow_game(const romm_rom_t *const *old,
    return true;
 }
 
-/* Days since 1970-01-01 of a proleptic Gregorian date, and back. */
-static long romm_lib_days_from_civil(int y, int m, int d)
-{
-   long era;
-   long yoe, doy, doe;
-   y  -= m <= 2;
-   era = (y >= 0 ? y : y - 399) / 400;
-   yoe = y - era * 400;
-   doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
-   doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-   return era * 146097 + doe - 719468;
-}
-
+/* The proleptic Gregorian date @z days after 1970-01-01. */
 static void romm_lib_civil_from_days(long z, int *y, int *m, int *d)
 {
    long era, doe, yoe, doy, mp;
@@ -1355,38 +1343,23 @@ static void romm_lib_civil_from_days(long z, int *y, int *m, int *d)
 static bool romm_lib_cursor(char *s, size_t len, const char *at,
       unsigned margin)
 {
-   int y, mo, d, h, mi, sec;
-   long offset = 0;
-   long days;
-   long t;
-   const char *zone;
+   int y, mo, d;
+   int64_t t = romm_json_time(at);
+   long days, secs;
 
-   if (     sscanf(at, "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi,
-               &sec) != 6
-         || strlen(at) < 19)
-      return false;
-   for (zone = at + 19; *zone == '.' || ISDIGIT((unsigned char)*zone);
-         zone++);
-   if (*zone == '+' || *zone == '-')
-   {
-      int zh, zm;
-      if (sscanf(zone + 1, "%2d:%2d", &zh, &zm) != 2)
-         return false;
-      offset = (*zone == '+' ? 1 : -1) * (zh * 3600L + zm * 60L);
-   }
-
-   days = romm_lib_days_from_civil(y, mo, d);
-   t    = h * 3600L + mi * 60L + sec - offset - (long)margin;
-   days += t / 86400;
-   t    %= 86400;
    if (t < 0)
+      return false;
+   t   -= margin;
+   days = (long)(t / 86400);
+   secs = (long)(t % 86400);
+   if (secs < 0)
    {
-      t += 86400;
+      secs += 86400;
       days--;
    }
    romm_lib_civil_from_days(days, &y, &mo, &d);
    return (size_t)snprintf(s, len, "%04d-%02d-%02dT%02ld:%02ld:%02ldZ",
-         y, mo, d, t / 3600, t / 60 % 60, t % 60) < len;
+         y, mo, d, secs / 3600, secs / 60 % 60, secs % 60) < len;
 }
 
 /* Builds the platform's list in RomM's order from its ids: the games

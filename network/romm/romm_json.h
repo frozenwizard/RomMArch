@@ -16,6 +16,7 @@
 #define __ROMM_JSON_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <boolean.h>
 #include <retro_common_api.h>
 #include <formats/rjson.h>
@@ -50,6 +51,11 @@ typedef void (*romm_json_value_cb_t)(void *ctx, enum rjson_type type,
  * array is there and complete. */
 bool romm_json_values(const char *data, size_t len,
       const char *array_key, romm_json_value_cb_t value, void *ctx);
+
+/* Seconds since 1970 UTC of an ISO 8601 time such as RomM's
+ * "2026-10-13T02:18:25.590502+00:00", fractions dropped; -1 if @iso
+ * isn't one. */
+int64_t romm_json_time(const char *iso);
 
 RETRO_END_DECLS
 

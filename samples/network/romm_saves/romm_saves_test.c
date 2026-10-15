@@ -56,24 +56,24 @@ static void remove_file(const char *name)
 
 static void test_time(void)
 {
-   CHECK(romm_saves_time("2026-10-13T02:18:25+00:00") == 1791857905,
+   CHECK(romm_json_time("2026-10-13T02:18:25+00:00") == 1791857905,
          "list time %lld",
-         (long long)romm_saves_time("2026-10-13T02:18:25+00:00"));
+         (long long)romm_json_time("2026-10-13T02:18:25+00:00"));
    /* An upload's reply carries microseconds; the same second. */
-   CHECK(romm_saves_time("2026-10-13T02:18:25.590502+00:00") == 1791857905,
+   CHECK(romm_json_time("2026-10-13T02:18:25.590502+00:00") == 1791857905,
          "fraction dropped");
-   CHECK(romm_saves_time("2026-10-13T02:18:25Z") == 1791857905, "Z");
-   CHECK(romm_saves_time("2026-10-13T04:18:25+02:00") == 1791857905
-         && romm_saves_time("2026-10-12T21:18:25-05:00") == 1791857905,
+   CHECK(romm_json_time("2026-10-13T02:18:25Z") == 1791857905, "Z");
+   CHECK(romm_json_time("2026-10-13T04:18:25+02:00") == 1791857905
+         && romm_json_time("2026-10-12T21:18:25-05:00") == 1791857905,
          "offsets");
-   CHECK(romm_saves_time("1970-01-01T00:00:00Z") == 0
-         && romm_saves_time("2024-02-29T12:00:00Z") == 1709208000
-         && romm_saves_time("2000-03-01T00:00:00Z") == 951868800,
+   CHECK(romm_json_time("1970-01-01T00:00:00Z") == 0
+         && romm_json_time("2024-02-29T12:00:00Z") == 1709208000
+         && romm_json_time("2000-03-01T00:00:00Z") == 951868800,
          "calendar");
-   CHECK(romm_saves_time("2026-10-13") == -1
-         && romm_saves_time("2026-13-13T02:18:25Z") == -1
-         && romm_saves_time("2026-10-13T02:18:25 junk") == -1
-         && romm_saves_time("") == -1 && romm_saves_time(NULL) == -1,
+   CHECK(romm_json_time("2026-10-13") == -1
+         && romm_json_time("2026-13-13T02:18:25Z") == -1
+         && romm_json_time("2026-10-13T02:18:25 junk") == -1
+         && romm_json_time("") == -1 && romm_json_time(NULL) == -1,
          "not times");
 }
 
@@ -361,7 +361,7 @@ static void test_plan(void)
    g = romm_saves_record_game(&rec, 3335, "Snes9x", true);
    f = romm_saves_game_file(g, ".srm", true);
    f->remote_id   = 21;
-   f->remote_time = romm_saves_time(T1);
+   f->remote_time = romm_json_time(T1);
    strlcpy(f->md5, MD5_A, sizeof(f->md5));
    /* RomM's hash may be unknown; the record still says it's in sync. */
    r[0] = remote(21, "Super Metroid (USA) [2026-10-12_21-00-00].srm",
@@ -460,7 +460,7 @@ static void test_plan(void)
    RBUF_FREE(st);
    f = romm_saves_game_file(g, ".state1", true);
    f->remote_id   = 52;
-   f->remote_time = romm_saves_time(T1);
+   f->remote_time = romm_json_time(T1);
    strlcpy(f->md5, MD5_A, sizeof(f->md5));
    l[0] = local(".state1", MD5_B);
    st   = plan(g, NULL, 0, l, 1, NULL, 0, r, 3);
@@ -590,7 +590,7 @@ static void test_sync(void)
          && g->pending && !strcmp(g->base, "Super Metroid (USA)")
          && !strcmp(g->save_dir, DIR "/saves/Snes9x")
          && RBUF_LEN(g->files) == 1 && g->files[0].remote_id == 30
-         && g->files[0].remote_time == romm_saves_time(
+         && g->files[0].remote_time == romm_json_time(
             "2026-10-13T02:00:00Z"),
          "record after the pull");
    romm_saves_record_free(&rec);
@@ -635,7 +635,7 @@ static void test_sync(void)
          && !g->pending
          && romm_saves_game_file(g, ".srm", false)->remote_id == 31
          && romm_saves_game_file(g, ".srm", false)->remote_time
-            == romm_saves_time("2026-10-13T03:00:00Z")
+            == romm_json_time("2026-10-13T03:00:00Z")
          && !strcmp(romm_saves_game_file(g, ".srm", false)->md5, md5)
          && romm_saves_game_file(g, ".state1", false)->remote_id == 51,
          "record after the push");

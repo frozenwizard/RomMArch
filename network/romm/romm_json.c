@@ -12,6 +12,9 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdio.h>
+#include <string.h>
+
 #include <compat/strl.h>
 #include <string/stdstring.h>
 
@@ -243,4 +246,46 @@ bool romm_json_values(const char *data, size_t len,
 
    rjson_free(json);
    return complete;
+}
+
+/* Days from 1970-01-01 to @y-@m-@d in the proleptic Gregorian
+ * calendar. */
+static int64_t romm_json_days(int y, int m, int d)
+{
+   int era, yoe, doy, doe;
+
+   y  -= m <= 2;
+   era = (y >= 0 ? y : y - 399) / 400;
+   yoe = y - era * 400;
+   doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+   doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+   return (int64_t)era * 146097 + doe - 719468;
+}
+
+int64_t romm_json_time(const char *iso)
+{
+   int y, mo, d, h, mi, s, n = 0;
+   int64_t t;
+   const char *p;
+
+   if (     !iso
+         || sscanf(iso, "%4d-%2d-%2dT%2d:%2d:%2d%n",
+               &y, &mo, &d, &h, &mi, &s, &n) != 6
+         || n != 19
+         || mo < 1 || mo > 12 || d < 1 || d > 31
+         || h > 23 || mi > 59 || s > 60)
+      return -1;
+   t = romm_json_days(y, mo, d) * 86400 + h * 3600 + mi * 60 + s;
+   p = iso + n;
+   if (*p == '.')
+      for (p++; *p >= '0' && *p <= '9'; p++);
+   if ((*p == '+' || *p == '-') && strlen(p) == 6 && p[3] == ':')
+   {
+      int oh = (p[1] - '0') * 10 + (p[2] - '0');
+      int om = (p[4] - '0') * 10 + (p[5] - '0');
+      t     -= (*p == '+' ? 1 : -1) * (oh * 3600 + om * 60);
+   }
+   else if (!string_is_equal(p, "Z") && *p)
+      return -1;
+   return t;
 }

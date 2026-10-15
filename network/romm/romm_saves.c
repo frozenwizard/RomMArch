@@ -262,48 +262,6 @@ bool romm_saves_record_save(const romm_saves_record_t *rec,
    return ok;
 }
 
-/* Days from 1970-01-01 to @y-@m-@d in the proleptic Gregorian
- * calendar. */
-static int64_t romm_saves_days(int y, int m, int d)
-{
-   int era, yoe, doy, doe;
-
-   y  -= m <= 2;
-   era = (y >= 0 ? y : y - 399) / 400;
-   yoe = y - era * 400;
-   doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-   doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-   return (int64_t)era * 146097 + doe - 719468;
-}
-
-int64_t romm_saves_time(const char *iso)
-{
-   int y, mo, d, h, mi, s, n = 0;
-   int64_t t;
-   const char *p;
-
-   if (     !iso
-         || sscanf(iso, "%4d-%2d-%2dT%2d:%2d:%2d%n",
-               &y, &mo, &d, &h, &mi, &s, &n) != 6
-         || n != 19
-         || mo < 1 || mo > 12 || d < 1 || d > 31
-         || h > 23 || mi > 59 || s > 60)
-      return -1;
-   t = romm_saves_days(y, mo, d) * 86400 + h * 3600 + mi * 60 + s;
-   p = iso + n;
-   if (*p == '.')
-      for (p++; *p >= '0' && *p <= '9'; p++);
-   if ((*p == '+' || *p == '-') && strlen(p) == 6 && p[3] == ':')
-   {
-      int oh = (p[1] - '0') * 10 + (p[2] - '0');
-      int om = (p[4] - '0') * 10 + (p[5] - '0');
-      t     -= (*p == '+' ? 1 : -1) * (oh * 3600 + om * 60);
-   }
-   else if (!string_is_equal(p, "Z") && *p)
-      return -1;
-   return t;
-}
-
 const char *romm_saves_suffix(const char *name, const char *base)
 {
    size_t base_len = strlen(base);
@@ -452,8 +410,8 @@ static void romm_saves_remote_suffix(char *s, size_t len,
 
 static bool romm_saves_newer(const romm_save_t *a, const romm_save_t *b)
 {
-   int64_t ta = romm_saves_time(a->updated_at);
-   int64_t tb = romm_saves_time(b->updated_at);
+   int64_t ta = romm_json_time(a->updated_at);
+   int64_t tb = romm_json_time(b->updated_at);
    return ta != tb ? ta > tb : a->id > b->id;
 }
 
@@ -471,7 +429,7 @@ static void romm_saves_plan_file(romm_saves_step_t **steps,
       && (!rec || !string_is_equal(local->md5, rec->md5));
    bool remote_changed = remote
       && (     !rec || remote->id != rec->remote_id
-            || romm_saves_time(remote->updated_at) > rec->remote_time);
+            || romm_json_time(remote->updated_at) > rec->remote_time);
    romm_saves_step_t step;
 
    memset(&step, 0, sizeof(step));
@@ -690,7 +648,7 @@ static void romm_saves_sync_record(romm_saves_sync_t *sync,
    romm_saves_file_t *f = romm_saves_game_file(romm_saves_sync_game(sync),
          step->suffix, true);
    f->remote_id   = remote->id;
-   f->remote_time = romm_saves_time(remote->updated_at);
+   f->remote_time = romm_json_time(remote->updated_at);
    strlcpy(f->md5, md5, sizeof(f->md5));
    romm_saves_record_save(&sync->rec, sync->record_path);
 }

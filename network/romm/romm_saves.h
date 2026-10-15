@@ -194,11 +194,6 @@ romm_saves_game_t *romm_saves_record_game(romm_saves_record_t *rec,
 romm_saves_file_t *romm_saves_game_file(romm_saves_game_t *game,
       const char *suffix, bool create);
 
-/* Seconds since 1970 UTC of an ISO 8601 time such as RomM's
- * "2026-10-13T02:18:25.590502+00:00", fractions dropped; -1 if @iso
- * isn't one. */
-int64_t romm_saves_time(const char *iso);
-
 /* The rest of file name @name after @base, when @name is one of that
  * game's files: a suffix of up to three dot-led parts without spaces,
  * such as ".srm", ".A1.bin" or ".state.auto", that isn't a screenshot
