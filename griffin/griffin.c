@@ -1899,6 +1899,9 @@ ROMM
 #include "../network/romm/romm_launch.c"
 #include "../network/romm/romm_saves.c"
 #include "../network/romm/romm.c"
+#ifndef __APPLE__
+#include "../network/romm/romm_platform.c"
+#endif
 #endif
 
 /*============================================================

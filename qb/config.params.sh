@@ -229,6 +229,7 @@ HAVE_TEST_DRIVERS=yes      # Test input driver
 HAVE_GAME_AI=no
 HAVE_RETRONFS=auto         # Built-in NFSv3 client and nfs:// support (needs networking)
 HAVE_RETROSMB=auto         # Built-in SMB2/3 client (needs HAVE_CRYPTO), used unless a libsmb2 is asked for
+HAVE_ROMM=no               # RomM frontend, built as Rommarch (needs networking, threads, crypto and the keychain)
 HAVE_SMBCLIENT=auto        # SMB client support
 HAVE_LIBSMB=no             # Use a system libsmb2 for SMB in place of the built-in client
 HAVE_COCOA=auto            # Cocoa support (Darwin/Apple)

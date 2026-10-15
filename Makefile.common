@@ -2948,6 +2948,19 @@ ifeq ($(HAVE_RETRONFS), 1)
               $(LIBRETRO_COMM_DIR)/vfs/vfs_implementation_nfs.o
 endif
 
+# The RomM frontend (Rommarch): library, launch from memory, save sync.
+ifeq ($(HAVE_ROMM), 1)
+   DEFINES += -DHAVE_ROMM
+   OBJ     += network/romm/romm_json.o \
+              network/romm/romm_client.o \
+              network/romm/romm_library.o \
+              network/romm/romm_launch.o \
+              network/romm/romm_saves.o \
+              network/romm/romm_platform.o \
+              network/romm/romm.o \
+              $(LIBRETRO_COMM_DIR)/vfs/vfs_implementation_romm.o
+endif
+
 # The background prefetcher the network backends read through; once,
 # whichever of them are built.
 ifneq (,$(filter 1,$(HAVE_RETRONFS) $(HAVE_RETROSMB) $(HAVE_SMBCLIENT)))

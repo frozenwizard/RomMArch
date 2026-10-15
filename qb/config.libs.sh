@@ -1065,6 +1065,11 @@ fi
 check_enabled NETWORKING RETRONFS 'built-in NFS client' 'Networking is' false
 if [ "$HAVE_RETRONFS" = 'auto' ]; then HAVE_RETRONFS=yes; fi
 
+check_enabled NETWORKING ROMM 'RomM' 'Networking is' false
+check_enabled THREADS ROMM 'RomM' 'Threads are' false
+check_enabled KEYCHAIN ROMM 'RomM' 'The keychain is' false
+check_enabled CRYPTO ROMM 'RomM' 'crypto is' false
+
 # The built-in client is used unless a system libsmb2 was asked for
 # (--enable-libsmb, or --enable-smbclient); nothing is bundled any more,
 # so libsmb2 asked for and not found is an error.
