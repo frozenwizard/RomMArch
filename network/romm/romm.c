@@ -115,17 +115,74 @@ static void romm_notify_failure(enum romm_status status, int http_status)
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
 }
 
+static bool romm_overrides_active(void);
+
+/* What Check Connection has found so far */
+typedef struct
+{
+   char version[64];
+   char username[256];
+} romm_check_t;
+
+static void romm_check_scopes_cb(void *user_data, enum romm_status status,
+      int http_status, bool found, const char *missing_scopes)
+{
+   settings_t *settings = config_get_ptr();
+   romm_check_t *check  = (romm_check_t*)user_data;
+   char msg[1024];
+
+   romm_checking = false;
+   /* RomM's list shows the token as it is now, which is what decides
+    * whether saves sync. */
+   if (     status == ROMM_OK && found
+         && !string_is_equal(missing_scopes,
+               settings->arrays.romm_missing_scopes))
+   {
+      RARCH_LOG("[RomM] Noted that RomM gave this device %s%s.\n",
+            *missing_scopes ? "all but " : "every permission asked for",
+            missing_scopes);
+      strlcpy(settings->arrays.romm_missing_scopes, missing_scopes,
+            sizeof(settings->arrays.romm_missing_scopes));
+      if (!romm_overrides_active())
+         command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   }
+   if (status == ROMM_OK && found && *missing_scopes)
+   {
+      snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_ROMM_CONNECTED_MISSING_SCOPES),
+            check->version, check->username, missing_scopes);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
+   }
+   else
+   {
+      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED_AS),
+            check->version, check->username);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   }
+   free(check);
+}
+
 static void romm_check_token_cb(void *user_data,
       enum romm_status status, int http_status, const char *username)
 {
-   char *version = (char*)user_data;
+   settings_t *settings = config_get_ptr();
+   romm_check_t *check  = (romm_check_t*)user_data;
    char msg[512];
 
+   if (status == ROMM_OK)
+   {
+      /* And whether RomM gave this device every permission. */
+      strlcpy(check->username, username, sizeof(check->username));
+      if (romm_client_token_scopes(settings->arrays.romm_server_url,
+            settings->arrays.romm_token, settings->arrays.romm_device_id,
+            romm_check_scopes_cb, check))
+         return;
+   }
    romm_checking = false;
    if (status == ROMM_OK)
    {
       snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CONNECTED_AS),
-            version, username);
+            check->version, username);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
    }
    else if (status == ROMM_ERR_FORBIDDEN)
@@ -136,14 +193,14 @@ static void romm_check_token_cb(void *user_data,
    }
    else
       romm_notify_failure(status, http_status);
-   free(version);
+   free(check);
 }
 
 static void romm_check_connection_cb(void *user_data,
       enum romm_status status, int http_status, const char *version)
 {
    settings_t *settings = config_get_ptr();
-   char *version_copy;
+   romm_check_t *check;
    char msg[512];
 
    if (status != ROMM_OK)
@@ -155,12 +212,13 @@ static void romm_check_connection_cb(void *user_data,
 
    /* Paired: the token has to work too. */
    if (     !string_is_empty(settings->arrays.romm_token)
-         && (version_copy = strdup(version)))
+         && (check = (romm_check_t*)calloc(1, sizeof(*check))))
    {
+      strlcpy(check->version, version, sizeof(check->version));
       if (romm_client_whoami(settings->arrays.romm_server_url,
-            settings->arrays.romm_token, romm_check_token_cb, version_copy))
+            settings->arrays.romm_token, romm_check_token_cb, check))
          return;
-      free(version_copy);
+      free(check);
    }
 
    romm_checking = false;

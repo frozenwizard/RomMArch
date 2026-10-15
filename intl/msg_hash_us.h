@@ -33649,6 +33649,10 @@ MSG_HASH(
    "Connected to RomM %s as %s."
    )
 MSG_HASH(
+   MSG_ROMM_CONNECTED_MISSING_SCOPES,
+   "Connected to RomM %s as %s, but RomM didn't give this device: %s. Pair again with every permission ticked."
+   )
+MSG_HASH(
    MSG_ROMM_CHECK_IN_PROGRESS,
    "Already checking the connection to RomM."
    )

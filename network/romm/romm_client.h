@@ -253,6 +253,13 @@ typedef void (*romm_download_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const void *data, size_t len);
 
+/* @found is false when RomM lists no token for the device; else
+ * @missing_scopes names, comma separated, the scopes pairing asks for
+ * that the device's newest token lacks, empty when none. */
+typedef void (*romm_token_scopes_cb_t)(void *user_data,
+      enum romm_status status, int http_status, bool found,
+      const char *missing_scopes);
+
 /* A request that brings nothing back. */
 typedef void (*romm_done_cb_t)(void *user_data,
       enum romm_status status, int http_status);
@@ -346,6 +353,13 @@ bool romm_client_firmware(const char *server, const char *token,
 bool romm_client_firmware_content(const char *server, const char *token,
       unsigned firmware_id, const char *file_name,
       romm_download_cb_t cb, void *user_data);
+
+/* Looks up in RomM's list of the user's tokens (which needs me.read)
+ * the newest one bound to @device_id, as pairing again leaves the
+ * older ones there, and what it lacks of the scopes pairing asks for.
+ * @cb runs on the main thread. */
+bool romm_client_token_scopes(const char *server, const char *token,
+      const char *device_id, romm_token_scopes_cb_t cb, void *user_data);
 
 /* Lists the saves the user has in RomM for game @rom_id, from every
  * client and slot. @cb runs on the main thread. */

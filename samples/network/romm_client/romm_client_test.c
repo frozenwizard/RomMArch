@@ -1946,6 +1946,95 @@ static void test_states_delete(void)
          && stub_req.count == 0, "delete started without states or token");
 }
 
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   bool found;
+   char missing[512];
+} scopes_result_t;
+
+static void on_token_scopes(void *user_data, enum romm_status status,
+      int http_status, bool found, const char *missing_scopes)
+{
+   scopes_result_t *r = (scopes_result_t*)user_data;
+   r->calls++;
+   r->status = status;
+   r->found  = found;
+   strlcpy(r->missing, missing_scopes, sizeof(r->missing));
+}
+
+static void test_token_scopes(void)
+{
+   scopes_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_token_scopes("http://romm.local:8090", "rmm_0123abcd",
+         "e409", on_token_scopes, &r), "lookup not started");
+   CHECK(!strcmp(stub_req.method, "GET")
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/client-tokens")
+         && strstr(stub_req.headers,
+            "Authorization: Bearer rmm_0123abcd\r\n"),
+         "request %s %s", stub_req.method, stub_req.url);
+   /* Another device's token, this device's first pairing (every scope)
+    * and its second, newest, without the devices scopes; ids out of
+    * order, and a nested value to step over. */
+   answer(200, "[{\"id\": 7, \"name\": \"Living room\","
+         " \"scopes\": [\"me.read\"], \"device_id\": \"aaaa\"},"
+         " {\"id\": 9, \"name\": \"Mac\", \"scopes\": [\"me.read\","
+         " \"roms.read\", \"roms.user.read\", \"roms.user.write\","
+         " \"platforms.read\", \"assets.read\", \"assets.write\","
+         " \"firmware.read\", \"collections.read\","
+         " \"collections.write\"], \"extra\": {\"device_id\": \"e409\"},"
+         " \"device_id\": \"e409\", \"expires_at\": null},"
+         " {\"id\": 3, \"name\": \"Mac\", \"scopes\": [\"me.read\","
+         " \"roms.read\", \"roms.user.read\", \"roms.user.write\","
+         " \"platforms.read\", \"assets.read\", \"assets.write\","
+         " \"firmware.read\", \"collections.read\","
+         " \"collections.write\", \"devices.read\", \"devices.write\"],"
+         " \"device_id\": \"e409\"}]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.found
+         && !strcmp(r.missing, "devices.read, devices.write"),
+         "newest token: found %d missing '%s'", r.found, r.missing);
+
+   /* Every scope. */
+   memset(&r, 0, sizeof(r));
+   romm_client_token_scopes("http://h", "t", "e409", on_token_scopes, &r);
+   answer(200, "[{\"id\": 3, \"scopes\": [\"me.read\", \"roms.read\","
+         " \"roms.user.read\", \"roms.user.write\", \"platforms.read\","
+         " \"assets.read\", \"assets.write\", \"firmware.read\","
+         " \"collections.read\", \"collections.write\", \"devices.read\","
+         " \"devices.write\", \"users.read\"], \"device_id\": \"e409\"}]");
+   CHECK(r.found && !*r.missing, "full token: found %d missing '%s'",
+         r.found, r.missing);
+
+   /* No token for this device, a cut-off list, a refusal. */
+   memset(&r, 0, sizeof(r));
+   romm_client_token_scopes("http://h", "t", "e409", on_token_scopes, &r);
+   answer(200, "[{\"id\": 7, \"scopes\": [], \"device_id\": \"aaaa\"},"
+         " {\"id\": 8, \"scopes\": [], \"device_id\": null}]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && !r.found,
+         "other devices' tokens: found %d", r.found);
+   memset(&r, 0, sizeof(r));
+   romm_client_token_scopes("http://h", "t", "e409", on_token_scopes, &r);
+   answer(200, "[{\"id\": 3, \"scopes\": [\"me.read\"], \"device_id\":"
+         " \"e409\"}, {\"id\"");
+   CHECK(r.status == ROMM_OK && !r.found, "cut-off list: found %d",
+         r.found);
+   memset(&r, 0, sizeof(r));
+   romm_client_token_scopes("http://h", "t", "e409", on_token_scopes, &r);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_FORBIDDEN && !r.found, "403: status %d",
+         r.status);
+
+   stub_reset();
+   CHECK(!romm_client_token_scopes("http://h", "t", "", on_token_scopes, &r)
+         && !romm_client_token_scopes("http://h", "", "e409",
+            on_token_scopes, &r)
+         && stub_req.count == 0, "lookup started without a device or token");
+}
+
 int main(void)
 {
    test_url();
@@ -1965,6 +2054,7 @@ int main(void)
    test_upload();
    test_save_downloaded();
    test_states_delete();
+   test_token_scopes();
    test_pair_start();
    test_pair_wait();
 

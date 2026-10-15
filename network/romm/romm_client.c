@@ -472,17 +472,13 @@ static void romm_pair_scope(void *ctx, enum rjson_type type,
          *granted |= (uint32_t)1 << i;
 }
 
-/* Lists in @s the scopes asked for that the token reply @data leaves
- * out; none when it doesn't list scopes at all. */
-static void romm_pair_missing_scopes(const char *data, size_t len,
-      char *s, size_t s_len)
+/* Lists in @s the scopes asked for that aren't among the bits of
+ * @granted, as "a, b". */
+static void romm_missing_scopes(uint32_t granted, char *s, size_t s_len)
 {
-   uint32_t granted = 0;
    size_t i;
 
    *s = '\0';
-   if (!romm_json_values(data, len, "scopes", romm_pair_scope, &granted))
-      return;
    for (i = 0; i < ARRAY_SIZE(romm_scopes); i++)
    {
       if (granted & ((uint32_t)1 << i))
@@ -491,6 +487,144 @@ static void romm_pair_missing_scopes(const char *data, size_t len,
          strlcat(s, ", ", s_len);
       strlcat(s, romm_scopes[i], s_len);
    }
+}
+
+/* Lists in @s the scopes asked for that the token reply @data leaves
+ * out; none when it doesn't list scopes at all. */
+static void romm_pair_missing_scopes(const char *data, size_t len,
+      char *s, size_t s_len)
+{
+   uint32_t granted = 0;
+
+   *s = '\0';
+   if (romm_json_values(data, len, "scopes", romm_pair_scope, &granted))
+      romm_missing_scopes(granted, s, s_len);
+}
+
+/* The scopes of the newest token in RomM's token list @data bound to
+ * @device_id, as bits of romm_scopes; false when none is. */
+static bool romm_token_granted(const char *data, size_t len,
+      const char *device_id, uint32_t *granted)
+{
+   unsigned long id = 0, best = 0;
+   uint32_t scopes  = 0;
+   bool mine        = false;
+   bool found       = false;
+   rjson_t *json;
+   enum rjson_type type;
+   char key[32];
+
+   if (!data || !len || !(json = rjson_open_buffer(data, len)))
+      return false;
+   key[0] = '\0';
+   while ((type = rjson_next(json)) != RJSON_DONE && type != RJSON_ERROR)
+   {
+      /* A token is an object in the top-level array, its scopes an
+       * array of strings in it. */
+      unsigned depth = rjson_get_context_depth(json);
+      const char *str;
+      size_t _len, i;
+
+      if (type == RJSON_OBJECT && depth == 2)
+      {
+         id     = 0;
+         scopes = 0;
+         mine   = false;
+         key[0] = '\0';
+      }
+      else if (type == RJSON_OBJECT_END && depth == 1)
+      {
+         if (mine && (!found || id > best))
+         {
+            found    = true;
+            best     = id;
+            *granted = scopes;
+         }
+      }
+      else if (depth == 2 && rjson_get_context_type(json) == RJSON_OBJECT
+            && (type == RJSON_STRING || type == RJSON_NUMBER))
+      {
+         str = rjson_get_string(json, &_len);
+         if (rjson_get_context_count(json) & 1)
+            strlcpy(key, str, sizeof(key));
+         else if (string_is_equal(key, "id"))
+            id = strtoul(str, NULL, 10);
+         else if (string_is_equal(key, "device_id"))
+            mine = string_is_equal(str, device_id);
+      }
+      else if (depth == 3 && type == RJSON_STRING
+            && rjson_get_context_type(json) == RJSON_ARRAY
+            && string_is_equal(key, "scopes"))
+      {
+         str = rjson_get_string(json, &_len);
+         for (i = 0; i < ARRAY_SIZE(romm_scopes); i++)
+            if (string_is_equal(str, romm_scopes[i]))
+               scopes |= (uint32_t)1 << i;
+      }
+   }
+   if (type == RJSON_ERROR)
+      found = false;
+   rjson_free(json);
+   return found;
+}
+
+typedef struct
+{
+   romm_token_scopes_cb_t cb;
+   void *user_data;
+   char device_id[64];
+} romm_token_scopes_ctx_t;
+
+static void romm_token_scopes_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_token_scopes_ctx_t *ctx = (romm_token_scopes_ctx_t*)user_data;
+   http_transfer_data_t *data   = (http_transfer_data_t*)task_data;
+   enum romm_status status      = romm_response_status(data, 200);
+   int http_status              = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   uint32_t granted             = 0;
+   bool found                   = false;
+   char missing[512];
+
+   missing[0] = '\0';
+   if (status == ROMM_OK)
+   {
+      if ((found = romm_token_granted(data->data, data->len,
+            ctx->device_id, &granted)))
+         romm_missing_scopes(granted, missing, sizeof(missing));
+      RARCH_LOG(ROMM_PFX "This device's token %s%s.\n",
+            found ? (*missing ? "lacks " : "has every scope asked for")
+                  : "isn't in RomM's list", missing);
+   }
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't list the tokens (status %d, HTTP "
+            "%d).\n", status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status, found, missing);
+   free(ctx);
+}
+
+bool romm_client_token_scopes(const char *server, const char *token,
+      const char *device_id, romm_token_scopes_cb_t cb, void *user_data)
+{
+   romm_token_scopes_ctx_t *ctx;
+
+   if (string_is_empty(device_id))
+      return false;
+   if (!(ctx = (romm_token_scopes_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   strlcpy(ctx->device_id, device_id, sizeof(ctx->device_id));
+
+   if (!romm_get(server, token, "/api/client-tokens",
+         romm_token_scopes_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
 }
 
 static void romm_pair_wait_finish(romm_pair_wait_ctx_t *ctx,
