@@ -37,8 +37,10 @@
 
 /* RetroArch's HTTP client refuses replies over 256 MB. */
 #define ROMM_LAUNCH_RANGE ((uint64_t)64 * 1024 * 1024)
-/* Unpacked per task step, so the menu keeps drawing */
+/* Unpacked, or copied from a range, per task step, so the menu keeps
+ * drawing */
 #define ROMM_LAUNCH_UNZIP_SLICE (4 * 1024 * 1024)
+#define ROMM_LAUNCH_COPY_SLICE (16 * 1024 * 1024)
 #define ROMM_LAUNCH_PFX "[RomM] "
 
 enum romm_launch_state
@@ -81,6 +83,14 @@ typedef struct
    uint64_t have;
    uint32_t crc;
    bool check_crc;
+   /* Of the file being fetched: the bytes RomM has sent, the range
+    * being copied into @buf, and the one that came in meanwhile */
+   uint64_t received;
+   uint8_t *chunk;
+   size_t chunk_len;
+   size_t chunk_pos;
+   uint8_t *ahead;
+   size_t ahead_len;
    /* Bytes in all the files, and in those already fetched */
    uint64_t total;
    uint64_t done;
@@ -516,13 +526,15 @@ static bool romm_launch_store_file(romm_launch_t *launch)
       romm_launch_finish(launch, ROMM_ERR_MEMORY, 0);
       return false;
    }
-   launch->buf   = NULL;
-   launch->done += launch->have;
-   launch->have  = 0;
+   launch->buf      = NULL;
+   launch->done    += launch->have;
+   launch->have     = 0;
+   launch->received = 0;
    launch->file++;
    return true;
 }
 
+/* Keeps the range for the task to copy a slice at a time. */
 static void romm_launch_content_cb(void *user_data, enum romm_status status,
       int http_status, void *data, size_t len)
 {
@@ -531,24 +543,74 @@ static void romm_launch_content_cb(void *user_data, enum romm_status status,
 
    launch->pending    = false;
    launch->task->when = 0;
+   if (launch->finished)
+   {
+      free(data);
+      return;
+   }
    if (status != ROMM_OK)
    {
       free(data);
       romm_launch_finish(launch, status, http_status);
       return;
    }
-   if (!len || launch->have + len > f->size)
+   if (!len || launch->received + len > f->size)
    {
       free(data);
       romm_launch_finish(launch, ROMM_ERR_CHECKSUM, 0);
       return;
    }
-   memcpy(launch->buf + launch->have, data, len);
-   if (launch->check_crc)
-      launch->crc = encoding_crc32(launch->crc, (const uint8_t*)data, len);
-   launch->have += len;
-   free(data);
+   launch->received += len;
+   if (launch->chunk)
+   {
+      launch->ahead     = (uint8_t*)data;
+      launch->ahead_len = len;
+   }
+   else
+   {
+      launch->chunk     = (uint8_t*)data;
+      launch->chunk_len = len;
+      launch->chunk_pos = 0;
+   }
+}
 
+/* Copies the next slice of the range in hand into the file, adding it
+ * to the CRC32, and stores the file once it's whole. */
+static void romm_launch_take_slice(romm_launch_t *launch)
+{
+   const romm_file_t *f = &launch->files[launch->file];
+   const uint8_t *src   = launch->chunk + launch->chunk_pos;
+   size_t n             = launch->chunk_len - launch->chunk_pos;
+
+   if (n > ROMM_LAUNCH_COPY_SLICE)
+      n = ROMM_LAUNCH_COPY_SLICE;
+   if (!launch->buf)
+   {
+      /* A file that came in one range is kept as it came. */
+      if (launch->chunk_len == f->size)
+         launch->buf = launch->chunk;
+      else if (!(launch->buf = (uint8_t*)malloc((size_t)f->size)))
+      {
+         romm_launch_finish(launch, ROMM_ERR_MEMORY, 0);
+         return;
+      }
+   }
+   if (launch->buf != launch->chunk)
+      memcpy(launch->buf + launch->have, src, n);
+   if (launch->check_crc)
+      launch->crc = encoding_crc32(launch->crc, src, n);
+   launch->have      += n;
+   launch->chunk_pos += n;
+   if (launch->chunk_pos == launch->chunk_len)
+   {
+      if (launch->chunk != launch->buf)
+         free(launch->chunk);
+      launch->chunk     = launch->ahead;
+      launch->chunk_len = launch->ahead_len;
+      launch->chunk_pos = 0;
+      launch->ahead     = NULL;
+      launch->ahead_len = 0;
+   }
    if (launch->have == f->size)
       romm_launch_store_file(launch);
 }
@@ -738,8 +800,8 @@ static void romm_launch_unzip_next(romm_launch_t *launch)
    }
 }
 
-/* Starts fetching the next range of the current file, or finishes the
- * game once every file is in. */
+/* Asks for the next range of the current file while copying the one
+ * in hand, or finishes the game once every file is in. */
 static void romm_launch_next(romm_launch_t *launch)
 {
    const romm_file_t *f;
@@ -770,7 +832,7 @@ static void romm_launch_next(romm_launch_t *launch)
    }
 
    f = &launch->files[launch->file];
-   if (!launch->buf)
+   if (!launch->received && !launch->pending)
    {
       launch->have      = 0;
       launch->crc       = 0;
@@ -781,22 +843,25 @@ static void romm_launch_next(romm_launch_t *launch)
          romm_launch_store_file(launch);
          return;
       }
-      if (!(launch->buf = (uint8_t*)malloc((size_t)f->size)))
-      {
-         romm_launch_finish(launch, ROMM_ERR_MEMORY, 0);
-         return;
-      }
    }
 
-   want = f->size - launch->have;
-   if (want > ROMM_LAUNCH_RANGE)
-      want = ROMM_LAUNCH_RANGE;
-   if (romm_client_rom_content(launch->server, launch->token,
-         launch->rom.id, f->id, f->name, launch->have, want,
-         romm_launch_content_cb, launch))
+   if (     !launch->pending && !launch->ahead
+         && launch->received < f->size)
+   {
+      want = f->size - launch->received;
+      if (want > ROMM_LAUNCH_RANGE)
+         want = ROMM_LAUNCH_RANGE;
+      if (!romm_client_rom_content(launch->server, launch->token,
+            launch->rom.id, f->id, f->name, launch->received, want,
+            romm_launch_content_cb, launch))
+      {
+         romm_launch_finish(launch, ROMM_ERR_UNREACHABLE, 0);
+         return;
+      }
       launch->pending = true;
-   else
-      romm_launch_finish(launch, ROMM_ERR_UNREACHABLE, 0);
+   }
+   if (launch->chunk)
+      romm_launch_take_slice(launch);
 }
 
 /* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the
@@ -805,8 +870,11 @@ static void romm_launch_handler(retro_task_t *task)
 {
    romm_launch_t *launch = (romm_launch_t*)task->state;
 
-   /* A request still out holds @launch; its callback wakes the task. */
-   if (launch->pending)
+   /* A request still out holds @launch; its callback wakes the task.
+    * Meanwhile the range in hand is copied. */
+   if (     launch->pending
+         && (!launch->chunk || launch->finished
+            || (task_get_flags(task) & RETRO_TASK_FLG_CANCELLED)))
    {
       task->when = cpu_features_get_time_usec() + 250000;
       return;
@@ -884,6 +952,9 @@ static void romm_launch_cleanup(retro_task_t *task)
       file_archive_entry_source_close(launch->unzip);
       RBUF_FREE(launch->files);
       RBUF_FREE(launch->bios);
+      if (launch->chunk != launch->buf)
+         free(launch->chunk);
+      free(launch->ahead);
       free(launch->buf);
       free(launch->list);
       free(launch->unpack_title);

@@ -103,7 +103,7 @@ static void answer(int status, const void *body, size_t len)
    unsigned before = stub_req.count;
    unsigned steps  = 0;
 
-   while (stub_req.count == before && stub_task && steps++ < 10)
+   while (stub_req.count == before && stub_task && steps++ < 40)
       step();
    CHECK(stub_req.count == before + 1, "no request to answer");
    if (stub_req.count == before + 1)
@@ -119,7 +119,7 @@ static bool run_out(void)
 {
    unsigned before = stub_req.count;
    unsigned steps  = 0;
-   while (stub_task && steps++ < 20)
+   while (stub_task && steps++ < 40)
       if (step())
          return stub_req.count == before;
    return false;
@@ -228,7 +228,8 @@ static void test_single_file(void)
             "PK\3\4zipped", 10), "game not in memory");
 }
 
-/* PlayStation: a .cue and a .bin over one 64 MB range, CRC32 checked. */
+/* PlayStation: a .cue and a .bin over one 64 MB range, CRC32 checked,
+ * the next range asked for while the last is copied a slice a step. */
 static void test_cue_bin(void)
 {
    const size_t bin_size = (size_t)ROMM_LAUNCH_RANGE + 16;
@@ -259,16 +260,47 @@ static void test_cue_bin(void)
    CHECK(strstr(stub_req.headers, "Range: bytes=0-67108863\r\n") != NULL,
          "first range %s", stub_req.headers);
    CHECK(stub_task && stub_task->progress == 0, "progress before any range");
-   answer(206, bin + ROMM_LAUNCH_RANGE, 16);
+   /* One step asks for the next range and copies one slice of this one:
+    * no step does a whole range's work. */
+   step();
    CHECK(strstr(stub_req.headers, "Range: bytes=67108864-67108879\r\n")
          != NULL, "second range %s", stub_req.headers);
+   CHECK(stub_task && ((romm_launch_t*)stub_task->state)->have
+         == ROMM_LAUNCH_COPY_SLICE, "copied in one step: %llu",
+         stub_task ? (unsigned long long)
+            ((romm_launch_t*)stub_task->state)->have : 0ULL);
+   answer_pending(206, bin + ROMM_LAUNCH_RANGE, 16);
+   answer_str(206, cue);
    CHECK(stub_task && stub_task->progress == 99, "progress %d",
          stub_task ? (int)stub_task->progress : -1);
-   answer_str(206, cue);
    CHECK(run_out() && r.status == ROMM_OK, "cue/bin: status %d", r.status);
 
    CHECK(vfs_file_is("romm://4320/Alundra (USA) (v1.1).bin", bin, bin_size),
          "bin");
+
+   /* Cancelled while a range is copied and the next is out: waits for
+    * it, then stops with nothing kept. */
+   {
+      launch_result_t c;
+      start(&c, "romm://4320/Alundra (USA) (v1.1).m3u");
+      answer_str(200, reply);
+      answer(206, bin, (size_t)ROMM_LAUNCH_RANGE);
+      step();
+      stub_task->flags |= RETRO_TASK_FLG_CANCELLED;
+      CHECK(!step(), "finished with a range out");
+      answer_pending(206, bin + ROMM_LAUNCH_RANGE, 16);
+      CHECK(run_out() && c.status == ROMM_ERR_CANCELLED
+            && !path_is_valid("romm://4320/Alundra (USA) (v1.1).bin"),
+            "cancel while copying: status %d", c.status);
+   }
+   start(&r, "romm://4320/Alundra (USA) (v1.1).m3u");
+   answer_str(200, reply);
+   answer(206, bin, (size_t)ROMM_LAUNCH_RANGE);
+   answer(206, bin + ROMM_LAUNCH_RANGE, 16);
+   answer_str(206, cue);
+   CHECK(run_out() && r.status == ROMM_OK
+         && vfs_file_is("romm://4320/Alundra (USA) (v1.1).bin", bin, bin_size),
+         "fetched again after a cancel: status %d", r.status);
    CHECK(vfs_file_is("romm://4320/Alundra (USA) (v1.1).cue", cue, strlen(cue)),
          "cue");
    CHECK(vfs_file_is("romm://4320/Alundra (USA) (v1.1).m3u",
@@ -564,6 +596,7 @@ static void test_zipped_disc(void)
    start(&r, "romm://3335/Game.zip");
    answer_zip_game(3335, "Game.zip", zip_len);
    answer(206, zip, zip_len);
+   step();
    step();
    CHECK(stub_task && stub_task->title
          && !strcmp(stub_task->title, "Unpacking"), "unpacking title");
