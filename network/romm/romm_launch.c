@@ -348,7 +348,7 @@ static void romm_launch_firmware_cb(void *user_data, enum romm_status status,
          sizeof(path));
    fill_pathname_basedir(dir, path, sizeof(dir));
    if (     (!path_is_directory(dir) && !path_mkdir(dir))
-         || !filestream_write_file(path, data, (int64_t)len))
+         || !filestream_write_file_atomic(path, data, (int64_t)len))
    {
       RARCH_WARN(ROMM_LAUNCH_PFX "Couldn't write %s.\n", path);
       return;

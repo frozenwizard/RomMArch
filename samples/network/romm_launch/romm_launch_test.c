@@ -7,7 +7,8 @@
  * game, a folder with nothing to launch, a bad CRC32 and a cancel end
  * it. Zips holding disc images are unpacked (one disc, two discs, the
  * disc a history entry names, a bad CRC32), zipped cartridges are not.
- * BIOS files the core lacks are fetched into the system folder first.
+ * BIOS files the core lacks are fetched into the system folder first,
+ * each written whole or not at all.
  * Also that the previous game is released, and that unloading
  * releases every game but the one loading next.
  */
@@ -629,6 +630,23 @@ static void test_firmware(void)
    CHECK(run_out() && r.status == ROMM_OK
          && !path_is_valid(TEST_SYSTEM_DIR "/scph5501.bin"),
          "BIOS list refused: status %d", r.status);
+
+   /* A write that can't finish leaves no BIOS file to be taken as
+    * installed: here its temporary file can't be made. */
+   path_mkdir(TEST_SYSTEM_DIR "/scph5501.bin.tmp");
+   start_with(&r, "romm://5/Game.bin", wanted, 1);
+   answer_psx_game();
+   snprintf(reply, sizeof(reply), "[{\"id\": 2, \"file_name\": \"scph5501.bin\","
+         " \"is_verified\": true, \"file_size_bytes\": 4, \"crc_hash\": \"%08x\"}]",
+         encoding_crc32(0, (const uint8_t*)"5501", 4));
+   answer_str(200, reply);
+   answer_str(200, "5501");
+   answer_str(206, "game");
+   CHECK(run_out() && r.status == ROMM_OK
+         && !path_is_valid(TEST_SYSTEM_DIR "/scph5501.bin"),
+         "unfinished BIOS write left a file: status %d", r.status);
+   filestream_delete(TEST_SYSTEM_DIR "/scph5501.bin.tmp");
+   remove_test_system();
 
    /* Nothing missing: no list asked for. */
    start_with(&r, "romm://5/Game.bin", NULL, 0);
