@@ -33753,6 +33753,10 @@ MSG_HASH(
    "This game is no longer in RomM. Refresh the library."
    )
 MSG_HASH(
+   MSG_ROMM_GAME_RENAMED,
+   "RomM renamed this game. Refresh the library, then run it again."
+   )
+MSG_HASH(
    MSG_ROMM_RAR_UNSUPPORTED,
    "This game is a RAR archive, which RetroArch can't open."
    )

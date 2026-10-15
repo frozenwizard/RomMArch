@@ -50,7 +50,10 @@ enum romm_status
    /* Launch: no memory to hold the game. */
    ROMM_ERR_MEMORY,
    /* Save sync: RomM's copy changed since this device last synced it. */
-   ROMM_ERR_CONFLICT
+   ROMM_ERR_CONFLICT,
+   /* Launch: the entry names a file RomM has renamed since the last
+    * library sync. */
+   ROMM_ERR_RENAMED
 };
 
 /* A pairing RomM has started: the user approves it at @approve_url

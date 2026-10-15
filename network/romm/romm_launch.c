@@ -243,6 +243,21 @@ static bool romm_launch_pick_discs(romm_launch_t *launch)
    return launch->list != NULL;
 }
 
+/* Does the entry name a file other than the single-file game's own?
+ * Its name is RomM's from the last sync; a disc unpacked from a zip,
+ * as History holds it, has a name of its own. */
+static bool romm_launch_renamed(const romm_launch_t *launch,
+      const romm_file_t *file)
+{
+   static const char *const zip_ext[] = { "zip", NULL };
+   const char *name = launch->content_path + strlen(launch->prefix);
+
+   if (!strcasecmp(name, file->path))
+      return false;
+   return !romm_launch_ext_is(file->path, zip_ext)
+       || romm_launch_ext_is(name, zip_ext);
+}
+
 static void romm_launch_finish(romm_launch_t *launch,
       enum romm_status status, int http_status)
 {
@@ -284,6 +299,15 @@ static void romm_launch_files_cb(void *user_data, enum romm_status status,
          && romm_launch_ext_is(files[0].name, romm_launch_rar_ext))
    {
       romm_launch_finish(launch, ROMM_ERR_UNSUPPORTED, 0);
+      return;
+   }
+   /* The file would be fetched under its new name and the old one
+    * fail to load. */
+   if (rom->single_file && romm_launch_renamed(launch, &files[0]))
+   {
+      RARCH_LOG(ROMM_LAUNCH_PFX "%s is %s in RomM now.\n",
+            launch->content_path, files[0].path);
+      romm_launch_finish(launch, ROMM_ERR_RENAMED, 0);
       return;
    }
    if (!rom->single_file && !romm_launch_pick_discs(launch))

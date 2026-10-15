@@ -4,8 +4,8 @@
  * real romm:// VFS: a game that is one file, a disc folder whose list
  * is made from its cue sheet (one file over a 64 MB range), one with
  * RomM's own .m3u and discs in subfolders, and how a RAR, a deleted
- * game, a folder with nothing to launch, a bad CRC32 and a cancel end
- * it. Zips holding disc images are unpacked (one disc, two discs, the
+ * game, a file renamed since the last sync, a folder with nothing to
+ * launch, a bad CRC32 and a cancel end it. Zips holding disc images are unpacked (one disc, two discs, the
  * disc a history entry names, a bad CRC32) and stay ready to load as
  * what they held; zipped cartridges are not unpacked.
  * BIOS files the core lacks are fetched into the system folder first,
@@ -704,6 +704,36 @@ static void test_refused(void)
          " \"file_size_bytes\": 45056}]}");
    CHECK(run_out() && r.status == ROMM_ERR_UNSUPPORTED, "nothing to launch: %d",
          r.status);
+
+   /* Renamed in RomM since the last sync: nothing is downloaded. */
+   start(&r, "romm://46/Advance Wars.gba");
+   answer_str(200, "{\"id\": 46, \"fs_name\": \"Advance Wars (USA).gba\","
+         " \"fs_path\": \"roms/gba/roms\", \"has_simple_single_file\": true,"
+         " \"files\": [{\"id\": 50, \"file_name\": \"Advance Wars (USA).gba\","
+         " \"full_path\": \"roms/gba/roms/Advance Wars (USA).gba\","
+         " \"file_size_bytes\": 4}]}");
+   before = stub_req.count;
+   CHECK(run_out() && r.status == ROMM_ERR_RENAMED && stub_req.count == before,
+         "renamed: status %d", r.status);
+
+   /* The same for a zip, whatever it holds. */
+   start(&r, "romm://3335/Old Name.zip");
+   answer_zip_game(3335, "Game.zip", 10);
+   before = stub_req.count;
+   CHECK(run_out() && r.status == ROMM_ERR_RENAMED && stub_req.count == before,
+         "renamed zip: status %d", r.status);
+
+   /* A name that differs only in case is the same file. */
+   start(&r, "romm://46/advance wars (usa).GBA");
+   answer_str(200, "{\"id\": 46, \"fs_name\": \"Advance Wars (USA).gba\","
+         " \"fs_path\": \"roms/gba/roms\", \"has_simple_single_file\": true,"
+         " \"files\": [{\"id\": 50, \"file_name\": \"Advance Wars (USA).gba\","
+         " \"full_path\": \"roms/gba/roms/Advance Wars (USA).gba\","
+         " \"file_size_bytes\": 4}]}");
+   answer_str(206, "awar");
+   CHECK(run_out() && r.status == ROMM_OK
+         && vfs_file_is("romm://46/advance wars (usa).GBA", "awar", 4),
+         "case only: status %d", r.status);
 
    /* RomM answering for another game. */
    start(&r, "romm://5/a.gb");

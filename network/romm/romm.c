@@ -1187,6 +1187,9 @@ static void romm_on_launch_prepared(void *user_data,
          if (http_status == 404)
             msg = MSG_ROMM_GAME_GONE;
          break;
+      case ROMM_ERR_RENAMED:
+         msg = MSG_ROMM_GAME_RENAMED;
+         break;
       case ROMM_ERR_UNSUPPORTED:
          msg = string_is_equal_noncase(
                path_get_extension(romm_launch_content), "rar")
