@@ -15,6 +15,8 @@
 #ifndef __ROMM_H
 #define __ROMM_H
 
+#include <stddef.h>
+#include <boolean.h>
 #include <retro_common_api.h>
 
 RETRO_BEGIN_DECLS
@@ -58,6 +60,11 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
  * preferred core or no core downloader, for the stock flow to go on. */
 bool romm_launch_without_core(const char *content_path, const char *label,
       const char *playlist_name);
+
+/* For a RomM game at @content_path, the name of the folder its saves
+ * and states sort into by content: its RomM id, wherever in the game
+ * the file is. False for other content. */
+bool romm_content_dir_name(char *s, size_t len, const char *content_path);
 
 /* The core has unloaded and @next_content, if any, loads next: frees
  * the memory of every RomM game but that one. */

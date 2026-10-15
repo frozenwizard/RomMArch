@@ -1089,8 +1089,15 @@
 
 #define DEFAULT_SORT_SAVEFILES_ENABLE true
 #define DEFAULT_SORT_SAVESTATES_ENABLE true
+#ifdef HAVE_ROMM
+/* RomM games sharing a file name and a core would share save files;
+ * by content, each RomM game's go in a folder named after its id. */
+#define DEFAULT_SORT_SAVEFILES_BY_CONTENT_ENABLE true
+#define DEFAULT_SORT_SAVESTATES_BY_CONTENT_ENABLE true
+#else
 #define DEFAULT_SORT_SAVEFILES_BY_CONTENT_ENABLE false
 #define DEFAULT_SORT_SAVESTATES_BY_CONTENT_ENABLE false
+#endif
 #define DEFAULT_SORT_SCREENSHOTS_BY_CONTENT_ENABLE false
 
 #define DEFAULT_SAVESTATES_IN_CONTENT_DIR false

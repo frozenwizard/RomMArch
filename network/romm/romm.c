@@ -826,6 +826,15 @@ static int romm_load_content(const char *core_path,
       ? 0 : -1;
 }
 
+bool romm_content_dir_name(char *s, size_t len, const char *content_path)
+{
+   unsigned rom_id = romm_launch_rom_id(content_path);
+   if (!rom_id)
+      return false;
+   snprintf(s, len, "%u", rom_id);
+   return true;
+}
+
 /* Where RetroArch puts the saves, or with @states the save states, of
  * content @path played with core @core_name, the way
  * runloop_path_set_redirect() works it out. False when they'd go
@@ -847,7 +856,8 @@ static bool romm_saves_dir(char *s, size_t len, const char *path,
               : settings->bools.sort_savefiles_by_content_enable)
    {
       char name[NAME_MAX_LENGTH];
-      fill_pathname_parent_dir_name(name, path, sizeof(name));
+      if (!romm_content_dir_name(name, sizeof(name), path))
+         fill_pathname_parent_dir_name(name, path, sizeof(name));
       fill_pathname_join_special(tmp, s, name, sizeof(tmp));
       strlcpy(s, tmp, len);
    }

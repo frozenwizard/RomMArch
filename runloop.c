@@ -117,6 +117,9 @@ bool android_get_vfs_authorized_locations(
 #ifdef HAVE_DISCORD
 #include "network/discord.h"
 #endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "network/romm/romm.h"
+#endif
 
 #include "config.def.h"
 
@@ -10668,6 +10671,11 @@ void runloop_path_set_redirect(settings_t *settings,
     * saves/states are enabled */
    if (     (sort_savefiles_by_content || sort_savestates_by_content)
          && *runloop_st->runtime_content_path_basename)
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      if (!romm_content_dir_name(content_dir_name,
+            sizeof(content_dir_name),
+            runloop_st->runtime_content_path_basename))
+#endif
       fill_pathname_parent_dir_name(content_dir_name,
             runloop_st->runtime_content_path_basename,
             sizeof(content_dir_name));
