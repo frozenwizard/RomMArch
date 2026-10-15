@@ -32,6 +32,13 @@
 #define ROMM_PFX "[RomM] "
 #define ROMM_HEADERS_JSON "Accept: application/json\r\n"
 #define ROMM_CLIENT_NAME "Rommarch"
+#if defined(_WIN32)
+#define ROMM_CLIENT_PLATFORM "Windows"
+#elif defined(__APPLE__)
+#define ROMM_CLIENT_PLATFORM "macOS"
+#else
+#define ROMM_CLIENT_PLATFORM "Linux"
+#endif
 
 /* What pairing asks for; the user can narrow it when approving. */
 static const char *const romm_scopes[] = {
@@ -432,7 +439,7 @@ bool romm_client_pair_start(const char *server, const char *web,
    rjsonwriter_raw(writer, ",", 1);
    rjsonwriter_add_string(writer, "platform");
    rjsonwriter_raw(writer, ":", 1);
-   rjsonwriter_add_string(writer, "macOS");
+   rjsonwriter_add_string(writer, ROMM_CLIENT_PLATFORM);
    rjsonwriter_raw(writer, ",", 1);
    rjsonwriter_add_string(writer, "client_version");
    rjsonwriter_raw(writer, ":", 1);

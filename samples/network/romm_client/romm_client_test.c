@@ -1153,6 +1153,13 @@ static void test_pair_start(void)
 {
    pair_start_result_t r;
    char s[256];
+#if defined(_WIN32)
+   const char *os = "Windows";
+#elif defined(__APPLE__)
+   const char *os = "macOS";
+#else
+   const char *os = "Linux";
+#endif
 
    pair_start(&r, "https://romm.example.org/");
    CHECK(!strcmp(stub_req.method, "POST"), "method %s", stub_req.method);
@@ -1169,6 +1176,9 @@ static void test_pair_start(void)
    CHECK(romm_json_get(stub_req.body, strlen(stub_req.body), "client", s,
             sizeof(s))
          && !strcmp(s, "Rommarch"), "client %s", s);
+   CHECK(romm_json_get(stub_req.body, strlen(stub_req.body), "platform", s,
+            sizeof(s))
+         && !strcmp(s, os), "platform %s", s);
    CHECK(romm_json_get(stub_req.body, strlen(stub_req.body),
             "client_version", s, sizeof(s))
          && !strcmp(s, "1.22.0"), "client version %s", s);
