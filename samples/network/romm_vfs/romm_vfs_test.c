@@ -114,6 +114,7 @@ static void test_remove_replace(void)
 {
    RFILE *f;
    char buf[8];
+   void *x;
 
    f = filestream_open("romm://12/Game (USA).bin",
          RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
@@ -143,7 +144,10 @@ static void test_remove_replace(void)
    CHECK(path_is_valid("romm://12/a.cue"), "keep twice");
    retro_vfs_romm_remove_prefix("romm://");
 
-   CHECK(!retro_vfs_romm_add("", bytes("x"), 1) || 1, "empty path");
+   /* A refused add leaves the data with the caller. */
+   x = bytes("x");
+   CHECK(!retro_vfs_romm_add("", x, 1), "empty path");
+   free(x);
    CHECK(retro_vfs_romm_add("romm://13/empty.bin", NULL, 0)
          && path_is_valid("romm://13/empty.bin")
          && path_get_size("romm://13/empty.bin") == 0, "empty file");
