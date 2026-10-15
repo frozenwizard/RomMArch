@@ -568,6 +568,8 @@ struct romm_saves_sync
    romm_saves_record_t rec;
    romm_saves_step_t *steps;
    size_t next;
+   /* The upload out was sent over newer saves. */
+   bool overwriting;
    char server[1024];
    char token[128];
    char device_id[64];
@@ -704,12 +706,40 @@ static void romm_saves_sync_downloaded(void *user_data,
    romm_saves_sync_step(sync);
 }
 
+static bool romm_saves_sync_upload(romm_saves_sync_t *sync,
+      romm_saves_step_t *step, bool overwrite);
+
+/* Whether RomM listed save @id when this sync began. */
+static bool romm_saves_sync_listed(const romm_saves_sync_t *sync,
+      unsigned id)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(sync->remote_saves); i++)
+      if (sync->remote_saves[i].id == id)
+         return true;
+   return false;
+}
+
 static void romm_saves_sync_uploaded(void *user_data,
       enum romm_status status, int http_status, const romm_save_t *save)
 {
-   romm_saves_sync_t *sync       = (romm_saves_sync_t*)user_data;
-   const romm_saves_step_t *step = &sync->steps[sync->next - 1];
+   romm_saves_sync_t *sync = (romm_saves_sync_t*)user_data;
+   romm_saves_step_t *step = &sync->steps[sync->next - 1];
 
+   /* A save equal to an older version in the slot comes back as that
+    * version, which the next sync would take for RomM's copy having
+    * changed. Sent again over it, it's the newest. */
+   if (     status == ROMM_OK && !step->is_state && !sync->overwriting
+         && save->id != step->remote.id
+         && romm_saves_sync_listed(sync, save->id))
+   {
+      RARCH_LOG(ROMM_SAVES_PFX "RomM had %s%s as an older version (%u); "
+            "sending it again as the newest.\n", sync->base, step->suffix,
+            save->id);
+      if (romm_saves_sync_upload(sync, step, true))
+         return;
+      status = ROMM_ERR_UNREACHABLE;
+   }
    if (status == ROMM_OK)
    {
       romm_saves_sync_record(sync, step, save, step->md5);
@@ -762,6 +792,7 @@ static bool romm_saves_sync_upload(romm_saves_sync_t *sync,
    up.data      = buf;
    up.len       = (size_t)len;
    up.emulator  = sync->emulator;
+   sync->overwriting = overwrite;
    if (step->is_state)
       started = romm_client_state_upload(&up, romm_saves_sync_uploaded,
             sync);

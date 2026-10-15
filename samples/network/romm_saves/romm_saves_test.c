@@ -1042,6 +1042,106 @@ static void test_match(void)
    filestream_delete(p.record_path);
 }
 
+/* A save sent up equal to an older version RomM still keeps. */
+static void test_old_version(void)
+{
+   romm_saves_sync_params_t p;
+   romm_saves_record_t rec;
+   romm_saves_game_t *g;
+   romm_saves_file_t *f;
+   sync_result_t r;
+   char md5[33];
+   char list[1024];
+   char url[512];
+
+   path_mkdir(DIR);
+   path_mkdir(DIR "/saves");
+   path_mkdir(DIR "/saves/Snes9x");
+   path_mkdir(DIR "/states");
+   path_mkdir(DIR "/states/Snes9x");
+   /* The save erased in the game, as blank as the first one sent. */
+   filestream_write_file(SRM, "BLANK", 5);
+   romm_saves_md5_file(SRM, md5);
+   sync_params(&p, true);
+   memset(&rec, 0, sizeof(rec));
+   g = romm_saves_record_game(&rec, 3335, "Snes9x", true);
+   g->pending = true;
+   f = romm_saves_game_file(g, ".srm", true);
+   f->remote_id   = 91;
+   f->remote_time = romm_json_time("2026-10-13T09:00:00Z");
+   strlcpy(f->md5, "0123456789abcdef0123456789abcdef", sizeof(f->md5));
+   romm_saves_record_save(&rec, p.record_path);
+   romm_saves_record_free(&rec);
+   snprintf(list, sizeof(list), "[{\"id\": 90, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_08-00-00].srm\","
+         " \"emulator\": \"Snes9x\", \"slot\": \"autosave\","
+         " \"content_hash\": \"%s\","
+         " \"updated_at\": \"2026-10-13T08:00:00+00:00\"},"
+         " {\"id\": 91, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_09-00-00].srm\","
+         " \"emulator\": \"Snes9x\", \"slot\": \"autosave\","
+         " \"content_hash\": \"0123456789abcdef0123456789abcdef\","
+         " \"updated_at\": \"2026-10-13T09:00:00+00:00\"}]", md5);
+
+   /* RomM answers with version 90; it's sent again over it, and the
+    * new version is what's recorded. */
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, list);
+   answer(200, "[]");
+   CHECK(strstr(stub_req.url, "slot=autosave")
+         && !strstr(stub_req.url, "overwrite"), "first upload %s",
+         stub_req.url);
+   answer(200, "{\"id\": 90, \"rom_id\": 3335, \"slot\": \"autosave\","
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_08-00-00].srm\","
+         " \"updated_at\": \"2026-10-13T08:00:00+00:00\"}");
+   snprintf(url, sizeof(url), "http://romm.local:8090/api/saves"
+         "?rom_id=3335&emulator=Snes9x&slot=autosave&device_id=e409"
+         "&content_hash=%s&autocleanup=true&autocleanup_limit=10"
+         "&overwrite=true", md5);
+   CHECK(!r.calls && stub_req.count == 4 && !strcmp(stub_req.url, url)
+         && strstr(stub_req.body, "\r\n\r\nBLANK\r\n"),
+         "sent again: %u requests, %s", stub_req.count, stub_req.url);
+   answer(200, "{\"id\": 92, \"rom_id\": 3335, \"slot\": \"autosave\","
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_10-00-00].srm\","
+         " \"updated_at\": \"2026-10-13T10:00:00+00:00\"}");
+   CHECK(r.calls == 1 && r.result.uploaded == 1 && !r.result.failed,
+         "old version: up %u failed %u", r.result.uploaded, r.result.failed);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && !g->pending
+         && (f = romm_saves_game_file(g, ".srm", false))
+         && f->remote_id == 92 && !strcmp(f->md5, md5),
+         "record after sending again");
+   romm_saves_record_free(&rec);
+
+   /* Answered with the newest it listed, as when the file changed to
+    * it since: recorded, nothing sent again. */
+   filestream_write_file(SRM, "BLANK2", 6);
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, "[{\"id\": 92, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_10-00-00].srm\","
+         " \"emulator\": \"Snes9x\", \"slot\": \"autosave\","
+         " \"updated_at\": \"2026-10-13T10:00:00+00:00\"}]");
+   answer(200, "[]");
+   answer(200, "{\"id\": 92, \"rom_id\": 3335, \"slot\": \"autosave\","
+         " \"file_name\": \"x.srm\","
+         " \"updated_at\": \"2026-10-13T10:00:00+00:00\"}");
+   CHECK(r.calls == 1 && r.result.uploaded == 1 && stub_req.count == 3,
+         "newest answered: up %u requests %u", r.result.uploaded,
+         stub_req.count);
+
+   filestream_delete(SRM);
+   filestream_delete(DIR "/saves/Snes9x");
+   filestream_delete(DIR "/saves");
+   filestream_delete(DIR "/states/Snes9x");
+   filestream_delete(DIR "/states");
+   filestream_delete(p.record_path);
+}
+
 int main(void)
 {
    test_time();
@@ -1052,6 +1152,7 @@ int main(void)
    test_sync();
    test_resolve();
    test_match();
+   test_old_version();
    filestream_delete(DIR);
 
    if (failures)
