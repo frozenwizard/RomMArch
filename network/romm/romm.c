@@ -1191,9 +1191,14 @@ static void romm_on_launch_prepared(void *user_data,
          msg = MSG_ROMM_GAME_RENAMED;
          break;
       case ROMM_ERR_UNSUPPORTED:
-         msg = string_is_equal_noncase(
-               path_get_extension(romm_launch_content), "rar")
-            ? MSG_ROMM_RAR_UNSUPPORTED : MSG_ROMM_CANT_LAUNCH;
+         if (string_is_equal_noncase(
+               path_get_extension(romm_launch_content), "rar"))
+            msg = MSG_ROMM_RAR_UNSUPPORTED;
+         else if (string_is_equal_noncase(
+               path_get_extension(romm_launch_content), "7z"))
+            msg = MSG_ROMM_7Z_DISC_UNSUPPORTED;
+         else
+            msg = MSG_ROMM_CANT_LAUNCH;
          break;
       case ROMM_ERR_CHECKSUM:
          msg = MSG_ROMM_DOWNLOAD_BAD;

@@ -25,6 +25,13 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/encodings/encoding_deflate.c \
 	$(LIBRETRO_COMM_DIR)/file/archive_file.c \
 	$(LIBRETRO_COMM_DIR)/file/archive_file_zlib.c \
+	$(LIBRETRO_COMM_DIR)/file/archive_file_7z.c \
+	$(LIBRETRO_COMM_DIR)/formats/7z/r7z_archive.c \
+	$(LIBRETRO_COMM_DIR)/formats/7z/r7z_lzma.c \
+	$(LIBRETRO_COMM_DIR)/formats/7z/r7z_lzma_stream.c \
+	$(LIBRETRO_COMM_DIR)/formats/7z/r7z_lzma2.c \
+	$(LIBRETRO_COMM_DIR)/formats/7z/r7z_bcj2.c \
+	$(LIBRETRO_COMM_DIR)/formats/7z/r7z_filters.c \
 	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
 	$(LIBRETRO_COMM_DIR)/file/file_path.c \
 	$(LIBRETRO_COMM_DIR)/file/file_path_io.c \
@@ -41,7 +48,7 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/time/rtime.c
 
 CFLAGS += -Wall $(INCDIRS)
-CFLAGS += -DHAVE_NETWORKING -DHAVE_ROMM -DHAVE_THREADS -DHAVE_COMPRESSION
+CFLAGS += -DHAVE_NETWORKING -DHAVE_ROMM -DHAVE_THREADS -DHAVE_COMPRESSION -DHAVE_7ZIP
 LDFLAGS += -lm -lpthread
 
 ifneq ($(SAN),)

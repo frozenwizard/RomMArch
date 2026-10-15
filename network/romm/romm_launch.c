@@ -210,6 +210,12 @@ static bool romm_launch_core_takes(const romm_launch_t *launch,
    }
 }
 
+static bool romm_launch_is_disc(const char *path)
+{
+   return romm_launch_ext_is(path, romm_launch_disc_tiers[0])
+       || romm_launch_ext_is(path, romm_launch_disc_tiers[1]);
+}
+
 static int romm_launch_cmp_path(const void *a, const void *b)
 {
    return strcasecmp((*(const romm_file_t* const*)a)->path,
@@ -581,9 +587,7 @@ static bool romm_launch_unzip_begin(romm_launch_t *launch)
       snprintf(path, sizeof(path), "%s#%s", launch->zip_path, name);
       snprintf(f.crc, sizeof(f.crc), "%08x", (unsigned)
             file_archive_get_file_crc32_and_size(path, &f.size));
-      disc = disc
-         || romm_launch_ext_is(name, romm_launch_disc_tiers[0])
-         || romm_launch_ext_is(name, romm_launch_disc_tiers[1]);
+      disc = disc || romm_launch_is_disc(name);
       total += f.size;
       RBUF_PUSH(files, f);
    }
@@ -610,6 +614,29 @@ static bool romm_launch_unzip_begin(romm_launch_t *launch)
          path_basename(launch->zip_path), (unsigned)RBUF_LEN(files),
          (unsigned long long)total);
    return true;
+}
+
+/* A 7z holding a disc would launch its first member too, as a zip
+ * would, but can't be unpacked a slice at a time. True when the game
+ * is one. */
+static bool romm_launch_7z_disc(const romm_launch_t *launch)
+{
+   static const char *const sevenzip_ext[] = { "7z", NULL };
+   struct string_list *members;
+   char path[PATH_MAX_LENGTH];
+   bool disc = false;
+   size_t i;
+
+   if (!romm_launch_ext_is(launch->files[0].path, sevenzip_ext))
+      return false;
+   snprintf(path, sizeof(path), "%s%s", launch->prefix,
+         launch->files[0].path);
+   if (!(members = file_archive_get_file_list(path, NULL)))
+      return false;
+   for (i = 0; i < members->size && !disc; i++)
+      disc = romm_launch_is_disc(members->elems[i].data);
+   string_list_free(members);
+   return disc;
 }
 
 /* The zip goes; the loader gets the game's .m3u, its one disc, or a
@@ -733,6 +760,11 @@ static void romm_launch_next(romm_launch_t *launch)
       }
       else if (romm_launch_unzip_begin(launch))
          return;
+      else if (romm_launch_7z_disc(launch))
+      {
+         romm_launch_finish(launch, ROMM_ERR_UNSUPPORTED, 0);
+         return;
+      }
       romm_launch_finish(launch, ROMM_OK, 0);
       return;
    }

@@ -33761,6 +33761,10 @@ MSG_HASH(
    "This game is a RAR archive, which RetroArch can't open."
    )
 MSG_HASH(
+   MSG_ROMM_7Z_DISC_UNSUPPORTED,
+   "This game is a disc in a 7z archive, which can't be launched yet. A zip of it, or its files unpacked, can."
+   )
+MSG_HASH(
    MSG_ROMM_CANT_LAUNCH,
    "Nothing in this game can be launched."
    )
