@@ -4,7 +4,7 @@
  * the VFS. Covers reading, seeking and sizes, case-insensitive paths,
  * directories, read-only access, files removed (one game's, or all
  * but one game's) or replaced while open, and readers on other
- * threads.
+ * threads, including ones that start before the first file is added.
  */
 
 #include <stdio.h>
@@ -152,6 +152,37 @@ static void test_remove_replace(void)
 
 #define THREAD_READS 2000
 
+static void early_reader(void *arg)
+{
+   unsigned *seen = (unsigned*)arg;
+   unsigned i;
+   for (i = 0; i < THREAD_READS && !*seen; i++)
+   {
+      RFILE *f = filestream_open("romm://15/first.bin",
+            RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+      if (!f)
+         continue;
+      if (path_is_valid("romm://15/first.bin"))
+         (*seen)++;
+      filestream_close(f);
+   }
+}
+
+/* Cores can look for romm:// files on their own threads before the
+ * frontend has added any; run first, before anything else adds one. */
+static void test_threads_before_first_add(void)
+{
+   unsigned seen[2] = { 0, 0 };
+   sthread_t *t[2];
+
+   t[0] = sthread_create(early_reader, &seen[0]);
+   t[1] = sthread_create(early_reader, &seen[1]);
+   retro_vfs_romm_add("romm://15/first.bin", bytes("1"), 1);
+   sthread_join(t[0]);
+   sthread_join(t[1]);
+   retro_vfs_romm_remove_prefix("romm://");
+}
+
 static void reader(void *arg)
 {
    unsigned *bad = (unsigned*)arg;
@@ -193,6 +224,7 @@ static void test_threads(void)
 
 int main(void)
 {
+   test_threads_before_first_add();
    test_read_seek();
    test_paths();
    test_remove_replace();

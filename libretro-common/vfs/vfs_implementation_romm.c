@@ -25,6 +25,7 @@
 #include <compat/posix_string.h>
 #include <libretro.h>
 #ifdef HAVE_THREADS
+#include <retro_atomic.h>
 #include <rthreads/rthreads.h>
 #endif
 
@@ -42,24 +43,48 @@ typedef struct romm_vfs_file
 
 static romm_vfs_file_t *romm_vfs_files = NULL;
 #ifdef HAVE_THREADS
-/* Created by the first add, before any file exists to be opened from
- * another thread, and kept for the life of the process. */
-static slock_t *romm_vfs_lock          = NULL;
+/* Made by whichever thread first needs it, as cores can open romm://
+ * paths on threads of their own; kept for the life of the process. */
+static retro_atomic_ptr_t romm_vfs_lock_ptr;   /* slock_t * */
+
+static slock_t *romm_vfs_lock(void)
+{
+   slock_t *l = (slock_t*)retro_atomic_load_acquire_ptr(&romm_vfs_lock_ptr);
+   if (!l)
+   {
+      slock_t *fresh = slock_new();
+      if (!fresh)
+         return NULL;
+      if (retro_atomic_cas_ptr(&romm_vfs_lock_ptr, NULL, fresh))
+         l = fresh;
+      else
+      {
+         slock_free(fresh);             /* another thread published first */
+         l = (slock_t*)retro_atomic_load_acquire_ptr(&romm_vfs_lock_ptr);
+      }
+   }
+   return l;
+}
 #endif
 
-static void romm_vfs_lock_acquire(void)
+/* NULL, and nothing locked, only when the lock couldn't be made. */
+static void *romm_vfs_lock_acquire(void)
 {
 #ifdef HAVE_THREADS
-   if (romm_vfs_lock)
-      slock_lock(romm_vfs_lock);
+   slock_t *l = romm_vfs_lock();
+   if (l)
+      slock_lock(l);
+   return l;
+#else
+   return NULL;
 #endif
 }
 
-static void romm_vfs_lock_release(void)
+static void romm_vfs_lock_release(void *l)
 {
 #ifdef HAVE_THREADS
-   if (romm_vfs_lock)
-      slock_unlock(romm_vfs_lock);
+   if (l)
+      slock_unlock((slock_t*)l);
 #endif
 }
 
@@ -86,11 +111,12 @@ bool retro_vfs_romm_add(const char *path, void *data, uint64_t size)
 {
    romm_vfs_file_t *file;
    romm_vfs_file_t **link;
+   void *lock;
 
    if (!path || !*path || (!data && size))
       return false;
 #ifdef HAVE_THREADS
-   if (!romm_vfs_lock && !(romm_vfs_lock = slock_new()))
+   if (!romm_vfs_lock())
       return false;
 #endif
    if (!(file = (romm_vfs_file_t*)calloc(1, sizeof(*file))))
@@ -104,7 +130,7 @@ bool retro_vfs_romm_add(const char *path, void *data, uint64_t size)
    file->size = size;
    file->refs = 1;
 
-   romm_vfs_lock_acquire();
+   lock = romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; link = &(*link)->next)
       if (!strcasecmp((*link)->path, path))
       {
@@ -113,18 +139,19 @@ bool retro_vfs_romm_add(const char *path, void *data, uint64_t size)
       }
    file->next     = romm_vfs_files;
    romm_vfs_files = file;
-   romm_vfs_lock_release();
+   romm_vfs_lock_release(lock);
    return true;
 }
 
 bool retro_vfs_romm_remove(const char *path)
 {
    romm_vfs_file_t **link;
+   void *lock;
    bool found = false;
 
    if (!path)
       return false;
-   romm_vfs_lock_acquire();
+   lock = romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; link = &(*link)->next)
       if (!strcasecmp((*link)->path, path))
       {
@@ -132,7 +159,7 @@ bool retro_vfs_romm_remove(const char *path)
          found = true;
          break;
       }
-   romm_vfs_lock_release();
+   romm_vfs_lock_release(lock);
    return found;
 }
 
@@ -140,12 +167,13 @@ bool retro_vfs_romm_remove(const char *path)
 static void romm_vfs_remove_matching(const char *prefix, bool others)
 {
    romm_vfs_file_t **link;
+   void *lock;
    size_t len;
 
    if (!prefix)
       return;
-   len = strlen(prefix);
-   romm_vfs_lock_acquire();
+   len  = strlen(prefix);
+   lock = romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; )
    {
       if (!strncasecmp((*link)->path, prefix, len) != others)
@@ -153,7 +181,7 @@ static void romm_vfs_remove_matching(const char *prefix, bool others)
       else
          link = &(*link)->next;
    }
-   romm_vfs_lock_release();
+   romm_vfs_lock_release(lock);
 }
 
 void retro_vfs_romm_remove_prefix(const char *prefix)
@@ -170,19 +198,20 @@ bool retro_vfs_file_open_romm(libretro_vfs_implementation_file *stream,
       const char *path, unsigned mode)
 {
    romm_vfs_file_t *file;
+   void *lock;
 
    /* Downloaded games are never written to. */
    if (mode != RETRO_VFS_FILE_ACCESS_READ)
       return false;
 
-   romm_vfs_lock_acquire();
+   lock = romm_vfs_lock_acquire();
    for (file = romm_vfs_files; file; file = file->next)
       if (!strcasecmp(file->path, path))
       {
          file->refs++;
          break;
       }
-   romm_vfs_lock_release();
+   romm_vfs_lock_release(lock);
 
    if (!file)
       return false;
@@ -247,18 +276,20 @@ int64_t retro_vfs_file_tell_romm(libretro_vfs_implementation_file *stream)
 void retro_vfs_file_close_romm(libretro_vfs_implementation_file *stream)
 {
    romm_vfs_file_t *file = (romm_vfs_file_t*)stream->romm_file;
+   void *lock;
 
    if (!file)
       return;
-   romm_vfs_lock_acquire();
+   lock = romm_vfs_lock_acquire();
    romm_vfs_unref(file);
-   romm_vfs_lock_release();
+   romm_vfs_lock_release(lock);
    stream->romm_file = NULL;
 }
 
 int retro_vfs_stat_romm(const char *path, int64_t *size)
 {
    romm_vfs_file_t *file;
+   void *lock;
    size_t len;
    int flags = 0;
 
@@ -269,7 +300,7 @@ int retro_vfs_stat_romm(const char *path, int64_t *size)
    if (path[len - 1] == '/')
       len--;
 
-   romm_vfs_lock_acquire();
+   lock = romm_vfs_lock_acquire();
    for (file = romm_vfs_files; file; file = file->next)
    {
       if (!strcasecmp(file->path, path))
@@ -283,6 +314,6 @@ int retro_vfs_stat_romm(const char *path, int64_t *size)
             && file->path[len] == '/')
          flags = RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY;
    }
-   romm_vfs_lock_release();
+   romm_vfs_lock_release(lock);
    return flags;
 }
