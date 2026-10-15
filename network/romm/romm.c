@@ -192,16 +192,6 @@ void romm_check_connection(void)
       romm_checking = true;
 }
 
-#ifdef HAVE_CLOUDSYNC
-#define ROMM_CLOUD_SYNC_PATH "/api/sync/retroarch/"
-
-enum romm_cloud_sync_setup
-{
-   ROMM_CLOUD_SYNC_SET_UP = 0,
-   ROMM_CLOUD_SYNC_ELSEWHERE,
-   ROMM_CLOUD_SYNC_FAILED
-};
-
 /* Whether @scope is in @list, as pairing names missing scopes
  * ("a, b"). */
 static bool romm_scope_listed(const char *list, const char *scope)
@@ -217,6 +207,41 @@ static bool romm_scope_listed(const char *list, const char *scope)
    }
    return false;
 }
+
+/* Save sync reads and writes RomM's saves as this device: without any
+ * of these it would only fail. */
+static const char *const romm_saves_scopes[] = {
+   "assets.read", "assets.write", "devices.read", "devices.write" };
+
+/* Whether @missing, as pairing names missing scopes, holds one that
+ * save sync needs. */
+static bool romm_saves_scope_missing(const char *missing)
+{
+   size_t i;
+   for (i = 0; i < ARRAY_SIZE(romm_saves_scopes); i++)
+      if (romm_scope_listed(missing, romm_saves_scopes[i]))
+         return true;
+   return false;
+}
+
+/* Whether this device's pairing lets saves sync: a device paired
+ * before saves synced has no device id. */
+static bool romm_saves_allowed(void)
+{
+   settings_t *settings = config_get_ptr();
+   return !string_is_empty(settings->arrays.romm_device_id)
+      && !romm_saves_scope_missing(settings->arrays.romm_missing_scopes);
+}
+
+#ifdef HAVE_CLOUDSYNC
+#define ROMM_CLOUD_SYNC_PATH "/api/sync/retroarch/"
+
+enum romm_cloud_sync_setup
+{
+   ROMM_CLOUD_SYNC_SET_UP = 0,
+   ROMM_CLOUD_SYNC_ELSEWHERE,
+   ROMM_CLOUD_SYNC_FAILED
+};
 
 /* Whether Cloud Sync is pointed at RomM's WebDAV, as pairing points it,
  * at this server's address or an earlier one. */
@@ -401,6 +426,8 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
          sizeof(settings->arrays.romm_token));
    strlcpy(settings->arrays.romm_device_id, device_id,
          sizeof(settings->arrays.romm_device_id));
+   strlcpy(settings->arrays.romm_missing_scopes, missing_scopes,
+         sizeof(settings->arrays.romm_missing_scopes));
 #ifdef HAVE_CLOUDSYNC
    cloud_sync = romm_cloud_sync_check(settings, missing_scopes,
          url, sizeof(url));
@@ -425,7 +452,9 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
    if (*missing_scopes)
    {
       snprintf(msg, sizeof(msg),
-            msg_hash_to_str(MSG_ROMM_PAIRED_MISSING_SCOPES), missing_scopes);
+            msg_hash_to_str(romm_saves_scope_missing(missing_scopes)
+               ? MSG_ROMM_PAIRED_NO_SAVES
+               : MSG_ROMM_PAIRED_MISSING_SCOPES), missing_scopes);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
    }
 #ifdef HAVE_CLOUDSYNC
@@ -1160,7 +1189,8 @@ void romm_sync_owed_saves(void)
    size_t i;
 
    if (     string_is_empty(settings->arrays.romm_token)
-         || string_is_empty(dir_get_ptr(RARCH_DIR_SAVEFILE)))
+         || string_is_empty(dir_get_ptr(RARCH_DIR_SAVEFILE))
+         || !romm_saves_allowed())
       return;
    romm_saves_record_path(record, sizeof(record),
          dir_get_ptr(RARCH_DIR_SAVEFILE));
@@ -1206,7 +1236,7 @@ void romm_content_closed(void)
    romm_played_t *game = NULL;
    char live[PATH_MAX_LENGTH];
 
-   if (!romm_closing_savefile(live, sizeof(live)))
+   if (!romm_saves_allowed() || !romm_closing_savefile(live, sizeof(live)))
       return;
    if (romm_played_is_closing(&romm_closing, live))
       game = &romm_closing;
@@ -1222,6 +1252,9 @@ void romm_content_closed(void)
    memset(game, 0, sizeof(*game));
 }
 
+/* Said once a run that saves don't sync until pairing is done again */
+static bool romm_saves_need_pairing_told = false;
+
 /* Fetches what RomM has newer of the saves of @launch_path, the game
  * of playlist entry @content_path, played with @core_path, then loads
  * it. */
@@ -1231,6 +1264,17 @@ static int romm_load_with_saves(const char *core_path,
    core_info_t *info    = NULL;
 
    memset(&romm_played, 0, sizeof(romm_played));
+   if (!romm_saves_allowed())
+   {
+      if (!romm_saves_need_pairing_told)
+         romm_notify(msg_hash_to_str(MSG_ROMM_SAVES_NEED_PAIRING),
+               MESSAGE_QUEUE_CATEGORY_WARNING);
+      romm_saves_need_pairing_told = true;
+      RARCH_WARN("[RomM] Saves of %s aren't synced: the pairing lacks "
+            "the device id or the permissions saves need.\n",
+            launch_path);
+      return romm_load_content(core_path, launch_path, label);
+   }
    if (     !(romm_played.rom_id = romm_launch_rom_id(content_path))
          || !core_info_find(core_path, &info)
          || string_is_empty(info->core_name)

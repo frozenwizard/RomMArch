@@ -2024,6 +2024,7 @@ static struct config_array_setting *populate_settings_array(
    SETTING_ARRAY("romm_web_url",                          settings->arrays.romm_web_url, false, NULL, true);
    SETTING_ARRAY("romm_device_identifier",                settings->arrays.romm_device_identifier, false, NULL, true);
    SETTING_ARRAY("romm_device_id",                        settings->arrays.romm_device_id, false, NULL, true);
+   SETTING_ARRAY("romm_missing_scopes",                   settings->arrays.romm_missing_scopes, false, NULL, true);
    SETTING_ARRAY_SENSITIVE("romm_token",                  settings->arrays.romm_token, false, NULL, true);
 #endif
    SETTING_ARRAY_SENSITIVE("youtube_stream_key",          settings->arrays.youtube_stream_key, true, NULL, true);
@@ -5919,6 +5920,7 @@ void config_set_defaults(settings_t *target)
    *settings->arrays.romm_web_url           = '\0';
    *settings->arrays.romm_device_identifier = '\0';
    *settings->arrays.romm_device_id         = '\0';
+   *settings->arrays.romm_missing_scopes    = '\0';
    *settings->arrays.romm_token             = '\0';
 #endif
 #ifdef HAVE_MENU

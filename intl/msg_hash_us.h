@@ -33677,6 +33677,10 @@ MSG_HASH(
    "Paired, but RomM left out: %s. Pair again with every permission ticked."
    )
 MSG_HASH(
+   MSG_ROMM_PAIRED_NO_SAVES,
+   "Paired, but RomM left out: %s. Saves won't sync until you pair again with every permission ticked."
+   )
+MSG_HASH(
    MSG_ROMM_PAIRED_CLOUD_SYNC_ELSEWHERE,
    "Paired with RomM. Cloud Sync stays with the service it's set up for, so settings won't sync through RomM."
    )
@@ -33803,6 +33807,10 @@ MSG_HASH(
 MSG_HASH(
    MSG_ROMM_SAVES_OWED_CONFLICTS,
    "Saves of %u game(s) changed both here and in RomM; they weren't sent."
+   )
+MSG_HASH(
+   MSG_ROMM_SAVES_NEED_PAIRING,
+   "Saves don't sync with RomM until you pair this device again with every permission ticked."
    )
 MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,

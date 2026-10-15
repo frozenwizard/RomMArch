@@ -1315,6 +1315,9 @@ typedef struct settings
       char romm_device_identifier[64];
       /* RomM's id for the device the pairing made. */
       char romm_device_id[64];
+      /* The permissions pairing asked for that RomM left out, as
+       * "a, b". */
+      char romm_missing_scopes[256];
       char romm_token[128];
 #endif
 #endif
