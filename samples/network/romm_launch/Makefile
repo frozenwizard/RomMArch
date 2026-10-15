@@ -59,12 +59,20 @@ ifneq ($(SANITIZER),)
    LDFLAGS := -fsanitize=$(SANITIZER) $(LDFLAGS)
 endif
 
-OBJS := $(SOURCES_C:.c=.o)
+# encoding_crc32.c picks its fast path by asking cpu_features_get(). The
+# stubs keep the clock, so features_cpu.c comes in with its own renamed.
+CPU_FEATURES_OBJ := features_cpu.o
+
+OBJS := $(SOURCES_C:.c=.o) $(CPU_FEATURES_OBJ)
 
 all: $(TARGET)
 
 %.o: %.c
 	$(CC) $(INCDIRS) $(CFLAGS) $(flags) -c -o$@ $<
+
+$(CPU_FEATURES_OBJ): $(LIBRETRO_COMM_DIR)/features/features_cpu.c
+	$(CC) $(INCDIRS) $(CFLAGS) $(flags) \
+		-Dcpu_features_get_time_usec=features_cpu_time_usec -c -o$@ $<
 
 $(TARGET): $(OBJS)
 	$(CC) -o$@ $(OBJS) $(LDFLAGS)
