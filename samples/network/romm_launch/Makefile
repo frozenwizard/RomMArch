@@ -58,6 +58,9 @@ ifneq ($(SANITIZER),)
    CFLAGS  := -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g $(CFLAGS)
    LDFLAGS := -fsanitize=$(SANITIZER) $(LDFLAGS)
 endif
+ifneq ($(findstring mingw,$(compiler)),)
+   TARGET  := $(TARGET).exe
+endif
 
 # encoding_crc32.c picks its fast path by asking cpu_features_get(). The
 # stubs keep the clock, so features_cpu.c comes in with its own renamed.
@@ -82,7 +85,7 @@ check: $(TARGET)
 
 clean:
 	rm -f $(OBJS)
-	rm -f $(TARGET)
+	rm -f romm_launch_test romm_launch_test.exe
 	rm -rf romm_launch_test_system
 
 .PHONY: clean all check

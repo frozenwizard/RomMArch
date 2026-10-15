@@ -45,6 +45,9 @@ ifneq ($(SANITIZER),)
    CFLAGS  := -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g $(CFLAGS)
    LDFLAGS := -fsanitize=$(SANITIZER) $(LDFLAGS)
 endif
+ifneq ($(findstring mingw,$(compiler)),)
+   TARGET  := $(TARGET).exe
+endif
 
 OBJS := $(SOURCES_C:.c=.o)
 
@@ -61,6 +64,6 @@ check: $(TARGET)
 
 clean:
 	rm -f $(OBJS)
-	rm -f $(TARGET)
+	rm -f romm_library_test romm_library_test.exe
 
 .PHONY: clean all check

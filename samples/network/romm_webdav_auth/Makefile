@@ -48,6 +48,10 @@ ifneq ($(SANITIZER),)
    CFLAGS  := -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g $(CFLAGS)
    LDFLAGS := -fsanitize=$(SANITIZER) $(LDFLAGS)
 endif
+ifneq ($(findstring mingw,$(compiler)),)
+   TARGET  := $(TARGET).exe
+   LDFLAGS += -lws2_32 -static
+endif
 
 all: $(TARGET)
 
@@ -58,6 +62,6 @@ check: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET)
+	rm -f romm_webdav_auth_test romm_webdav_auth_test.exe
 
 .PHONY: clean all check
