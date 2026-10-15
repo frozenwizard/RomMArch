@@ -39,6 +39,9 @@ typedef struct
    const char *system_dir;
    const char *const *firmware;
    size_t firmware_count;
+   /* The extensions the core loads, '|'-separated as its info lists
+    * them, or NULL: a folder game launches what the core takes. */
+   const char *core_exts;
 } romm_launch_params_t;
 
 /* @http_status is that of a failed request, or 0. On success
@@ -61,11 +64,12 @@ void romm_launch_release(const char *keep_path);
 
 /* Fetches the game behind playlist path @content_path from RomM into
  * memory, as romm://<id>/<path inside the game> files, which the
- * loader and cores read through the VFS. A folder game also gets the
- * disc list @content_path names (romm://<id>/<folder>.m3u). A zip
- * holding a disc image is unpacked into its members. The game fetched
- * before is released first. Runs as a task showing its progress; @cb
- * runs on the main thread when it ends. */
+ * loader and cores read through the VFS. A folder game of discs also
+ * gets the disc list @content_path names (romm://<id>/<folder>.m3u);
+ * one holding a cartridge launches as that file alone. A zip holding
+ * a disc image is unpacked into its members. The game fetched before
+ * is released first. Runs as a task showing its progress; @cb runs on
+ * the main thread when it ends. */
 bool romm_launch_prepare(const romm_launch_params_t *params,
       romm_launch_cb_t cb, void *user_data);
 

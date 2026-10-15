@@ -5,7 +5,8 @@
  * is made from its cue sheet (one file over a 64 MB range), one with
  * RomM's own .m3u and discs in subfolders, and how a RAR, a deleted
  * game, a file renamed since the last sync, a folder with nothing to
- * launch, a bad CRC32 and a cancel end it. Zips holding disc images are unpacked (one disc, two discs, the
+ * launch, a bad CRC32 and a cancel end it. A folder holding a cartridge
+ * launches it, chosen by the core's extensions. Zips holding disc images are unpacked (one disc, two discs, the
  * disc a history entry names, a bad CRC32) and stay ready to load as
  * what they held; zipped cartridges are not unpacked.
  * BIOS files the core lacks are fetched into the system folder first,
@@ -134,8 +135,9 @@ static bool vfs_file_is(const char *path, const void *data, size_t len)
    return same;
 }
 
-static void start_with(launch_result_t *r, const char *content_path,
-      const char *const *firmware, size_t firmware_count)
+static void start_core(launch_result_t *r, const char *content_path,
+      const char *const *firmware, size_t firmware_count,
+      const char *core_exts)
 {
    romm_launch_params_t params;
 
@@ -148,10 +150,17 @@ static void start_with(launch_result_t *r, const char *content_path,
    params.system_dir     = TEST_SYSTEM_DIR;
    params.firmware       = firmware;
    params.firmware_count = firmware_count;
+   params.core_exts      = core_exts;
    memset(r, 0, sizeof(*r));
    stub_reset();
    CHECK(romm_launch_prepare(&params, on_launch, r) && stub_task,
          "prepare not started for %s", content_path);
+}
+
+static void start_with(launch_result_t *r, const char *content_path,
+      const char *const *firmware, size_t firmware_count)
+{
+   start_core(r, content_path, firmware, firmware_count, NULL);
 }
 
 static void start(launch_result_t *r, const char *content_path)
@@ -317,6 +326,79 @@ static void test_romm_m3u(void)
    CHECK(vfs_file_is("romm://4940/D2 v1.000.m3u", m3u, strlen(m3u))
          && vfs_file_is("romm://4940/D2 (2000)(Sega)[!].m3u", m3u, strlen(m3u)),
          "RomM's disc list not used");
+}
+
+/* A folder holding a cartridge and its manual launches the cartridge,
+ * fetched alone; a lone .bin is a cartridge too, not a disc. A folder
+ * with nothing the core takes is refused before any download, and a
+ * core that reads no disc list gets the first disc itself. */
+static void test_folder_cartridge(void)
+{
+   static const char gb[]  = "gb|gbc|dmg";
+   static const char gpx[] = "mdx|md|smd|gen|bin|cue|iso|sms|bms|gg|sg|68k|sgd|chd|m3u";
+   launch_result_t r;
+   unsigned before;
+
+   start_core(&r, "romm://70/Pokemon Red (USA).m3u", NULL, 0, gb);
+   answer_str(200, "{\"id\": 70, \"fs_name\": \"Pokemon Red (USA)\","
+         " \"fs_path\": \"roms/gb/roms\", \"has_simple_single_file\": false,"
+         " \"files\": [{\"id\": 1, \"file_name\": \"manual.pdf\","
+         " \"full_path\": \"roms/gb/roms/Pokemon Red (USA)/manual.pdf\","
+         " \"file_size_bytes\": 9000000},"
+         "{\"id\": 2, \"file_name\": \"Pokemon Red (USA).gb\","
+         " \"full_path\": \"roms/gb/roms/Pokemon Red (USA)/Pokemon Red (USA).gb\","
+         " \"file_size_bytes\": 4}]}");
+   answer_str(206, "pkmn");
+   CHECK(strstr(stub_req.url, "/content/Pokemon%20Red%20%28USA%29.gb?file_ids=2")
+         != NULL, "cartridge request %s", stub_req.url);
+   before = stub_req.count;
+   CHECK(run_out() && r.status == ROMM_OK && stub_req.count == before
+         && !strcmp(r.launch_path, "romm://70/Pokemon Red (USA).gb"),
+         "cartridge folder: status %d path %s", r.status, r.launch_path);
+   CHECK(vfs_file_is("romm://70/Pokemon Red (USA).gb", "pkmn", 4)
+         && !path_is_valid("romm://70/manual.pdf")
+         && !path_is_valid("romm://70/Pokemon Red (USA).m3u"),
+         "cartridge folder: files in memory");
+
+   start_core(&r, "romm://71/Sonic.m3u", NULL, 0, gpx);
+   answer_str(200, "{\"id\": 71, \"fs_name\": \"Sonic\","
+         " \"fs_path\": \"roms/genesis/roms\", \"has_simple_single_file\": false,"
+         " \"files\": [{\"id\": 1, \"file_name\": \"Sonic.bin\","
+         " \"full_path\": \"roms/genesis/roms/Sonic/Sonic.bin\","
+         " \"file_size_bytes\": 4}, {\"id\": 2, \"file_name\": \"Sonic.txt\","
+         " \"full_path\": \"roms/genesis/roms/Sonic/Sonic.txt\","
+         " \"file_size_bytes\": 2}]}");
+   answer_str(206, "SEGA");
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://71/Sonic.bin")
+         && !path_is_valid("romm://71/Sonic.m3u"),
+         "lone .bin: status %d path %s", r.status, r.launch_path);
+
+   start_core(&r, "romm://72/Docs.m3u", NULL, 0, gb);
+   answer_str(200, "{\"id\": 72, \"fs_name\": \"Docs\","
+         " \"fs_path\": \"roms/gb/roms\", \"has_simple_single_file\": false,"
+         " \"files\": [{\"id\": 1, \"file_name\": \"manual.pdf\","
+         " \"full_path\": \"roms/gb/roms/Docs/manual.pdf\", \"file_size_bytes\": 3},"
+         "{\"id\": 2, \"file_name\": \"readme.txt\","
+         " \"full_path\": \"roms/gb/roms/Docs/readme.txt\", \"file_size_bytes\": 3}]}");
+   before = stub_req.count;
+   CHECK(run_out() && r.status == ROMM_ERR_UNSUPPORTED && stub_req.count == before,
+         "nothing the core takes: status %d", r.status);
+
+   start_core(&r, "romm://73/Disc Game.m3u", NULL, 0, "cue|bin");
+   answer_str(200, "{\"id\": 73, \"fs_name\": \"Disc Game\","
+         " \"fs_path\": \"roms/x/roms\", \"has_simple_single_file\": false,"
+         " \"files\": [{\"id\": 1, \"file_name\": \"Disc Game.cue\","
+         " \"full_path\": \"roms/x/roms/Disc Game/Disc Game.cue\", \"file_size_bytes\": 3},"
+         "{\"id\": 2, \"file_name\": \"Disc Game.bin\","
+         " \"full_path\": \"roms/x/roms/Disc Game/Disc Game.bin\", \"file_size_bytes\": 3}]}");
+   answer_str(206, "cue");
+   answer_str(206, "bin");
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://73/Disc Game.cue")
+         && path_is_valid("romm://73/Disc Game.bin")
+         && !path_is_valid("romm://73/Disc Game.m3u"),
+         "no disc lists: status %d path %s", r.status, r.launch_path);
 }
 
 typedef struct
@@ -780,6 +862,7 @@ int main(void)
    test_single_file();
    test_cue_bin();
    test_romm_m3u();
+   test_folder_cartridge();
    test_zipped_disc();
    test_zipped_discs();
    test_firmware();

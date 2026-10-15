@@ -89,6 +89,10 @@ typedef struct
    int m3u_file;
    char *list;
    size_t list_len;
+   /* The one file of a folder game launched without a disc list,
+    * fetched alone; or -1 */
+   int alone;
+   char *core_exts;
    retro_time_t started;
    enum romm_launch_state state;
    enum romm_status status;
@@ -174,12 +178,37 @@ static const char *const romm_launch_archive_exts[] = {
    "zip", "7z", "rar", NULL };
 static const char *const romm_launch_rar_ext[] = { "rar", NULL };
 
-/* Disc descriptors, then disc images, then bare tracks */
+/* Disc descriptors, then disc images */
 static const char *const romm_launch_disc_tiers[][6] = {
    { "cue", "gdi", "ccd", "mds", "toc", NULL },
-   { "chd", "cdi", "iso", "pbp", "img", NULL },
-   { "bin", NULL }
+   { "chd", "cdi", "iso", "pbp", "img", NULL }
 };
+
+/* Does the core load @path, going by its extension? Any file does
+ * when the core's extensions aren't known. */
+static bool romm_launch_core_takes(const romm_launch_t *launch,
+      const char *path)
+{
+   const char *ext = path_get_extension(path);
+   const char *p   = launch->core_exts;
+   size_t len;
+
+   if (!p || !*p)
+      return true;
+   if (!ext || !*ext)
+      return false;
+   len = strlen(ext);
+   for (;;)
+   {
+      const char *bar = strchr(p, '|');
+      size_t n        = bar ? (size_t)(bar - p) : strlen(p);
+      if (n == len && !strncasecmp(p, ext, len))
+         return true;
+      if (!bar)
+         return false;
+      p = bar + 1;
+   }
+}
 
 static int romm_launch_cmp_path(const void *a, const void *b)
 {
@@ -187,19 +216,23 @@ static int romm_launch_cmp_path(const void *a, const void *b)
          (*(const romm_file_t* const*)b)->path);
 }
 
-/* Chooses what a folder game's disc list holds: RomM's own .m3u at the
- * top of the folder, else the disc descriptors (.cue, .gdi, ...) in
- * path order, else the disc images themselves. False when the folder
- * holds nothing that can be launched. */
+/* Chooses what a folder game, or what a zip held, launches as: RomM's
+ * own .m3u at the top of the folder, else a disc list of the disc
+ * descriptors (.cue, .gdi, ...) in path order, else of the disc images,
+ * else the first file the core takes, alone. Only what the core takes
+ * counts, and a core that reads no disc list gets the first disc. False
+ * when nothing can be launched. */
 static bool romm_launch_pick_discs(romm_launch_t *launch)
 {
    static const char *const m3u_ext[] = { "m3u", NULL };
    const romm_file_t **picked = NULL;
    size_t count               = RBUF_LEN(launch->files);
+   bool takes_m3u             = romm_launch_core_takes(launch, "a.m3u");
+   bool alone                 = false;
    int m3u                    = -1;
    size_t i, t, len;
 
-   for (i = 0; i < count; i++)
+   for (i = 0; i < count && takes_m3u; i++)
    {
       const char *path = launch->files[i].path;
       if (!strchr(path, '/') && romm_launch_ext_is(path, m3u_ext))
@@ -220,13 +253,31 @@ static bool romm_launch_pick_discs(romm_launch_t *launch)
 
    for (t = 0; t < ARRAY_SIZE(romm_launch_disc_tiers) && !picked; t++)
       for (i = 0; i < count; i++)
-         if (romm_launch_ext_is(launch->files[i].path,
-               romm_launch_disc_tiers[t]))
+         if (     romm_launch_ext_is(launch->files[i].path,
+                     romm_launch_disc_tiers[t])
+               && romm_launch_core_takes(launch, launch->files[i].path))
             RBUF_PUSH(picked, &launch->files[i]);
+   /* A cartridge in a folder, beside a manual or a readme */
+   if (!picked && launch->core_exts && *launch->core_exts)
+   {
+      for (i = 0; i < count; i++)
+         if (romm_launch_core_takes(launch, launch->files[i].path))
+            RBUF_PUSH(picked, &launch->files[i]);
+      alone = true;
+   }
    if (!picked)
       return false;
 
    qsort(picked, RBUF_LEN(picked), sizeof(*picked), romm_launch_cmp_path);
+   if (alone || !takes_m3u)
+   {
+      snprintf(launch->launch_path, sizeof(launch->launch_path), "%s%s",
+            launch->prefix, picked[0]->path);
+      if (alone)
+         launch->alone = (int)(picked[0] - launch->files);
+      RBUF_FREE(picked);
+      return true;
+   }
    for (i = 0, len = 0; i < RBUF_LEN(picked); i++)
       len += strlen(picked[i]->path) + 1;
    if ((launch->list = (char*)malloc(len + 1)))
@@ -315,8 +366,17 @@ static void romm_launch_files_cb(void *user_data, enum romm_status status,
       romm_launch_finish(launch, ROMM_ERR_UNSUPPORTED, 0);
       return;
    }
+   if (launch->alone >= 0)
+   {
+      romm_file_t f = launch->files[launch->alone];
+      RBUF_RESIZE(launch->files, 1);
+      launch->files[0] = f;
+      launch->alone    = 0;
+      launch->total    = f.size;
+   }
    RARCH_LOG(ROMM_LAUNCH_PFX "Fetching %s: %u files, %llu bytes.\n",
-         rom->fs_name, (unsigned)count, (unsigned long long)launch->total);
+         rom->fs_name, (unsigned)RBUF_LEN(launch->files),
+         (unsigned long long)launch->total);
    launch->state = RBUF_LEN(launch->bios)
       ? ROMM_LAUNCH_FIRMWARE : ROMM_LAUNCH_DOWNLOAD;
 }
@@ -567,6 +627,8 @@ static void romm_launch_unzip_end(romm_launch_t *launch)
    if (launch->m3u_file >= 0)
       snprintf(launch->launch_path, sizeof(launch->launch_path), "%s%s",
             launch->prefix, launch->files[launch->m3u_file].path);
+   else if (!launch->list)
+      ; /* launch_path is the one file picked */
    else if ((nl = strchr(launch->list, '\n')) && !nl[1])
    {
       *nl = '\0';
@@ -658,8 +720,8 @@ static void romm_launch_next(romm_launch_t *launch)
 
    if (launch->file >= RBUF_LEN(launch->files))
    {
-      /* A folder game launches through its disc list. */
-      if (!launch->rom.single_file)
+      /* A folder game of discs launches through its disc list. */
+      if (!launch->rom.single_file && launch->list)
       {
          if (!retro_vfs_romm_add(launch->content_path, launch->list,
                launch->list_len))
@@ -793,6 +855,7 @@ static void romm_launch_cleanup(retro_task_t *task)
       free(launch->buf);
       free(launch->list);
       free(launch->unpack_title);
+      free(launch->core_exts);
       if (launch->token)
       {
          memset(launch->token, 0, strlen(launch->token));
@@ -820,10 +883,13 @@ bool romm_launch_prepare(const romm_launch_params_t *params,
    if (     !(launch->token = strdup(params->token))
          || (params->unpack_title
             && !(launch->unpack_title = strdup(params->unpack_title)))
+         || (params->core_exts
+            && !(launch->core_exts = strdup(params->core_exts)))
          || !(task = task_init()))
    {
       free(launch->token);
       free(launch->unpack_title);
+      free(launch->core_exts);
       free(launch);
       return false;
    }
@@ -832,6 +898,7 @@ bool romm_launch_prepare(const romm_launch_params_t *params,
    launch->user_data = user_data;
    launch->task      = task;
    launch->m3u_file  = -1;
+   launch->alone     = -1;
    launch->started   = cpu_features_get_time_usec();
    strlcpy(launch->server, params->server, sizeof(launch->server));
    strlcpy(launch->content_path, content_path,
@@ -874,6 +941,7 @@ bool romm_launch_prepare(const romm_launch_params_t *params,
       RBUF_FREE(launch->bios);
       free(launch->token);
       free(launch->unpack_title);
+      free(launch->core_exts);
       free(launch);
       return false;
    }

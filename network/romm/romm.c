@@ -1217,6 +1217,7 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    romm_launch_params_t params;
    const char **firmware;
    const char *name;
+   core_info_t *info    = NULL;
    bool started;
    char title[NAME_MAX_LENGTH];
    char unpack_title[NAME_MAX_LENGTH];
@@ -1275,6 +1276,8 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
    params.system_dir     = settings->paths.directory_system;
    params.firmware       = firmware;
    params.firmware_count = RBUF_LEN(firmware);
+   if (core_info_find(core_path, &info))
+      params.core_exts   = info->supported_extensions;
    started = romm_launch_prepare(&params, romm_on_launch_prepared, NULL);
    RBUF_FREE(firmware);
    if (!started)
