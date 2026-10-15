@@ -1264,6 +1264,65 @@ static bool romm_lib_fetch_covers(const char *server, const char *token,
    RARCH_LOG(ROMM_LIB_PFX "Covers to fetch: %u.\n", (unsigned)RBUF_LEN(jobs));
    return true;
 }
+const romm_rom_t **romm_library_index(const romm_library_t *lib)
+{
+   const romm_rom_t **index = NULL;
+   size_t i, j;
+
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      for (j = 0; j < RBUF_LEN(lib->platforms[i].roms); j++)
+         RBUF_PUSH(index, &lib->platforms[i].roms[j]);
+   if (index)
+      qsort(index, RBUF_LEN(index), sizeof(*index), romm_lib_cmp_rom_id);
+   return index;
+}
+
+static const romm_rom_t *romm_lib_index_find(const romm_rom_t *const *index,
+      unsigned id)
+{
+   romm_rom_t key;
+   const romm_rom_t *k = &key;
+   const romm_rom_t *const *found;
+
+   if (!index)
+      return NULL;
+   key.id = id;
+   found  = (const romm_rom_t *const*)bsearch(&k, index, RBUF_LEN(index),
+         sizeof(*index), romm_lib_cmp_rom_id);
+   return found ? *found : NULL;
+}
+
+bool romm_library_follow_game(const romm_rom_t *const *old,
+      const romm_rom_t *const *lib, const char *path, const char *label,
+      char *new_path, size_t path_len, char *new_label, size_t label_len)
+{
+   char was[PATH_MAX_LENGTH];
+   const romm_rom_t *now, *before;
+   char *end;
+   unsigned long n;
+
+   strlcpy(new_path, path, path_len);
+   strlcpy(new_label, label, label_len);
+   if (     !string_starts_with(path, ROMM_SCHEME)
+         || !ISDIGIT((unsigned char)path[STRLEN_CONST(ROMM_SCHEME)]))
+      return true;
+   n = strtoul(path + STRLEN_CONST(ROMM_SCHEME), &end, 10);
+   if (*end != '/')
+      return true;
+   if (!(now = romm_lib_index_find(lib, (unsigned)n)))
+      return false;
+
+   /* A path within the game, such as a disc unpacked from its zip,
+    * is left as it is. */
+   if (     (before = romm_lib_index_find(old, (unsigned)n))
+         && romm_library_content_path(was, sizeof(was), before)
+         && string_is_equal(was, path))
+      romm_library_content_path(new_path, path_len, now);
+   if (before && string_is_equal(label, before->name))
+      strlcpy(new_label, now->name, label_len);
+   return true;
+}
+
 /* Days since 1970-01-01 of a proleptic Gregorian date, and back. */
 static long romm_lib_days_from_civil(int y, int m, int d)
 {
@@ -1819,7 +1878,7 @@ static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
 
    if (sync->cb)
       sync->cb(sync->user_data, sync->status, sync->http_status,
-            &sync->lib);
+            sync->status == ROMM_OK ? &sync->old : NULL, &sync->lib);
 }
 
 static void romm_lib_sync_cleanup(retro_task_t *task)

@@ -462,16 +462,18 @@ typedef struct
    int http_status;
    size_t platforms;
    size_t games;
+   bool had_old;
 } sync_result_t;
 
 static void on_sync(void *user_data, enum romm_status status,
-      int http_status, const romm_library_t *lib)
+      int http_status, const romm_library_t *old, const romm_library_t *lib)
 {
    sync_result_t *r = (sync_result_t*)user_data;
    size_t i;
    r->calls++;
    r->status      = status;
    r->http_status = http_status;
+   r->had_old     = old != NULL;
    r->platforms = RBUF_LEN(lib->platforms);
    r->games     = 0;
    for (i = 0; i < r->platforms; i++)
@@ -634,8 +636,8 @@ static void test_sync(void)
 
    CHECK(sync_run_out(), "sync didn't finish without more requests");
    CHECK(r.calls == 1 && r.status == ROMM_OK && r.platforms == 3
-         && r.games == 303, "result: calls %u status %d platforms %u"
-         " games %u", r.calls, r.status, (unsigned)r.platforms,
+         && r.games == 303 && r.had_old, "result: calls %u status %d"
+         " platforms %u games %u", r.calls, r.status, (unsigned)r.platforms,
          (unsigned)r.games);
 
    CHECK(count_entries(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl") == 2,
@@ -670,8 +672,9 @@ static void test_sync(void)
          "untitled sync not muted");
    sync_answer(200, sync_platforms_reply);
    sync_answer(-1, NULL);
-   CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE,
-         "unreachable: calls %u status %d", r.calls, r.status);
+   CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE
+         && !r.had_old, "unreachable: calls %u status %d", r.calls,
+         r.status);
    CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 3,
          "manifest changed by a failed sync");
    romm_library_free(&lib);
@@ -1533,6 +1536,84 @@ static void test_sync_shared_playlist(void)
    filestream_delete(TEST_DIR);
 }
 
+/* History and Favorites follow a sync: games gone are dropped, a
+ * renamed game's playlist path and RomM title follow it, and anything
+ * else is left. */
+static void test_follow_game(void)
+{
+   romm_library_t old, lib;
+   romm_library_platform_t p;
+   const romm_rom_t **old_index, **index;
+   char path[256], label[256];
+
+   memset(&old, 0, sizeof(old));
+   memset(&lib, 0, sizeof(lib));
+   p = lib_platform(15, "gba", "", "x.lpl");
+   RBUF_PUSH(p.roms, rom(46, true, "Advance Wars.gba", "Advance Wars", ""));
+   RBUF_PUSH(p.roms, rom(3335, true, "Final Fight CD (USA).zip",
+         "Final Fight CD", ""));
+   RBUF_PUSH(p.roms, rom(4320, false, "Alundra (USA) (v1.1)", "Alundra",
+         ""));
+   RBUF_PUSH(p.roms, rom(7, true, "gone.md", "Gone", ""));
+   RBUF_PUSH(old.platforms, p);
+   p = lib_platform(15, "gba", "", "x.lpl");
+   RBUF_PUSH(p.roms, rom(4320, false, "Alundra (USA) (v1.1)",
+         "Alundra (v1.1)", ""));
+   RBUF_PUSH(p.roms, rom(46, true, "Advance Wars (USA).gba",
+         "Advance Wars (USA)", ""));
+   RBUF_PUSH(p.roms, rom(3335, true, "Final Fight CD (USA).zip",
+         "Final Fight CD", ""));
+   RBUF_PUSH(p.roms, rom(99, true, "x (USA).md", "X", ""));
+   RBUF_PUSH(lib.platforms, p);
+   old_index = romm_library_index(&old);
+   index     = romm_library_index(&lib);
+   CHECK(RBUF_LEN(index) == 4 && index[0]->id == 46 && index[3]->id == 4320,
+         "index: %u games", (unsigned)RBUF_LEN(index));
+
+   CHECK(romm_library_follow_game(old_index, index,
+         "romm://46/Advance Wars.gba", "Advance Wars", path, sizeof(path),
+         label, sizeof(label))
+         && !strcmp(path, "romm://46/Advance Wars (USA).gba")
+         && !strcmp(label, "Advance Wars (USA)"), "renamed: %s [%s]", path,
+         label);
+   CHECK(romm_library_follow_game(old_index, index,
+         "romm://46/Advance Wars.gba", "My AW", path, sizeof(path),
+         label, sizeof(label))
+         && !strcmp(path, "romm://46/Advance Wars (USA).gba")
+         && !strcmp(label, "My AW"), "user's title: %s [%s]", path, label);
+   CHECK(romm_library_follow_game(old_index, index,
+         "romm://3335/Final Fight CD (USA).cue", "Final Fight CD", path,
+         sizeof(path), label, sizeof(label))
+         && !strcmp(path, "romm://3335/Final Fight CD (USA).cue")
+         && !strcmp(label, "Final Fight CD"), "disc: %s [%s]", path, label);
+   CHECK(romm_library_follow_game(old_index, index,
+         "romm://4320/Alundra (USA) (v1.1).m3u", "Alundra", path,
+         sizeof(path), label, sizeof(label))
+         && !strcmp(path, "romm://4320/Alundra (USA) (v1.1).m3u")
+         && !strcmp(label, "Alundra (v1.1)"), "title only: %s [%s]", path,
+         label);
+   CHECK(!romm_library_follow_game(old_index, index, "romm://7/gone.md",
+         "Gone", path, sizeof(path), label, sizeof(label)), "gone kept");
+   CHECK(romm_library_follow_game(old_index, index, "romm://99/old.md",
+         "Old", path, sizeof(path), label, sizeof(label))
+         && !strcmp(path, "romm://99/old.md") && !strcmp(label, "Old"),
+         "unknown before: %s [%s]", path, label);
+   CHECK(romm_library_follow_game(old_index, index, "/games/x.zip", "X",
+         path, sizeof(path), label, sizeof(label))
+         && !strcmp(path, "/games/x.zip")
+         && romm_library_follow_game(old_index, index, "romm://x/y", "Y",
+         path, sizeof(path), label, sizeof(label))
+         && !strcmp(path, "romm://x/y"), "not a RomM game: %s", path);
+   CHECK(!romm_library_follow_game(NULL, NULL, "romm://46/a.gba", "A",
+         path, sizeof(path), label, sizeof(label)), "empty library kept a"
+         " game");
+
+   RBUF_FREE(old_index);
+   RBUF_FREE(index);
+   romm_library_free(&old);
+   romm_library_free(&lib);
+}
+
 static void test_preferred_cores(void)
 {
    const char *const *c = romm_library_preferred_cores("Sony - PlayStation");
@@ -1687,6 +1768,7 @@ int main(void)
    test_cursor();
    test_sync_incremental();
    test_sync_shared_playlist();
+   test_follow_game();
    test_preferred_cores();
    test_sync_default_core();
    test_cover_path();

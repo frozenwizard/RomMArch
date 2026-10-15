@@ -605,7 +605,7 @@ static bool romm_find_core(const char *const *cores, char *path,
 }
 
 static void romm_on_library_synced(void *user_data, enum romm_status status,
-      int http_status, const romm_library_t *lib)
+      int http_status, const romm_library_t *old, const romm_library_t *lib)
 {
    bool quiet   = romm_syncing_quietly;
    size_t games = 0;

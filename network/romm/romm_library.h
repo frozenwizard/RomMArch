@@ -98,11 +98,12 @@ typedef struct
    romm_library_playlist_cb_t playlist_changed;
 } romm_library_sync_params_t;
 
-/* @lib is the library as the sync left it, valid only during the
- * call. @http_status is that of a failed request, or 0. */
+/* @lib is the library as the sync left it and @old as it was before,
+ * NULL unless @status is ROMM_OK; both valid only during the call.
+ * @http_status is that of a failed request, or 0. */
 typedef void (*romm_library_sync_cb_t)(void *user_data,
       enum romm_status status, int http_status,
-      const romm_library_t *lib);
+      const romm_library_t *old, const romm_library_t *lib);
 
 /* Where RetroArch looks for @rom's box art when it is listed in
  * @playlist: thumbnails/<playlist name>/Named_Boxarts/<file name>.png,
@@ -122,6 +123,21 @@ const char *const *romm_library_preferred_cores(const char *libretro_slug);
  * core's so each game's saves are a file of its own; NULL for the
  * core's own. */
 const char *romm_library_core_option_default(const char *key);
+
+/* @lib's games sorted by id, for romm_library_follow_game(): an RBUF
+ * for the caller to free, valid while @lib is. */
+const romm_rom_t **romm_library_index(const romm_library_t *lib);
+
+/* After a sync from @old to @lib (as indexed by romm_library_index()),
+ * what becomes of an entry for @path, labelled @label, in a list of
+ * games the sync doesn't write, such as History. False when its game
+ * is gone: deleted, or hidden from the user. Otherwise @new_path is
+ * its path now, renamed with the game when it was the game's playlist
+ * path, and @new_label RomM's title now when @label was its title
+ * before. */
+bool romm_library_follow_game(const romm_rom_t *const *old,
+      const romm_rom_t *const *lib, const char *path, const char *label,
+      char *new_path, size_t path_len, char *new_label, size_t label_len);
 
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,
