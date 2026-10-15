@@ -36,6 +36,11 @@ typedef struct
    int64_t remote_time;
    /* MD5 of the local file when it last matched RomM's, in hex. */
    char md5[33];
+   /* The local file's size and modification time when a listing found
+    * it still holding @md5, which it then needn't read again; @mtime
+    * is 0 when unknown. */
+   int64_t size;
+   int64_t mtime;
 } romm_saves_file_t;
 
 /* A game as played with one emulator. */
@@ -65,6 +70,9 @@ typedef struct
 {
    char suffix[64];
    char md5[33];
+   /* As romm_saves_file_t's, when @md5 was taken. */
+   int64_t size;
+   int64_t mtime;
 } romm_saves_local_t;
 
 enum romm_saves_step_type
@@ -205,9 +213,11 @@ const char *romm_saves_suffix(const char *name, const char *base);
 bool romm_saves_md5_file(const char *path, char *md5);
 
 /* @base's save files in @dir, or its save states with @states, each
- * with its MD5; an RBUF for the caller to free. */
+ * with its MD5; an RBUF for the caller to free. A file whose size and
+ * modification time are as @known (or NULL) recorded them takes the
+ * recorded MD5 instead of being read. */
 romm_saves_local_t *romm_saves_list_local(const char *dir,
-      const char *base, bool states);
+      const char *base, bool states, const romm_saves_game_t *known);
 
 /* What to do to bring a game's files here and in RomM in line, one
  * step per file that needs one; an RBUF for the caller to free. For

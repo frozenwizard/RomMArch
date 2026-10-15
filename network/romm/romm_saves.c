@@ -148,6 +148,10 @@ static void romm_saves_load_file_member(void *ctx, const char *key,
       f->remote_time = (int64_t)strtoll(value, NULL, 10);
    else if (string_is_equal(key, "md5"))
       strlcpy(f->md5, value, sizeof(f->md5));
+   else if (string_is_equal(key, "size"))
+      f->size = (int64_t)strtoll(value, NULL, 10);
+   else if (string_is_equal(key, "mtime"))
+      f->mtime = (int64_t)strtoll(value, NULL, 10);
 }
 
 static void romm_saves_load_file_end(void *ctx)
@@ -251,6 +255,8 @@ bool romm_saves_record_save(const romm_saves_record_t *rec,
                "\"remote_time\": %lld", f->remote_id,
                (long long)f->remote_time);
          romm_saves_json_string(writer, "md5", f->md5);
+         rjsonwriter_rawf(writer, ", \"size\": %lld, \"mtime\": %lld",
+               (long long)f->size, (long long)f->mtime);
          rjsonwriter_raw(writer, "}", 1);
       }
    }
@@ -318,7 +324,7 @@ bool romm_saves_md5_file(const char *path, char *md5)
 }
 
 romm_saves_local_t *romm_saves_list_local(const char *dir,
-      const char *base, bool states)
+      const char *base, bool states, const romm_saves_game_t *known)
 {
    romm_saves_local_t *list = NULL;
    struct RDIR *rdir;
@@ -330,6 +336,7 @@ romm_saves_local_t *romm_saves_list_local(const char *dir,
    {
       const char *name = retro_dirent_get_name(rdir);
       const char *suffix;
+      const romm_saves_file_t *f;
       romm_saves_local_t local;
       char path[2048];
 
@@ -339,8 +346,18 @@ romm_saves_local_t *romm_saves_list_local(const char *dir,
          continue;
       fill_pathname_join(path, dir, name, sizeof(path));
       strlcpy(local.suffix, suffix, sizeof(local.suffix));
-      if (romm_saves_md5_file(path, local.md5))
-         RBUF_PUSH(list, local);
+      /* Taken before the read: a write after it changes them. */
+      local.size  = path_get_size(path);
+      local.mtime = 0;
+      path_get_mtime(path, &local.mtime);
+      f = known ? romm_saves_game_file((romm_saves_game_t*)known, suffix,
+            false) : NULL;
+      if (     f && f->mtime > 0 && *f->md5
+            && f->mtime == local.mtime && f->size == local.size)
+         strlcpy(local.md5, f->md5, sizeof(local.md5));
+      else if (!romm_saves_md5_file(path, local.md5))
+         continue;
+      RBUF_PUSH(list, local);
    }
    retro_closedir(rdir);
    return list;
@@ -575,6 +592,10 @@ struct romm_saves_sync
    romm_saves_result_t result;
    romm_save_t *remote_saves;
    romm_save_t *remote_states;
+   romm_saves_local_t *local_saves;
+   romm_saves_local_t *local_states;
+   /* When the local files were listed, in seconds since 1970. */
+   int64_t listed_at;
    romm_saves_record_t rec;
    romm_saves_step_t *steps;
    size_t next;
@@ -603,6 +624,8 @@ static void romm_saves_sync_free(romm_saves_sync_t *sync)
 {
    RBUF_FREE(sync->remote_saves);
    RBUF_FREE(sync->remote_states);
+   RBUF_FREE(sync->local_saves);
+   RBUF_FREE(sync->local_states);
    RBUF_FREE(sync->steps);
    romm_saves_record_free(&sync->rec);
    memset(sync->token, 0, sizeof(sync->token));
@@ -615,10 +638,34 @@ static romm_saves_game_t *romm_saves_sync_game(romm_saves_sync_t *sync)
          true);
 }
 
+/* Notes the size and time of @game's listed files still holding what
+ * the record has, so the next listing needn't read them. A file
+ * changed in the second it was listed may change again unseen, so
+ * it's left to be read. */
+static void romm_saves_sync_stamp(const romm_saves_sync_t *sync,
+      romm_saves_game_t *game, const romm_saves_local_t *local)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(local); i++)
+   {
+      romm_saves_file_t *f = romm_saves_game_file(game, local[i].suffix,
+            false);
+      if (     f && string_is_equal(f->md5, local[i].md5)
+            && local[i].mtime > 0 && local[i].mtime < sync->listed_at)
+      {
+         f->size  = local[i].size;
+         f->mtime = local[i].mtime;
+      }
+   }
+}
+
 static void romm_saves_sync_end(romm_saves_sync_t *sync)
 {
    romm_saves_game_t *game = romm_saves_sync_game(sync);
    size_t i;
+
+   romm_saves_sync_stamp(sync, game, sync->local_saves);
+   romm_saves_sync_stamp(sync, game, sync->local_states);
 
    strlcpy(game->save_dir, sync->save_dir, sizeof(game->save_dir));
    strlcpy(game->state_dir, sync->state_dir, sizeof(game->state_dir));
@@ -667,6 +714,8 @@ static void romm_saves_sync_record(romm_saves_sync_t *sync,
          step->suffix, true);
    f->remote_id   = remote->id;
    f->remote_time = romm_json_time(remote->updated_at);
+   if (!string_is_equal(f->md5, md5))
+      f->mtime = 0;
    strlcpy(f->md5, md5, sizeof(f->md5));
    romm_saves_record_save(&sync->rec, sync->record_path);
 }
@@ -1060,7 +1109,6 @@ static void romm_saves_sync_states_cb(void *user_data,
 {
    romm_saves_sync_t *sync = (romm_saves_sync_t*)user_data;
    romm_saves_plan_params_t p;
-   romm_saves_local_t *local_saves, *local_states;
    size_t i;
 
    if (status != ROMM_OK)
@@ -1073,26 +1121,26 @@ static void romm_saves_sync_states_cb(void *user_data,
    for (i = 0; i < count; i++)
       RBUF_PUSH(sync->remote_states, saves[i]);
 
-   local_saves  = romm_saves_list_local(sync->save_dir, sync->base, false);
-   local_states = romm_saves_list_local(sync->state_dir, sync->base, true);
-
    memset(&p, 0, sizeof(p));
    p.game                = romm_saves_record_game(&sync->rec,
          sync->rom_id, sync->emulator, false);
+   sync->listed_at       = (int64_t)time(NULL);
+   sync->local_saves     = romm_saves_list_local(sync->save_dir, sync->base,
+         false, p.game);
+   sync->local_states    = romm_saves_list_local(sync->state_dir,
+         sync->base, true, p.game);
    p.emulator            = sync->emulator;
    p.base                = sync->base;
    p.rom_base            = *sync->rom_base ? sync->rom_base : NULL;
-   p.saves               = local_saves;
-   p.saves_count         = RBUF_LEN(local_saves);
-   p.states              = local_states;
-   p.states_count        = RBUF_LEN(local_states);
+   p.saves               = sync->local_saves;
+   p.saves_count         = RBUF_LEN(sync->local_saves);
+   p.states              = sync->local_states;
+   p.states_count        = RBUF_LEN(sync->local_states);
    p.remote_saves        = sync->remote_saves;
    p.remote_saves_count  = RBUF_LEN(sync->remote_saves);
    p.remote_states       = sync->remote_states;
    p.remote_states_count = RBUF_LEN(sync->remote_states);
    sync->steps           = romm_saves_plan(&p);
-   RBUF_FREE(local_saves);
-   RBUF_FREE(local_states);
 
    romm_saves_sync_step(sync);
 }

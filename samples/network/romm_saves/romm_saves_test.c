@@ -105,6 +105,8 @@ static void test_suffix(void)
          "not a suffix");
 }
 
+#define MD5_CACHED "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+
 static bool has_suffix(const romm_saves_local_t *list, const char *suffix,
       const char *md5)
 {
@@ -142,8 +144,8 @@ static void test_local(void)
    fill_pathname_join(path, DIR, "Game.d", sizeof(path));
    path_mkdir(path);
 
-   saves  = romm_saves_list_local(DIR, "Game", false);
-   states = romm_saves_list_local(DIR, "Game", true);
+   saves  = romm_saves_list_local(DIR, "Game", false, NULL);
+   states = romm_saves_list_local(DIR, "Game", true, NULL);
    CHECK(RBUF_LEN(saves) == 2
          && has_suffix(saves, ".srm", "900150983cd24fb0d6963f7d28e17f72")
          && has_suffix(saves, ".rtc", "d41d8cd98f00b204e9800998ecf8427e"),
@@ -154,8 +156,43 @@ static void test_local(void)
          "states: %u", (unsigned)RBUF_LEN(states));
    RBUF_FREE(saves);
    RBUF_FREE(states);
-   CHECK(!romm_saves_list_local(DIR "/none", "Game", false)
-         && !romm_saves_list_local(DIR, "", false), "listed nothing");
+
+   /* A file as recorded isn't read: its MD5 is the record's. */
+   {
+      romm_saves_game_t game;
+      romm_saves_file_t *f;
+      int64_t mtime = 0;
+      memset(&game, 0, sizeof(game));
+      fill_pathname_join(path, DIR, "Game.srm", sizeof(path));
+      path_get_mtime(path, &mtime);
+      f = romm_saves_game_file(&game, ".srm", true);
+      strlcpy(f->md5, MD5_CACHED, sizeof(f->md5));
+      f->size  = 3;
+      f->mtime = mtime;
+      f = romm_saves_game_file(&game, ".rtc", true);
+      strlcpy(f->md5, MD5_CACHED, sizeof(f->md5));
+      f->size  = 0;
+      f->mtime = mtime - 1;
+      saves = romm_saves_list_local(DIR, "Game", false, &game);
+      CHECK(RBUF_LEN(saves) == 2 && has_suffix(saves, ".srm", MD5_CACHED)
+            && has_suffix(saves, ".rtc", "d41d8cd98f00b204e9800998ecf8427e"),
+            "cached MD5 not used, or used for a file changed since");
+      CHECK(saves && saves[0].size == (saves[0].suffix[1] == 's' ? 3 : 0)
+            && saves[0].mtime == mtime, "size %lld mtime %lld",
+            saves ? (long long)saves[0].size : -1LL,
+            saves ? (long long)saves[0].mtime : -1LL);
+      RBUF_FREE(saves);
+      /* Same time, another size. */
+      f = romm_saves_game_file(&game, ".srm", false);
+      f->size = 4;
+      saves = romm_saves_list_local(DIR, "Game", false, &game);
+      CHECK(has_suffix(saves, ".srm", "900150983cd24fb0d6963f7d28e17f72"),
+            "cached MD5 used for another size");
+      RBUF_FREE(saves);
+      RBUF_FREE(game.files);
+   }
+   CHECK(!romm_saves_list_local(DIR "/none", "Game", false, NULL)
+         && !romm_saves_list_local(DIR, "", false, NULL), "listed nothing");
 
    remove_file("Game.srm");
    remove_file("Game.rtc");
@@ -192,6 +229,8 @@ static void test_record(void)
    f->remote_id   = 2;
    f->remote_time = 1791857916;
    strlcpy(f->md5, "bc8177cd3eda0a4750c6e17b57eaa076", sizeof(f->md5));
+   f->size        = 8192;
+   f->mtime       = 1791857000;
    f = romm_saves_game_file(g, ".state1", true);
    f->remote_id   = 1;
    f->remote_time = 1791857928;
@@ -224,7 +263,8 @@ static void test_record(void)
             g->emulator, (unsigned)RBUF_LEN(g->files));
       f = romm_saves_game_file(g, ".brm", false);
       CHECK(f && f->remote_id == 2 && f->remote_time == 1791857916
-            && !strcmp(f->md5, "bc8177cd3eda0a4750c6e17b57eaa076"),
+            && !strcmp(f->md5, "bc8177cd3eda0a4750c6e17b57eaa076")
+            && f->size == 8192 && f->mtime == 1791857000,
             "brm read back");
       f = romm_saves_game_file(g, ".state1", false);
       CHECK(f && f->remote_id == 1 && !*f->md5, "state read back");
@@ -274,6 +314,7 @@ static romm_save_t remote(unsigned id, const char *name,
 static romm_saves_local_t local(const char *suffix, const char *md5)
 {
    romm_saves_local_t l;
+   memset(&l, 0, sizeof(l));
    strlcpy(l.suffix, suffix, sizeof(l.suffix));
    strlcpy(l.md5, md5, sizeof(l.md5));
    return l;
@@ -1219,6 +1260,101 @@ static void test_old_version(void)
    filestream_delete(p.record_path);
 }
 
+/* Files left as the last sync found them aren't read again. */
+static void test_stamps(void)
+{
+   romm_saves_sync_params_t p;
+   romm_saves_record_t rec;
+   romm_saves_game_t *g;
+   romm_saves_file_t *f;
+   sync_result_t r;
+   int64_t old_time = (int64_t)time(NULL) - 100;
+   char md5[33];
+   char list[512];
+
+   path_mkdir(DIR);
+   path_mkdir(DIR "/saves");
+   path_mkdir(DIR "/saves/Snes9x");
+   path_mkdir(DIR "/states");
+   path_mkdir(DIR "/states/Snes9x");
+   filestream_write_file(SRM, "KEPT", 4);
+   path_set_mtime(SRM, old_time);
+   romm_saves_md5_file(SRM, md5);
+   sync_params(&p, true);
+   memset(&rec, 0, sizeof(rec));
+   g = romm_saves_record_game(&rec, 3335, "Snes9x", true);
+   f = romm_saves_game_file(g, ".srm", true);
+   f->remote_id   = 95;
+   f->remote_time = romm_json_time("2026-10-13T09:00:00Z");
+   strlcpy(f->md5, md5, sizeof(f->md5));
+   romm_saves_record_save(&rec, p.record_path);
+   romm_saves_record_free(&rec);
+   snprintf(list, sizeof(list), "[{\"id\": 95, \"rom_id\": 3335,"
+         " \"file_name\": \"Super Metroid (USA) [2026-10-13_09-00-00].srm\","
+         " \"emulator\": \"Snes9x\", \"slot\": \"autosave\","
+         " \"content_hash\": \"%s\","
+         " \"updated_at\": \"2026-10-13T09:00:00+00:00\"}]", md5);
+
+   /* In sync: the file's size and time are noted with its MD5. */
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, list);
+   answer(200, "[]");
+   CHECK(r.calls == 1 && stub_req.count == 2, "in sync: %u requests",
+         stub_req.count);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && (f = romm_saves_game_file(g, ".srm", false))
+         && f->size == 4 && f->mtime == old_time, "stamp %lld %lld",
+         f ? (long long)f->size : -1LL, f ? (long long)f->mtime : -1LL);
+
+   /* The next sync takes the record's MD5 without reading the file: a
+    * record saying otherwise is believed, so nothing goes up. */
+   strlcpy(f->md5, MD5_CACHED, sizeof(f->md5));
+   romm_saves_record_save(&rec, p.record_path);
+   romm_saves_record_free(&rec);
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, list);
+   answer(200, "[]");
+   CHECK(r.calls == 1 && !r.result.uploaded && stub_req.count == 2,
+         "file read again: up %u requests %u", r.result.uploaded,
+         stub_req.count);
+
+   /* Written since, in the second it's listed (a later time, so the
+    * check can't cross a second): read, sent, and its time not noted,
+    * as it could change again unseen. */
+   filestream_write_file(SRM, "NEWER", 5);
+   path_set_mtime(SRM, (int64_t)time(NULL) + 5);
+   romm_saves_md5_file(SRM, md5);
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   romm_saves_sync(&p, on_sync, &r);
+   answer(200, list);
+   answer(200, "[]");
+   CHECK(strstr(stub_req.url, "slot=autosave"), "changed file not sent");
+   answer(200, "{\"id\": 96, \"rom_id\": 3335, \"slot\": \"autosave\","
+         " \"file_name\": \"x.srm\","
+         " \"updated_at\": \"2026-10-13T10:00:00+00:00\"}");
+   CHECK(r.calls == 1 && r.result.uploaded == 1, "changed: up %u",
+         r.result.uploaded);
+   CHECK(romm_saves_record_load(&rec, p.record_path)
+         && (g = romm_saves_record_game(&rec, 3335, "Snes9x", false))
+         && (f = romm_saves_game_file(g, ".srm", false))
+         && !strcmp(f->md5, md5) && !f->mtime, "racy stamp kept: %lld",
+         f ? (long long)f->mtime : -1LL);
+   romm_saves_record_free(&rec);
+
+   filestream_delete(SRM);
+   filestream_delete(DIR "/saves/Snes9x");
+   filestream_delete(DIR "/saves");
+   filestream_delete(DIR "/states/Snes9x");
+   filestream_delete(DIR "/states");
+   filestream_delete(p.record_path);
+}
+
 int main(void)
 {
    test_time();
@@ -1230,6 +1366,7 @@ int main(void)
    test_resolve();
    test_match();
    test_old_version();
+   test_stamps();
    filestream_delete(DIR);
 
    if (failures)
