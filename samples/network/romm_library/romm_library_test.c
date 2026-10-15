@@ -37,6 +37,15 @@ static unsigned failures = 0;
       } \
    } while (0)
 
+/* Paths are joined with the platform's separator; compare them in '/'. */
+static bool path_is(const char *path, const char *want)
+{
+   char s[PATH_MAX_LENGTH];
+   strlcpy(s, path, sizeof(s));
+   pathname_make_slashes_portable(s);
+   return !strcmp(s, want);
+}
+
 static romm_rom_t rom(unsigned id, bool single_file, const char *fs_name,
       const char *name, const char *crc)
 {
@@ -315,7 +324,7 @@ static void test_manifest(void)
    romm_rom_t r;
 
    CHECK(romm_library_manifest_path(path, sizeof(path), dir)
-         && !strcmp(path, "romm_library_test_dir/romm/library.json"),
+         && path_is(path, "romm_library_test_dir/romm/library.json"),
          "manifest path %s", path);
    CHECK(!romm_library_load(&back, path) && !back.platforms,
          "loaded a manifest that isn't there");
@@ -811,7 +820,7 @@ static void test_sync_reconcile(void)
    CHECK(!path_is_valid(TEST_DIR "/RomM - Gone.lpl"),
          "playlist of a platform gone from RomM kept");
    CHECK(written_count == 3
-         && !strcmp(written_path, TEST_DIR "/RomM - Gone.lpl"),
+         && path_is(written_path, TEST_DIR "/RomM - Gone.lpl"),
          "removal reported: %u changes, last %s", written_count,
          written_path);
    CHECK(path_is_valid(TEST_DIR "/Mine.lpl"), "user's playlist removed");
@@ -1386,7 +1395,7 @@ static void test_sync_incremental(void)
    CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
          "changed: status %d games %u", r.status, (unsigned)r.games);
    CHECK(count_entries(pl) == 3, "%u entries", count_entries(pl));
-   CHECK(written_count == 1 && !strcmp(written_path, pl),
+   CHECK(written_count == 1 && path_is(written_path, pl),
          "rewrite reported %u times, last %s", written_count, written_path);
    if (filestream_read_file(pl, (void**)&doc, &len) && doc)
    {
