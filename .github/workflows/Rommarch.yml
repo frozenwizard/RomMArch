@@ -1,0 +1,87 @@
+name: CI Rommarch (configure --enable-romm)
+
+on:
+  push:
+    branches:
+      - rommarch
+  pull_request:
+    branches:
+      - rommarch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux build with RomM
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: |
+          pkgs="build-essential pkg-config libx11-dev libxext-dev libxrandr-dev
+            libxinerama-dev libxxf86vm-dev libxkbcommon-dev libgl-dev libegl-dev
+            libudev-dev zlib1g-dev libfreetype-dev"
+          for i in 1 2 3; do
+            sudo timeout 90 apt-get update -y \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && break
+            echo "apt-get update failed (attempt $i); retrying in 10s"
+            sleep 10
+          done
+          sudo apt-get install -y \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            $pkgs
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          set -eu
+          ./configure --enable-romm
+          grep -q '^HAVE_ROMM = 1' config.mk
+          make -j"$(nproc)"
+          test -x rommarch
+          ./rommarch --version
+
+  windows-cross:
+    name: Windows build with RomM (mingw-w64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: |
+          pkgs="build-essential pkg-config gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64"
+          for i in 1 2 3; do
+            sudo timeout 90 apt-get update -y \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && break
+            echo "apt-get update failed (attempt $i); retrying in 10s"
+            sleep 10
+          done
+          sudo apt-get install -y \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            $pkgs
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          set -eu
+          ./configure --host=x86_64-w64-mingw32 --enable-romm \
+                      --disable-qt --disable-ffmpeg
+          grep -q '^HAVE_ROMM = 1' config.mk
+          make -j"$(nproc)" CC=x86_64-w64-mingw32-gcc \
+                            CXX=x86_64-w64-mingw32-g++
+          test -f rommarch.exe
