@@ -226,6 +226,87 @@ jobs:
              ./romm_webdav_auth_test
           echo "[pass] romm_webdav_auth_test (ASan)"
 
+      - name: Build and run romm_vfs_test (ASan + UBSan, TSan)
+        shell: bash
+        working-directory: samples/network/romm_vfs
+        run: |
+          set -eu
+          # The romm:// in-memory files (vfs_implementation_romm.c) as
+          # cores reach them, through filestream and path_*: reads,
+          # seeks, sizes, paths in any case, folders, files replaced or
+          # removed while open, and readers on other threads, some
+          # before the first file is added.
+          make clean all SANITIZER=address,undefined
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+             UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 60 \
+             ./romm_vfs_test
+          echo "[pass] romm_vfs_test (ASan)"
+          make clean all SANITIZER=thread
+          TSAN_OPTIONS=halt_on_error=1 timeout 120 ./romm_vfs_test
+          echo "[pass] romm_vfs_test (TSan)"
+
+      - name: Build and run romm_library_test (ASan + UBSan)
+        shell: bash
+        working-directory: samples/network/romm_library
+        run: |
+          set -eu
+          # Includes network/romm/romm_library.c and plays RomM: the
+          # library sync's playlists, manifest, paging, incremental
+          # changes, games removed or renamed, platforms gone, covers
+          # and default cores.
+          make clean all SANITIZER=address,undefined
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+             UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 60 \
+             ./romm_library_test
+          echo "[pass] romm_library_test (ASan)"
+
+      - name: Build and run romm_launch_test (ASan + UBSan, TSan)
+        shell: bash
+        working-directory: samples/network/romm_launch
+        run: |
+          set -eu
+          # Includes network/romm/romm_launch.c and plays RomM: a game
+          # fetched into memory in byte ranges, CRC-checked, disc games
+          # with their .cue or .m3u, zipped discs unpacked, firmware,
+          # and the refusals (renamed, 7z discs, nothing a core takes).
+          make clean all SANITIZER=address,undefined
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+             UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 120 \
+             ./romm_launch_test
+          echo "[pass] romm_launch_test (ASan)"
+          make clean all SANITIZER=thread
+          TSAN_OPTIONS=halt_on_error=1 timeout 300 ./romm_launch_test
+          echo "[pass] romm_launch_test (TSan)"
+
+      - name: Build and run romm_saves_test (ASan + UBSan)
+        shell: bash
+        working-directory: samples/network/romm_saves
+        run: |
+          set -eu
+          # Includes network/romm/romm_saves.c and plays RomM: save and
+          # state sync by game id, the plan, uploads, downloads,
+          # conflicts and the copies they keep, and the sync record.
+          make clean all SANITIZER=address,undefined
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+             UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 60 \
+             ./romm_saves_test
+          echo "[pass] romm_saves_test (ASan)"
+
+      - name: Build and run romm_platform_test (ASan + UBSan)
+        shell: bash
+        working-directory: samples/network/romm_platform
+        run: |
+          set -eu
+          # network/romm/romm_platform.c: install identifiers are new
+          # random UUIDs, the device name is the host's, and the
+          # approval link reaches xdg-open as one argument, through no
+          # shell, with no child left to reap.
+          make clean all SANITIZER=address,undefined
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+             UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 60 \
+             ./romm_platform_test
+          echo "[pass] romm_platform_test (ASan)"
+
       - name: Build and run s3_backup_test (ASan + UBSan, TSan)
         shell: bash
         working-directory: samples/network/s3_backup
@@ -448,3 +529,47 @@ jobs:
           make clean all SANITIZER=thread
           TSAN_OPTIONS=halt_on_error=1 timeout 300 ./net_http_semantics_test
           echo "[pass] net_http_semantics_test (TSan)"
+
+  romm-mingw:
+    name: Build the RomM samples with mingw-w64, run them under Wine
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: |
+          pkgs="make gcc-mingw-w64-x86-64 wine wine64"
+          for i in 1 2 3; do
+            sudo timeout 90 apt-get update -y \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && break
+            echo "apt-get update failed (attempt $i); retrying in 10s"
+            sleep 10
+          done
+          sudo apt-get install -y \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            $pkgs
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build and run the RomM samples under Wine
+        shell: bash
+        run: |
+          set -eu
+          export WINEDEBUG=-all WINEPREFIX=$RUNNER_TEMP/wineprefix
+          command -v wine >/dev/null
+          # One wineserver for the step, so no sample starts while the
+          # last one's server is on its way out.
+          mkdir -p "$WINEPREFIX"
+          wineserver -p
+          trap 'wineserver -k || true' EXIT
+          wine cmd /c exit > /dev/null 2>&1 < /dev/null
+          for h in romm_client romm_webdav_auth romm_vfs romm_library \
+                   romm_launch romm_saves romm_platform; do
+             make -C samples/network/$h clean
+             make -C samples/network/$h compiler=x86_64-w64-mingw32-gcc
+             (cd samples/network/$h && timeout 300 wine ./${h}_test.exe)
+             echo "[pass] ${h}_test.exe (Wine)"
+             make -C samples/network/$h clean
+          done
