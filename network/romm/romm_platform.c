@@ -21,9 +21,13 @@
 #include <shellapi.h>
 #else
 #include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #endif
 
 #include <compat/strl.h>
@@ -65,6 +69,31 @@ size_t romm_platform_device_name(char *s, size_t len)
    return strlcpy(s, "Windows PC", len);
 }
 #else
+/* Before the opener's exec: it keeps none of RetroArch's open files
+ * (listening sockets, input devices), and its standard streams go to
+ * /dev/null. Async-signal-safe calls only, as after any fork of a
+ * threaded process. */
+static void romm_platform_detach_fds(void)
+{
+   long fd, max;
+   int null_fd = open("/dev/null", O_RDWR);
+
+   if (null_fd >= 0)
+   {
+      dup2(null_fd, 0);
+      dup2(null_fd, 1);
+      dup2(null_fd, 2);
+   }
+#if defined(__linux__) && defined(SYS_close_range)
+   if (syscall(SYS_close_range, 3, ~0U, 0) == 0)
+      return;
+#endif
+   if ((max = sysconf(_SC_OPEN_MAX)) < 0)
+      max = 1024;
+   for (fd = 3; fd < max; fd++)
+      close((int)fd);
+}
+
 bool romm_platform_open_url(const char *url)
 {
    int status;
@@ -72,10 +101,14 @@ bool romm_platform_open_url(const char *url)
 
    if (pid == 0)
    {
-      /* A grandchild opens it, so none of ours is left to reap. */
+      /* A grandchild opens it, so none of ours is left to reap, in a
+       * session of its own, so the browser it may start outlives
+       * RetroArch's terminal and its signals. */
       pid_t opener = fork();
       if (opener == 0)
       {
+         setsid();
+         romm_platform_detach_fds();
          execlp("xdg-open", "xdg-open", url, (char*)NULL);
          _exit(127);
       }

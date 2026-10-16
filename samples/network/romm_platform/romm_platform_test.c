@@ -2,7 +2,8 @@
  * (network/romm/romm_platform.c): each new install identifier is a
  * fresh random UUID, the device name is the computer's, and on Linux
  * the approval link goes to xdg-open as one argument, through no
- * shell.
+ * shell, in a session of its own that keeps none of the caller's open
+ * files.
  */
 
 #include <stdio.h>
@@ -10,6 +11,7 @@
 #include <string.h>
 #ifndef _WIN32
 #include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -85,7 +87,12 @@ static void test_device_name(void)
 #ifndef _WIN32
 #define BIN_DIR "romm_platform_test_bin"
 
-/* An xdg-open first on the PATH writes down what it was given. */
+/* A file the caller has open, which the opener mustn't keep */
+#define KEPT_FD 37
+
+/* An xdg-open first on the PATH writes down what it was given, its
+ * pid, and whether it has KEPT_FD open; it stays a while, so its
+ * session can be looked at. */
 static void test_open_url(void)
 {
    const char *url = "http://romm.local:8090/pair?code=AB12&x='$(touch "
@@ -97,6 +104,8 @@ static void test_open_url(void)
    FILE *f;
    size_t len = 0;
    unsigned i;
+   int kept;
+   long pid = 0;
 
    mkdir(BIN_DIR, 0755);
    remove(BIN_DIR "/opened");
@@ -106,8 +115,12 @@ static void test_open_url(void)
       return;
    }
    fputs("#!/bin/sh\n"
+         "if [ -e /dev/fd/37 ]; then echo kept; else echo closed; fi"
+         " > " BIN_DIR "/fd\n"
+         "echo $$ > " BIN_DIR "/pid\n"
          "printf '%s' \"$1\" > " BIN_DIR "/opened.tmp\n"
-         "mv " BIN_DIR "/opened.tmp " BIN_DIR "/opened\n", f);
+         "mv " BIN_DIR "/opened.tmp " BIN_DIR "/opened\n"
+         "sleep 2\n", f);
    fclose(f);
    chmod(BIN_DIR "/xdg-open", 0755);
    if (!getcwd(cwd, sizeof(cwd)))
@@ -116,6 +129,8 @@ static void test_open_url(void)
          old_path ? old_path : "/usr/bin:/bin");
    setenv("PATH", path, 1);
 
+   kept = open(BIN_DIR "/kept", O_WRONLY | O_CREAT, 0644);
+   CHECK(kept >= 0 && dup2(kept, KEPT_FD) == KEPT_FD, "no file to keep");
    CHECK(romm_platform_open_url(url), "open refused");
    CHECK(waitpid(-1, NULL, WNOHANG) < 0 && errno == ECHILD,
          "a child left to reap");
@@ -133,6 +148,27 @@ static void test_open_url(void)
    CHECK(!(f = fopen(BIN_DIR "/shell", "r")), "the link went through a shell");
    if (f)
       fclose(f);
+   got[0] = '\0';
+   if ((f = fopen(BIN_DIR "/fd", "r")))
+   {
+      if (!fgets(got, sizeof(got), f))
+         got[0] = '\0';
+      fclose(f);
+   }
+   CHECK(!strcmp(got, "closed\n"), "the opener kept the caller's file: %s",
+         got);
+   if ((f = fopen(BIN_DIR "/pid", "r")))
+   {
+      if (fscanf(f, "%ld", &pid) != 1)
+         pid = 0;
+      fclose(f);
+   }
+   CHECK(pid > 0 && getsid((pid_t)pid) == (pid_t)pid
+         && getsid((pid_t)pid) != getsid(0),
+         "the opener (%ld) shares the caller's session", pid);
+   close(KEPT_FD);
+   if (kept >= 0)
+      close(kept);
 
    /* No xdg-open at all: only the detached opener fails. */
    setenv("PATH", "/nonexistent", 1);
