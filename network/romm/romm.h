@@ -66,6 +66,12 @@ bool romm_launch_without_core(const char *content_path, const char *label,
  * the file is. False for other content. */
 bool romm_content_dir_name(char *s, size_t len, const char *content_path);
 
+/* For a RomM game at @s, with or without its extension: on Windows,
+ * takes out of its file name the characters Windows can't store, which
+ * RomM's names can hold. Saves, states and overrides are named after
+ * it. Other content is left as it is. */
+void romm_content_base_name(char *s, size_t len);
+
 /* The core has unloaded and @next_content, if any, loads next: frees
  * the memory of every RomM game but that one. */
 void romm_content_unloaded(const char *next_content);

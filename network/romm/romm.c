@@ -967,6 +967,28 @@ static void romm_saves_base(char *s, size_t len, const char *path)
       *dot = '\0';
 }
 
+/* @name, a file name from RomM, as one this system can store. */
+static void romm_name_for_disk(char *name, size_t len)
+{
+#ifdef _WIN32
+   char *clean = sanitize_path_part(name, strlen(name));
+   if (clean)
+   {
+      strlcpy(name, clean, len);
+      free(clean);
+   }
+#endif
+}
+
+void romm_content_base_name(char *s, size_t len)
+{
+   char *name;
+   if (!romm_launch_rom_id(s))
+      return;
+   name = (char*)path_basename(s);
+   romm_name_for_disk(name, len - (size_t)(name - s));
+}
+
 /* How long a second Run has to choose RomM's save in a conflict */
 #define ROMM_CONFLICT_ASK_USEC 10000000
 
@@ -1352,6 +1374,7 @@ static int romm_load_with_saves(const char *core_path,
          sizeof(romm_played.emulator));
    romm_saves_base(romm_played.base, sizeof(romm_played.base),
          launch_path);
+   romm_name_for_disk(romm_played.base, sizeof(romm_played.base));
    romm_saves_base(romm_played.rom_base, sizeof(romm_played.rom_base),
          content_path);
    RARCH_LOG("[RomM] Saves of game %u go to %s/%s.*, states to %s.\n",

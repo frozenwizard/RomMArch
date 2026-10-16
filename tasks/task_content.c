@@ -1608,8 +1608,20 @@ static bool content_file_load(
                      *err_string = strdup(msg);
                      return false;
                   }
+#ifdef _WIN32
+                  {
+                     /* A server's file names can hold characters Windows
+                      * can't store. */
+                     const char *base = path_basename(content_path);
+                     char *name       = sanitize_path_part(base, strlen(base));
+                     fill_pathname_join_special(new_path, stage_dir,
+                           name ? name : base, sizeof(new_path));
+                     free(name);
+                  }
+#else
                   fill_pathname_join_special(new_path, stage_dir,
                         path_basename(content_path), sizeof(new_path));
+#endif
                   strlcpy(part_path, new_path, sizeof(part_path));
                   strlcat(part_path, ".part", sizeof(part_path));
                   RARCH_LOG("[Content] Core does not support VFS - staging network content to \"%s\".\n",

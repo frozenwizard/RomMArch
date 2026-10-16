@@ -10603,6 +10603,10 @@ void runloop_path_set_basename(const char *path)
    if (     (dst = strrchr(runloop_st->runtime_content_path_basename, '.'))
          && (dst - runloop_st->runtime_content_path_basename > 0))
       *dst = '\0';
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   romm_content_base_name(runloop_st->runtime_content_path_basename,
+         sizeof(runloop_st->runtime_content_path_basename));
+#endif
 }
 
 void runloop_path_set_names(void)
