@@ -212,7 +212,8 @@ size_t path_parent_dir(char *s, size_t len);
  *
  * Resolves use of ".", "..", multiple slashes etc in absolute paths.
  *
- * Relative paths are rebased on the current working dir.
+ * Relative paths are rebased on the current working dir. VFS URLs
+ * (scheme://...) are left as they are.
  *
  * @return @s if successful, NULL otherwise.
  * Note: Not implemented on consoles

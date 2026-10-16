@@ -782,7 +782,8 @@ bool path_is_absolute(const char *path)
  *
  * Resolves use of ".", "..", multiple slashes etc in absolute paths.
  *
- * Relative paths are rebased on the current working dir.
+ * Relative paths are rebased on the current working dir. VFS URLs
+ * (scheme://...) are left as they are.
  *
  * @return @s if successful, NULL otherwise.
  * Note: Not implemented on consoles
@@ -795,9 +796,13 @@ char *path_resolve_realpath(char *s, size_t len, bool resolve_symlinks)
 {
 #if !defined(RARCH_CONSOLE) && defined(RARCH_INTERNAL)
 #ifdef _WIN32
-   char *ret         = NULL;
-   wchar_t *rel_path = utf8_to_utf16_string_alloc(s);
-   if (rel_path)
+   char *ret          = NULL;
+   const char *scheme = s ? strstr(s, "://") : NULL;
+   wchar_t *rel_path;
+   /* A VFS URL (romm://, smb://, ...) is no file system path. */
+   if (scheme && scheme > s)
+      return s;
+   if ((rel_path = utf8_to_utf16_string_alloc(s)))
    {
       wchar_t abs_path[PATH_MAX_LENGTH];
       if (_wfullpath(abs_path, rel_path, PATH_MAX_LENGTH))
@@ -819,6 +824,10 @@ char *path_resolve_realpath(char *s, size_t len, bool resolve_symlinks)
    char *p;
    const char *next;
    const char *buf_end;
+   const char *scheme = s ? strstr(s, "://") : NULL;
+   /* A VFS URL (romm://, smb://, ...) is no file system path. */
+   if (scheme && scheme > s)
+      return s;
    if (resolve_symlinks)
    {
       char *real_path;

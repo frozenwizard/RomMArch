@@ -123,9 +123,42 @@ static void test_few_leading_slashes(void)
    printf("[SUCCESS] triple-slash path accepted: \"%s\"\n", buf);
 }
 
+/* VFS URLs are left as they are. Resolved as paths, "romm://46/x.gba"
+ * lost a slash on POSIX and became "<cwd>\romm:\46\x.gba" on Windows. */
+static void test_vfs_url(void)
+{
+   static const char *const urls[] = {
+      "romm://46/Advance Wars (USA).gba",
+      "smb://host/share/Game.cue",
+   };
+   size_t i;
+
+   for (i = 0; i < sizeof(urls) / sizeof(urls[0]); i++)
+   {
+      char buf[PATH_MAX_LENGTH];
+      int symlinks;
+
+      for (symlinks = 0; symlinks < 2; symlinks++)
+      {
+         char *r;
+         strcpy(buf, urls[i]);
+         r = path_resolve_realpath(buf, sizeof(buf), symlinks != 0);
+         if (r != buf || strcmp(buf, urls[i]) != 0)
+         {
+            printf("[FAILED] URL \"%s\" became \"%s\" (symlinks %d)\n",
+                  urls[i], buf, symlinks);
+            failures++;
+            return;
+         }
+      }
+   }
+   printf("[SUCCESS] VFS URLs left as they are\n");
+}
+
 int main(void)
 {
    test_leading_slash_normal();
+   test_vfs_url();
    test_few_leading_slashes();
    test_leading_slash_bounded();
 
