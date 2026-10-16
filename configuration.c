@@ -6536,8 +6536,15 @@ static config_file_t *open_default_config_file(void)
       if (fill_pathname_application_data(application_data,
             sizeof(application_data)))
       {
+#ifdef HAVE_ROMM
+         /* %APPDATA%\retroarch.cfg is stock RetroArch's. */
+         fill_pathname_join_special(conf_path, application_data,
+               FILE_PATH_APP_DIR_NAME "\\" FILE_PATH_MAIN_CONFIG,
+               sizeof(conf_path));
+#else
          fill_pathname_join_special(conf_path, application_data,
                FILE_PATH_MAIN_CONFIG, sizeof(conf_path));
+#endif
          conf = config_file_new_from_path_to_string(conf_path);
       }
    }
