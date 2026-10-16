@@ -32,8 +32,9 @@ RETRO_BEGIN_DECLS
 /* Read-only files held in memory under romm:// paths. The frontend
  * adds a game's files after downloading them; anything that opens
  * those paths through the VFS, cores included, reads them from RAM.
- * Paths match without regard to case, like the file systems the cue
- * sheets and disc lists inside them were written against. */
+ * Paths match without regard to case or to which slash separates their
+ * parts, like the file systems the cue sheets and disc lists inside
+ * them were written against. */
 
 /* Adds @data (@size bytes, from malloc) as @path, taking ownership.
  * Replaces a file already at @path. */

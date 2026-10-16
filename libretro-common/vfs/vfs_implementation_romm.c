@@ -19,10 +19,10 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <compat/posix_string.h>
 #include <libretro.h>
 #ifdef HAVE_THREADS
 #include <retro_atomic.h>
@@ -42,6 +42,26 @@ typedef struct romm_vfs_file
 } romm_vfs_file_t;
 
 static romm_vfs_file_t *romm_vfs_files = NULL;
+
+/* Compares up to @n characters of two paths without regard to case or
+ * to which slash separates their parts: cores on Windows join the
+ * paths in disc lists and cue sheets with '\\'. */
+static int romm_vfs_pathncmp(const char *a, const char *b, size_t n)
+{
+   for (; n; n--, a++, b++)
+   {
+      int ca = (*a == '\\') ? '/' : tolower((unsigned char)*a);
+      int cb = (*b == '\\') ? '/' : tolower((unsigned char)*b);
+      if (ca != cb)
+         return ca - cb;
+      if (!ca)
+         break;
+   }
+   return 0;
+}
+
+#define romm_vfs_pathcmp(a, b) romm_vfs_pathncmp((a), (b), (size_t)-1)
+
 #ifdef HAVE_THREADS
 /* Made by whichever thread first needs it, as cores can open romm://
  * paths on threads of their own; kept for the life of the process. */
@@ -132,7 +152,7 @@ bool retro_vfs_romm_add(const char *path, void *data, uint64_t size)
 
    lock = romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; link = &(*link)->next)
-      if (!strcasecmp((*link)->path, path))
+      if (!romm_vfs_pathcmp((*link)->path, path))
       {
          romm_vfs_unlink(link);
          break;
@@ -153,7 +173,7 @@ bool retro_vfs_romm_remove(const char *path)
       return false;
    lock = romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; link = &(*link)->next)
-      if (!strcasecmp((*link)->path, path))
+      if (!romm_vfs_pathcmp((*link)->path, path))
       {
          romm_vfs_unlink(link);
          found = true;
@@ -176,7 +196,7 @@ static void romm_vfs_remove_matching(const char *prefix, bool others)
    lock = romm_vfs_lock_acquire();
    for (link = &romm_vfs_files; *link; )
    {
-      if (!strncasecmp((*link)->path, prefix, len) != others)
+      if (!romm_vfs_pathncmp((*link)->path, prefix, len) != others)
          romm_vfs_unlink(link);
       else
          link = &(*link)->next;
@@ -206,7 +226,7 @@ bool retro_vfs_file_open_romm(libretro_vfs_implementation_file *stream,
 
    lock = romm_vfs_lock_acquire();
    for (file = romm_vfs_files; file; file = file->next)
-      if (!strcasecmp(file->path, path))
+      if (!romm_vfs_pathcmp(file->path, path))
       {
          file->refs++;
          break;
@@ -297,20 +317,20 @@ int retro_vfs_stat_romm(const char *path, int64_t *size)
       return 0;
    len = strlen(path);
    /* A directory named with or without its trailing slash */
-   if (path[len - 1] == '/')
+   if (path[len - 1] == '/' || path[len - 1] == '\\')
       len--;
 
    lock = romm_vfs_lock_acquire();
    for (file = romm_vfs_files; file; file = file->next)
    {
-      if (!strcasecmp(file->path, path))
+      if (!romm_vfs_pathcmp(file->path, path))
       {
          flags = RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_READONLY;
          if (size)
             *size = (int64_t)file->size;
          break;
       }
-      if (     !strncasecmp(file->path, path, len)
+      if (     !romm_vfs_pathncmp(file->path, path, len)
             && file->path[len] == '/')
          flags = RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY;
    }

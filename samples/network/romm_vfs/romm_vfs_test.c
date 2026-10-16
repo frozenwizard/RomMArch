@@ -100,6 +100,11 @@ static void test_paths(void)
    CHECK(path_get_size("romm://12/Game (USA).bin") == 16, "path size");
    CHECK(path_is_directory("romm://12") && path_is_directory("romm://12/"),
          "the game's folder");
+   /* Cores on Windows join a disc list's or cue sheet's folder and
+    * file names with a backslash. */
+   CHECK(path_is_valid("romm://12\\Game (USA).bin")
+         && path_get_size("romm://12\\game (usa).bin") == 16
+         && path_is_directory("romm://12\\"), "backslash separator");
    CHECK(!path_is_directory("romm://1") && !path_is_valid("romm://12/x"),
          "folder or file that isn't there");
    CHECK(!path_is_directory("romm://12/Game (USA).bin"),
