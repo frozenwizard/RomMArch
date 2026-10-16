@@ -67,8 +67,10 @@ RETRO_BEGIN_DECLS
 #define FILE_PATH_CORE_OPTIONS_CONFIG "retroarch-core-options.cfg"
 #ifdef HAVE_ROMM
 #define FILE_PATH_APP_DIR_NAME "Rommarch"
+#define FILE_PATH_UNIX_DIR_NAME "rommarch"
 #else
 #define FILE_PATH_APP_DIR_NAME "RetroArch"
+#define FILE_PATH_UNIX_DIR_NAME "retroarch"
 #endif
 #ifdef DJGPP
 #define FILE_PATH_MAIN_CONFIG "retrodos.cfg"

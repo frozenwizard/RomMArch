@@ -79,6 +79,7 @@
 #include "../frontend.h"
 #include "../frontend_driver.h"
 #include "../../defaults.h"
+#include "../../file_path_special.h"
 #include "../../msg_hash.h"
 #include "../../paths.h"
 #include "../../msg_hash_lbl_str.h"
@@ -2941,15 +2942,15 @@ static void frontend_unix_get_env(int *argc,
    if (xdg)
    {
       size_t _len = strlcpy(base_path, xdg, sizeof(base_path));
-      strlcpy_lit(base_path + _len, "/retroarch", sizeof(base_path) - _len);
+      strlcpy_lit(base_path + _len, "/" FILE_PATH_UNIX_DIR_NAME, sizeof(base_path) - _len);
    }
    else if (home)
    {
       size_t _len = strlcpy(base_path, home, sizeof(base_path));
-      strlcpy_lit(base_path + _len, "/.config/retroarch", sizeof(base_path) - _len);
+      strlcpy_lit(base_path + _len, "/.config/" FILE_PATH_UNIX_DIR_NAME, sizeof(base_path) - _len);
    }
    else
-      strlcpy_lit(base_path, "retroarch", sizeof(base_path));
+      strlcpy_lit(base_path, FILE_PATH_UNIX_DIR_NAME, sizeof(base_path));
 #endif
 
    if (libretro_directory && *libretro_directory)
@@ -3155,10 +3156,12 @@ static void frontend_unix_get_env(int *argc,
        fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_SYSTEM], base_path,
              "system", sizeof(g_defaults.dirs[DEFAULT_DIR_SYSTEM]));
 
-   if (test_permissions("/tmp") && path_mkdir("/tmp/retroarch-tmp"))
+   if (test_permissions("/tmp")
+         && path_mkdir("/tmp/" FILE_PATH_UNIX_DIR_NAME "-tmp"))
    {
       fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CACHE], "/tmp",
-         "retroarch-tmp", sizeof(g_defaults.dirs[DEFAULT_DIR_CACHE]));
+         FILE_PATH_UNIX_DIR_NAME "-tmp",
+         sizeof(g_defaults.dirs[DEFAULT_DIR_CACHE]));
    }
    else
    {
@@ -3674,12 +3677,12 @@ static int frontend_unix_parse_drive_list(void *data, bool load_content)
    if (xdg)
    {
       size_t _len = strlcpy(base_path, xdg, sizeof(base_path));
-      strlcpy_lit(base_path + _len, "/retroarch", sizeof(base_path) - _len);
+      strlcpy_lit(base_path + _len, "/" FILE_PATH_UNIX_DIR_NAME, sizeof(base_path) - _len);
    }
    else if (home)
    {
       size_t _len = strlcpy(base_path, home, sizeof(base_path));
-      strlcpy_lit(base_path + _len, "/.config/retroarch", sizeof(base_path) - _len);
+      strlcpy_lit(base_path + _len, "/.config/" FILE_PATH_UNIX_DIR_NAME, sizeof(base_path) - _len);
    }
 #endif
 

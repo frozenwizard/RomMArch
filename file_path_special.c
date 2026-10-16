@@ -162,7 +162,7 @@ bool fill_pathname_application_data(char *s, size_t len)
    /* On Haiku, it is set by default to /home/user/config/settings */
    if (xdg)
    {
-      fill_pathname_join(s, xdg, "retroarch/", len);
+      fill_pathname_join(s, xdg, FILE_PATH_UNIX_DIR_NAME "/", len);
       return true;
    }
 
@@ -171,10 +171,10 @@ bool fill_pathname_application_data(char *s, size_t len)
 #ifdef __HAIKU__
       /* in theory never used as Haiku has XDG_CONFIG_HOME set by default */
       fill_pathname_join(s, appdata,
-            "config/settings/retroarch/", len);
+            "config/settings/" FILE_PATH_UNIX_DIR_NAME "/", len);
 #else
       fill_pathname_join(s, appdata,
-            ".config/retroarch/", len);
+            ".config/" FILE_PATH_UNIX_DIR_NAME "/", len);
 #endif
       return true;
    }

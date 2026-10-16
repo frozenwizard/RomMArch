@@ -6623,6 +6623,7 @@ static config_file_t *open_default_config_file(void)
       conf = config_file_new_from_path_to_string(conf_path);
    }
 
+#ifndef HAVE_ROMM
    /* Fallback to $HOME/.retroarch.cfg. */
    if (!conf && getenv("HOME"))
    {
@@ -6631,6 +6632,7 @@ static config_file_t *open_default_config_file(void)
       RARCH_LOG("[Config] Looking for config in: \"%s\".\n", conf_path);
       conf = config_file_new_from_path_to_string(conf_path);
    }
+#endif
 
    if (!conf && has_application_data)
    {
