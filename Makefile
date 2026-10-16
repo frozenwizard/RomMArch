@@ -23,6 +23,8 @@ INCLUDE_DIRS        := $(filter-out -I/%,$(INCLUDE_DIRS))
 
 ifeq ($(HAVE_ANGLE), 1)
 TARGET = retroarch_angle
+else ifeq ($(HAVE_ROMM), 1)
+TARGET = rommarch
 else
 TARGET = retroarch
 endif
