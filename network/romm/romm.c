@@ -958,6 +958,19 @@ static bool romm_saves_dir(char *s, size_t len, const char *path,
    return true;
 }
 
+/* The name RetroArch files @core_path's saves under: the one the core
+ * gives itself, which can differ from @core_name, its info file's, in
+ * case (vecx, VecX), two folders where names are case-sensitive. */
+static bool romm_core_folder_name(char *s, size_t len,
+      const char *core_path, const char *core_name)
+{
+   struct retro_system_info sysinfo;
+   if (     libretro_get_system_info(core_path, &sysinfo, NULL)
+         && !string_is_empty(sysinfo.library_name))
+      return strlcpy(s, sysinfo.library_name, len) > 0;
+   return strlcpy(s, core_name, len) > 0;
+}
+
 /* @path's file name without its extension, as RetroArch names saves. */
 static void romm_saves_base(char *s, size_t len, const char *path)
 {
@@ -1342,6 +1355,7 @@ static int romm_load_with_saves(const char *core_path,
       const char *content_path, const char *launch_path, const char *label)
 {
    core_info_t *info    = NULL;
+   char core_folder[NAME_MAX_LENGTH];
 
    memset(&romm_played, 0, sizeof(romm_played));
    if (!romm_saves_allowed())
@@ -1358,11 +1372,13 @@ static int romm_load_with_saves(const char *core_path,
    if (     !(romm_played.rom_id = romm_launch_rom_id(content_path))
          || !core_info_find(core_path, &info)
          || string_is_empty(info->core_name)
+         || !romm_core_folder_name(core_folder, sizeof(core_folder),
+               core_path, info->core_name)
          || !romm_saves_dir(romm_played.save_dir,
-               sizeof(romm_played.save_dir), launch_path, info->core_name,
+               sizeof(romm_played.save_dir), launch_path, core_folder,
                false)
          || !romm_saves_dir(romm_played.state_dir,
-               sizeof(romm_played.state_dir), launch_path, info->core_name,
+               sizeof(romm_played.state_dir), launch_path, core_folder,
                true))
    {
       RARCH_LOG("[RomM] Saves of %s aren't synced: no core name or save "
