@@ -42,6 +42,7 @@ typedef struct
    const char *maker;
    const char *name;
    bool collection;
+   bool unsupported;
 } romm_sidebar_sys_row_t;
 
 /* Systems without a maker come last. */
@@ -52,13 +53,16 @@ static int romm_sidebar_maker_cmp(const char *a, const char *b)
    return strcasecmp(a, b);
 }
 
-/* Collections first, then systems by maker; each by name. */
+/* Collections first, then systems by maker, then unsupported systems;
+ * each by name. */
 static int romm_sidebar_sys_row_cmp(const void *a, const void *b)
 {
    const romm_sidebar_sys_row_t *x = (const romm_sidebar_sys_row_t*)a;
    const romm_sidebar_sys_row_t *y = (const romm_sidebar_sys_row_t*)b;
    int c = (int)y->collection - (int)x->collection;
    if (!c)
+      c = (int)x->unsupported - (int)y->unsupported;
+   if (!c && !x->unsupported)
       c = romm_sidebar_maker_cmp(x->maker, y->maker);
    if (!c)
       c = strcasecmp(x->name, y->name);
@@ -71,7 +75,9 @@ static int romm_sidebar_member_cmp(const void *a, const void *b)
 {
    const romm_sidebar_system_t *x = *(const romm_sidebar_system_t *const*)a;
    const romm_sidebar_system_t *y = *(const romm_sidebar_system_t *const*)b;
-   int c = romm_sidebar_maker_cmp(x->maker, y->maker);
+   int c = (int)x->unsupported - (int)y->unsupported;
+   if (!c && !x->unsupported)
+      c = romm_sidebar_maker_cmp(x->maker, y->maker);
    return c ? c : strcasecmp(x->playlist, y->playlist);
 }
 
@@ -113,8 +119,9 @@ void romm_sidebar_systems(romm_sidebar_system_t **systems,
          continue;
 
       strlcpy(sys.playlist, p->playlist, sizeof(sys.playlist));
-      sys.maker[0]   = '\0';
-      sys.collection = false;
+      sys.maker[0]    = '\0';
+      sys.collection  = false;
+      sys.unsupported = !*p->platform.libretro_slug;
       if (*p->platform.family_name)
          strlcpy(sys.maker, p->platform.family_name, sizeof(sys.maker));
       else
@@ -148,8 +155,9 @@ void romm_sidebar_systems(romm_sidebar_system_t **systems,
       romm_sidebar_system_t sys;
       strlcpy(sys.playlist, lib->collections[i].playlist,
             sizeof(sys.playlist));
-      sys.maker[0]   = '\0';
-      sys.collection = true;
+      sys.maker[0]    = '\0';
+      sys.collection  = true;
+      sys.unsupported = false;
       RBUF_PUSH(*systems, sys);
    }
 }
@@ -264,7 +272,7 @@ void romm_sidebar_group(file_list_t *list,
       const romm_sidebar_names_t *names)
 {
    size_t i, j;
-   size_t first_system;
+   size_t first_system, first_unsupported;
    romm_sidebar_sys_row_t *sys_rows = NULL;
    romm_sidebar_row_t *order        = NULL;
 
@@ -281,7 +289,8 @@ void romm_sidebar_group(file_list_t *list,
             s.src        = i;
             s.maker      = systems[j].maker;
             s.name       = list->list[i].alt ? list->list[i].alt : path;
-            s.collection = systems[j].collection;
+            s.collection  = systems[j].collection;
+            s.unsupported = systems[j].unsupported;
             RBUF_PUSH(sys_rows, s);
             break;
          }
@@ -312,9 +321,13 @@ void romm_sidebar_group(file_list_t *list,
    {
       romm_sidebar_push_group(&order, ROMM_SIDEBAR_SYSTEMS,
             names->systems, 0);
+      for (first_unsupported = first_system;
+            first_unsupported < RBUF_LEN(sys_rows)
+            && !sys_rows[first_unsupported].unsupported;
+            first_unsupported++) { }
       if (romm_sidebar_is_open(open, ROMM_SIDEBAR_SYSTEMS))
       {
-         for (i = first_system; i < RBUF_LEN(sys_rows); i = j)
+         for (i = first_system; i < first_unsupported; i = j)
          {
             char key[sizeof(ROMM_SIDEBAR_SYSTEMS) + 64];
             const char *maker = sys_rows[i].maker;
@@ -325,10 +338,18 @@ void romm_sidebar_group(file_list_t *list,
                   *maker ? maker : names->other, 1);
             maker_open = romm_sidebar_is_open(open, key);
 
-            for (j = i; j < RBUF_LEN(sys_rows)
+            for (j = i; j < first_unsupported
                   && !romm_sidebar_maker_cmp(sys_rows[j].maker, maker); j++)
                if (maker_open)
                   romm_sidebar_push_row(&order, sys_rows[j].src, 2);
+         }
+         if (first_unsupported < RBUF_LEN(sys_rows))
+         {
+            romm_sidebar_push_group(&order, ROMM_SIDEBAR_UNSUPPORTED,
+                  names->unsupported, 1);
+            if (romm_sidebar_is_open(open, ROMM_SIDEBAR_UNSUPPORTED))
+               for (i = first_unsupported; i < RBUF_LEN(sys_rows); i++)
+                  romm_sidebar_push_row(&order, sys_rows[i].src, 2);
          }
       }
    }
@@ -358,9 +379,11 @@ void romm_sidebar_members(const char ***playlists,
 
    bool collections                      = string_is_equal(key,
          ROMM_SIDEBAR_COLLECTIONS);
+   bool unsupported                      = string_is_equal(key,
+         ROMM_SIDEBAR_UNSUPPORTED);
 
    RBUF_CLEAR(*playlists);
-   if (!collections)
+   if (!collections && !unsupported)
    {
       if (strncmp(key, ROMM_SIDEBAR_SYSTEMS, prefix_len))
          return;
@@ -372,7 +395,9 @@ void romm_sidebar_members(const char ***playlists,
 
    for (i = 0; i < RBUF_LEN(systems); i++)
       if (     systems[i].collection == collections
-            && (!maker || !romm_sidebar_maker_cmp(systems[i].maker, maker)))
+            && (!unsupported || systems[i].unsupported)
+            && (!maker || (!systems[i].unsupported
+               && !romm_sidebar_maker_cmp(systems[i].maker, maker))))
          RBUF_PUSH(members, &systems[i]);
 
    if (RBUF_LEN(members))

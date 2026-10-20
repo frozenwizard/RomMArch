@@ -33833,6 +33833,10 @@ MSG_HASH(
    "Other"
    )
 MSG_HASH(
+   MSG_ROMM_SIDEBAR_UNSUPPORTED,
+   "Unsupported"
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )
