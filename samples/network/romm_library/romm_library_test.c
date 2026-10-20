@@ -444,6 +444,7 @@ static romm_library_find_core_t test_find_core;
 static bool sync_collections;
 static const char *sync_refetch;
 static romm_library_core_runs_t test_core_runs;
+static size_t sync_limit;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -472,6 +473,7 @@ static bool sync_start(const char *server, const char *token,
    params.collections    = sync_collections;
    params.refetch        = sync_refetch;
    params.core_runs      = test_core_runs;
+   params.limit          = sync_limit;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -486,6 +488,8 @@ typedef struct
    unsigned favorites_id;
    size_t favorites;
    bool favorites_listed;
+   size_t waiting;
+   size_t waiting_games;
 } sync_result_t;
 
 static void on_sync(void *user_data, enum romm_status status,
@@ -500,6 +504,8 @@ static void on_sync(void *user_data, enum romm_status status,
    r->favorites_id     = lib->favorites_id;
    r->favorites        = RBUF_LEN(lib->favorite_ids);
    r->favorites_listed = lib->favorites_listed;
+   r->waiting          = RBUF_LEN(lib->waiting);
+   r->waiting_games    = r->waiting ? lib->waiting[0].games : 0;
    r->platforms = RBUF_LEN(lib->platforms);
    r->games     = 0;
    for (i = 0; i < r->platforms; i++)
@@ -2279,6 +2285,105 @@ static void test_path_id(void)
    CHECK(!romm_library_path_id(NULL), "no path");
 }
 
+/* Syncs Genesis, with three games in RomM, under @sync_limit: @ids
+ * and @page answer what it asks after the platforms. */
+static void limit_sync(sync_result_t *r, const char *ids, const char *page)
+{
+   memset(r, 0, sizeof(*r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, r);
+   sync_answer(200, "[{\"id\": 8, \"rom_count\": 3, \"name\": \"Genesis\","
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   if (ids)
+      sync_answer(200, ids);
+   if (page)
+      sync_answer(200, page);
+}
+
+static bool file_has(const char *path, const char *text)
+{
+   char *doc   = NULL;
+   int64_t len = 0;
+   bool has    = filestream_read_file(path, (void**)&doc, &len) && doc
+      && strstr(doc, text);
+   free(doc);
+   return has;
+}
+
+static void test_sync_limit(void)
+{
+   const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   const char *ids = "{\"rom_id_index\": [1, 2, 3]}";
+   sync_result_t r;
+   char manifest[256];
+   char page[1024];
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   filestream_delete(manifest);
+   filestream_delete(pl);
+
+   /* A new platform with more games than the limit isn't fetched. */
+   sync_limit = 2;
+   limit_sync(&r, NULL, NULL);
+   CHECK(sync_run_out() && r.status == ROMM_OK && !r.platforms
+         && r.waiting == 1 && r.waiting_games == 3 && !path_is_valid(pl),
+         "new over the limit: %u platforms, %u waiting (%u games)",
+         (unsigned)r.platforms, (unsigned)r.waiting,
+         (unsigned)r.waiting_games);
+
+   /* Within it, it is. */
+   sync_limit = 3;
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 1, "A", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 2, "B", "2026-10-02T04:00:10+00:00");
+   game_json(page, sizeof(page), 3, "C", "2026-10-02T04:00:20+00:00");
+   strlcat(page, "]}", sizeof(page));
+   limit_sync(&r, NULL, page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3
+         && !r.waiting && count_entries(pl) == 3,
+         "new within the limit: %u games, %u waiting", (unsigned)r.games,
+         (unsigned)r.waiting);
+
+   /* The games the cursor's margin fetches again unchanged don't count:
+    * one changed is within a limit of one. */
+   sync_limit = 1;
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 1, "A", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 2, "B2", "2026-10-03T09:00:00+00:00");
+   game_json(page, sizeof(page), 3, "C", "2026-10-02T04:00:20+00:00");
+   strlcat(page, "]}", sizeof(page));
+   limit_sync(&r, ids, page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && !r.waiting
+         && file_has(pl, "\"B2\""), "one change: %u waiting",
+         (unsigned)r.waiting);
+
+   /* Two changed and one new are over it: the platform stays as it was,
+    * without fetching more. */
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 1, "A2", "2026-10-04T09:00:00+00:00");
+   game_json(page, sizeof(page), 3, "C2", "2026-10-04T09:00:00+00:00");
+   game_json(page, sizeof(page), 4, "D", "2026-10-04T09:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   limit_sync(&r, "{\"rom_id_index\": [1, 2, 3, 4]}", page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.waiting == 1
+         && r.waiting_games == 3 && r.games == 3 && count_entries(pl) == 3
+         && !file_has(pl, "\"A2\""),
+         "over the limit: %u waiting (%u games), %u games",
+         (unsigned)r.waiting, (unsigned)r.waiting_games, (unsigned)r.games);
+
+   /* So the next sync without one still asks for those changes. */
+   sync_limit = 0;
+   limit_sync(&r, "{\"rom_id_index\": [1, 2, 3, 4]}", page);
+   CHECK(strstr(stub_req.url, "updated_after=2026-10-03T08:59:00Z") != NULL,
+         "cursor moved: %s", stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK && !r.waiting
+         && r.games == 4 && file_has(pl, "\"A2\""),
+         "after the limit: %u games", (unsigned)r.games);
+
+   filestream_delete(manifest);
+   filestream_delete(pl);
+}
+
 int main(void)
 {
    test_content_path();
@@ -2298,6 +2403,7 @@ int main(void)
    test_follow_game();
    test_preferred_cores();
    test_sync_default_core();
+   test_sync_limit();
    test_cover_path();
    test_covers();
    test_covers_superseded();

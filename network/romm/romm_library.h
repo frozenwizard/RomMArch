@@ -52,6 +52,15 @@ typedef struct
    char playlist[256];
 } romm_library_collection_t;
 
+/* A platform a sync left as it was, having more to fetch than its
+ * limit. */
+typedef struct
+{
+   romm_platform_t platform;
+   /* Games to fetch: at least this many. */
+   size_t games;
+} romm_library_waiting_t;
+
 typedef struct
 {
    char server[256];
@@ -65,6 +74,9 @@ typedef struct
     * @favorites_listed is set. Neither is in the manifest. */
    unsigned *favorite_ids;
    bool favorites_listed;
+   /* Platforms this sync left as they were (an RBUF); not in the
+    * manifest. */
+   romm_library_waiting_t *waiting;
 } romm_library_t;
 
 /* The playlist path of @rom: romm://<id>/<RomM file name>. A folder
@@ -127,6 +139,10 @@ typedef struct
    /* A playlist's default core is kept only if this says it runs the
     * system; NULL keeps any. */
    romm_library_core_runs_t core_runs;
+   /* A platform with more games new or changed than this is left as
+    * the last sync wrote it, or not written yet, and listed in the
+    * library's waiting; 0 fetches everything. */
+   size_t limit;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,
