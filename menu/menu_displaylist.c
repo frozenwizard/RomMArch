@@ -8992,7 +8992,7 @@ unsigned menu_displaylist_build_list(
             bool truncate_playlist       = settings->bools.ozone_truncate_playlist_name;
             static menu_displaylist_build_info_selective_t build_list[] =
             {
-#ifdef HAVE_NETWORKING
+#if defined(HAVE_NETWORKING) && !defined(HAVE_ROMM)
                {MENU_ENUM_LABEL_NETWORK_ON_DEMAND_THUMBNAILS,        PARSE_ONLY_BOOL, true},
 #endif
                {MENU_ENUM_LABEL_PLAYLIST_USE_FILENAME,               PARSE_ONLY_BOOL, true},
@@ -17094,12 +17094,15 @@ static bool menu_displaylist_ctl_internal(
                   count++;
 #endif
 
+#if !(defined(HAVE_ROMM) && defined(HAVE_NETWORKING))
+               /* Games and covers come only from RomM. */
                if (menu_entries_append(info->list,
                         msg_hash_to_str(MENU_ENUM_LABEL_VALUE_DOWNLOAD_CORE_CONTENT),
                         MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT_DIRS_STR,
                         MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT_DIRS,
                         MENU_SETTING_ACTION, 0, 0, NULL))
                   count++;
+#endif
 
 #ifdef HAVE_ONLINE_UPDATER
                if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(info->list,
@@ -17108,14 +17111,16 @@ static bool menu_displaylist_ctl_internal(
                   count++;
 #endif
 
+#if !(defined(HAVE_ROMM) && defined(HAVE_NETWORKING))
                if (menu_entries_append(info->list,
                         msg_hash_to_str(MENU_ENUM_LABEL_VALUE_PL_THUMBNAILS_UPDATER_LIST),
                         MENU_ENUM_LABEL_PL_THUMBNAILS_UPDATER_LIST_STR,
                         MENU_ENUM_LABEL_PL_THUMBNAILS_UPDATER_LIST,
                         MENU_SETTING_ACTION, 0, 0, NULL))
                   count++;
+#endif
 
-#ifdef HAVE_NETWORKING
+#if defined(HAVE_NETWORKING) && !defined(HAVE_ROMM)
                if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(info->list,
                         MENU_ENUM_LABEL_NETWORK_ON_DEMAND_THUMBNAILS,
                         PARSE_ONLY_BOOL, false) != -1)
