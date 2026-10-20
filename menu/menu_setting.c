@@ -6069,6 +6069,29 @@ static size_t setting_get_string_representation_uint_cloud_sync_sync_mode(
 }
 #endif
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+static size_t setting_get_string_representation_uint_romm_sync_on_start(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case ROMM_SYNC_START_NONE:
+            return strlcpy(s, msg_hash_to_str(
+                  MENU_ENUM_LABEL_VALUE_ROMM_SYNC_ON_START_NONE), len);
+         case ROMM_SYNC_START_PARTIAL:
+            return strlcpy(s, msg_hash_to_str(
+                  MENU_ENUM_LABEL_VALUE_ROMM_SYNC_ON_START_PARTIAL), len);
+         case ROMM_SYNC_START_FULL:
+            return strlcpy(s, msg_hash_to_str(
+                  MENU_ENUM_LABEL_VALUE_ROMM_SYNC_ON_START_FULL), len);
+      }
+   }
+   return 0;
+}
+#endif
+
 #if defined(HAVE_OVERLAY)
 static size_t setting_get_string_representation_uint_input_overlay_show_inputs(
       rarch_setting_t *setting, char *s, size_t len)

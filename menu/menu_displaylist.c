@@ -13247,7 +13247,8 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_ROMM_PAIR,         PARSE_ACTION},
                {MENU_ENUM_LABEL_ROMM_CHECK_CONNECTION, PARSE_ACTION},
                {MENU_ENUM_LABEL_ROMM_REFRESH_LIBRARY, PARSE_ACTION},
-               {MENU_ENUM_LABEL_ROMM_REFRESH_ON_START, PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_ROMM_SYNC_ON_START, PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_ROMM_SYNC_START_LIMIT, PARSE_ONLY_UINT},
             };
 
             for (i = 0; i < ARRAY_SIZE(build_list); i++)

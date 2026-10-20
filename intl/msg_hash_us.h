@@ -2499,15 +2499,27 @@ MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 #define S_ACTION_EX(T, n, sd, ok, rp, c, us, sub) \
 MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us) \
 MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
-#define S_BOOL(f, T, n, d, sd, df, c, us, sub) \
+#define S_UINT_EX(f, T, n, d, sd, df, c, mn, mx, st, ob, ok, rp, sta, sel, lf, rt, ui, us, sub) \
 MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us) \
 MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 #include "../settings/settings_def_romm.h"
 #undef S_STRING
 #undef S_ACTION
 #undef S_ACTION_EX
-#undef S_BOOL
+#undef S_UINT_EX
 #undef SETTINGS_DEF_STRINGS_PASS
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMM_SYNC_ON_START_NONE,
+   "None"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMM_SYNC_ON_START_PARTIAL,
+   "Partial"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMM_SYNC_ON_START_FULL,
+   "Full"
+   )
 /* GENERATED REGION: S3 credentials group (see settings_def_cloud_sync_s3.h). */
 #define SETTINGS_DEF_STRINGS_PASS
 #define S_BOOL(f, T, n, d, sd, df, c, us, sub) \
@@ -33719,6 +33731,10 @@ MSG_HASH(
 MSG_HASH(
    MSG_ROMM_SYNCED,
    "RomM library synced: %u games on %u platforms."
+   )
+MSG_HASH(
+   MSG_ROMM_SYNC_WAITING,
+   "Not synced at start, with more than %u games or covers to fetch: %s. Settings > RomM > Refresh Library syncs them."
    )
 MSG_HASH(
    MSG_ROMM_WRITE_FAILED,

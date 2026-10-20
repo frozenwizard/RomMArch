@@ -29120,14 +29120,17 @@ enum msg_hash_enums
 #define S_STRING(f, T, n, d, sd, c, ok, rp, sta, sel, lf, rt, ui, us, sub) MENU_LABEL(T),
 #define S_ACTION(T, n, us, sub) MENU_LABEL(T),
 #define S_ACTION_EX(T, n, sd, ok, rp, c, us, sub) MENU_LABEL(T),
-#define S_BOOL(f, T, n, d, sd, df, c, us, sub) MENU_LABEL(T),
+#define S_UINT_EX(f, T, n, d, sd, df, c, mn, mx, st, ob, ok, rp, sta, sel, lf, rt, ui, us, sub) MENU_LABEL(T),
 #include "settings/settings_def_romm.h"
 #undef S_STRING
 #undef S_ACTION
 #undef S_ACTION_EX
-#undef S_BOOL
+#undef S_UINT_EX
 #undef SETTINGS_DEF_STRINGS_PASS
 #undef SETTINGS_DEF_ENUM_PASS
+   MENU_LABEL(ROMM_SYNC_ON_START_NONE),
+   MENU_LABEL(ROMM_SYNC_ON_START_PARTIAL),
+   MENU_LABEL(ROMM_SYNC_ON_START_FULL),
    /* GENERATED REGION: second main menu list actions enum rows (see settings/settings_def_menu_main_lists_2.h). */
 #define SETTINGS_DEF_ENUM_PASS
 #define SETTINGS_DEF_STRINGS_PASS
@@ -33683,6 +33686,7 @@ enum msg_hash_enums
    MSG_ROMM_SYNCING,
    MSG_ROMM_SYNC_IN_PROGRESS,
    MSG_ROMM_SYNCED,
+   MSG_ROMM_SYNC_WAITING,
    MSG_ROMM_WRITE_FAILED,
    MSG_ROMM_FETCHING_COVERS,
    MSG_ROMM_DOWNLOADING,

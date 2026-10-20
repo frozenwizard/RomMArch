@@ -6996,7 +6996,7 @@ int rarch_main(int argc, char *argv[], void *data)
       task_push_cloud_sync();
 #endif
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
-   if (settings->bools.romm_refresh_on_start)
+   if (settings->uints.romm_sync_on_start != ROMM_SYNC_START_NONE)
       romm_refresh_library_at_start();
    romm_sync_owed_saves();
 #endif

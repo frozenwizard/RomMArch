@@ -1843,7 +1843,8 @@
 
 #define DEFAULT_PLAYLIST_USE_FILENAME false
 
-#define DEFAULT_ROMM_REFRESH_ON_START true
+#define DEFAULT_ROMM_SYNC_ON_START ROMM_SYNC_START_PARTIAL
+#define DEFAULT_ROMM_SYNC_START_LIMIT 50
 /* Each maker's group starts closed. */
 #define DEFAULT_ROMM_SIDEBAR_OPEN "collections|systems"
 

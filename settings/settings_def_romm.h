@@ -37,9 +37,14 @@ S_ACTION_EX(ROMM_REFRESH_PLAYLIST,
       "romm_refresh_playlist", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_PLAYLIST,
       "Refresh Playlist",
       "Fetch this playlist's games and covers from RomM again, all of them, and write it anew as RomM has it.")
-S_BOOL(romm_refresh_on_start, ROMM_REFRESH_ON_START,
-      "romm_refresh_on_start",
-      DEFAULT_ROMM_REFRESH_ON_START, SD_FLAG_NONE, 0, 0,
-      "Refresh Library at Start",
-      "Bring the game lists up to date with RomM each time Rommarch starts. Only what changed is fetched.")
+S_UINT_EX(romm_sync_on_start, ROMM_SYNC_ON_START,
+      "romm_sync_on_start",
+      DEFAULT_ROMM_SYNC_ON_START, SD_FLAG_NONE, SDESC_RANGE_MINMAX, 0, 0, ROMM_SYNC_START_LAST-1, 1, 0, setting_action_ok_uint, setting_get_string_representation_uint_romm_sync_on_start, NULL, NULL, NULL, NULL, ST_UI_TYPE_UINT_COMBOBOX,
+      "Sync Library at Start",
+      "What Rommarch brings up to date from RomM each time it starts. Partial: each system, except one with more games or covers to fetch than the Partial Sync Limit, which waits for Refresh Library. Full: everything. None: nothing until Refresh Library.")
+S_UINT_EX(romm_sync_start_limit, ROMM_SYNC_START_LIMIT,
+      "romm_sync_start_limit",
+      DEFAULT_ROMM_SYNC_START_LIMIT, SD_FLAG_NONE, SDESC_RANGE_MINMAX, 0, 10, 5000, 10, 0, setting_action_ok_uint, NULL, NULL, NULL, NULL, NULL, 0,
+      "Partial Sync Limit",
+      "With Sync Library at Start set to Partial, a system with more new or changed games than this, or more covers to fetch, isn't synced at start.")
 #endif

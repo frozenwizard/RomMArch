@@ -115,6 +115,17 @@ enum cloud_sync_mode_type
    CLOUD_SYNC_MODE_LAST
 };
 
+#ifdef HAVE_ROMM
+enum romm_sync_start_type
+{
+   ROMM_SYNC_START_NONE = 0,
+   /* Each platform but those with more to fetch than the limit */
+   ROMM_SYNC_START_PARTIAL,
+   ROMM_SYNC_START_FULL,
+   ROMM_SYNC_START_LAST
+};
+#endif
+
 enum settings_glob_flags
 {
    SETTINGS_FLG_MODIFIED              = (1 << 0),
@@ -264,6 +275,10 @@ typedef struct settings
       unsigned network_remote_base_port;
       unsigned keymapper_port;
       unsigned cloud_sync_sync_mode;
+#ifdef HAVE_ROMM
+      unsigned romm_sync_on_start;
+      unsigned romm_sync_start_limit;
+#endif
       unsigned video_window_opacity;
       unsigned crt_switch_resolution;
       unsigned crt_switch_resolution_super;
@@ -1156,9 +1171,6 @@ typedef struct settings
       bool playlist_portable_paths;
       bool playlist_use_filename;
       bool playlist_allow_non_png;
-#ifdef HAVE_ROMM
-      bool romm_refresh_on_start;
-#endif
 
       bool confirm_quit;
       bool confirm_close;

@@ -3015,10 +3015,6 @@ static struct config_bool_setting *populate_settings_bool(
    SETTING_BOOL("gcdwebserver_alert",            &settings->bools.gcdwebserver_alert, true, true, false);
 #endif
 
-#ifdef HAVE_ROMM
-   SETTING_BOOL("romm_refresh_on_start",         &settings->bools.romm_refresh_on_start, true, DEFAULT_ROMM_REFRESH_ON_START, false);
-#endif
-
 
    *size = count;
 
@@ -4411,6 +4407,11 @@ static struct config_uint_setting *populate_settings_uint(
    SETTING_UINT("cpu_scaling_mode",              &settings->uints.cpu_scaling_mode,    true,   0, false);
    SETTING_UINT("cpu_min_freq",                  &settings->uints.cpu_min_freq,        true,   1, false);
    SETTING_UINT("cpu_max_freq",                  &settings->uints.cpu_max_freq,        true, ~0U, false);
+#endif
+
+#ifdef HAVE_ROMM
+   SETTING_UINT("romm_sync_on_start",            &settings->uints.romm_sync_on_start, true, DEFAULT_ROMM_SYNC_ON_START, false);
+   SETTING_UINT("romm_sync_start_limit",         &settings->uints.romm_sync_start_limit, true, DEFAULT_ROMM_SYNC_START_LIMIT, false);
 #endif
 
 

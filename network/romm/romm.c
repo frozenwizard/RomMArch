@@ -1055,6 +1055,17 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
          romm_notify_failure(status, http_status);
       return;
    }
+   if (RBUF_LEN(lib->waiting))
+   {
+      char names[128];
+      size_t _len = 0;
+      for (i = 0; i < RBUF_LEN(lib->waiting) && _len < sizeof(names); i++)
+         _len += snprintf(names + _len, sizeof(names) - _len, "%s%s",
+               i ? ", " : "", lib->waiting[i].platform.name);
+      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNC_WAITING),
+            config_get_ptr()->uints.romm_sync_start_limit, names);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
+   }
    if (quiet)
       return;
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
@@ -1077,7 +1088,8 @@ static bool romm_core_runs(const char *core_path, const char *libretro_slug)
    return string_list_find_elem(info->databases_list, libretro_slug) != 0;
 }
 
-static bool romm_start_library_sync(bool quiet, const char *refetch)
+static bool romm_start_library_sync(bool quiet, const char *refetch,
+      unsigned limit)
 {
    settings_t *settings = config_get_ptr();
    romm_library_sync_params_t params;
@@ -1093,6 +1105,7 @@ static bool romm_start_library_sync(bool quiet, const char *refetch)
    params.collections    = true;
    params.refetch        = refetch;
    params.core_runs      = romm_core_runs;
+   params.limit          = limit;
    romm_favorites_changes_at_sync = romm_favorites_changes;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
@@ -1108,7 +1121,9 @@ void romm_refresh_library_at_start(void)
    if (     !romm_syncing
          && !string_is_empty(settings->arrays.romm_server_url)
          && !string_is_empty(settings->arrays.romm_token))
-      romm_start_library_sync(true, NULL);
+      romm_start_library_sync(true, NULL,
+            settings->uints.romm_sync_on_start == ROMM_SYNC_START_PARTIAL
+            ? settings->uints.romm_sync_start_limit : 0);
 }
 
 static void romm_refresh(const char *refetch)
@@ -1134,7 +1149,7 @@ static void romm_refresh(const char *refetch)
       return;
    }
 
-   if (!romm_start_library_sync(false, refetch))
+   if (!romm_start_library_sync(false, refetch, 0))
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
 }
 
