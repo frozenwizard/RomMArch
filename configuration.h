@@ -1330,6 +1330,9 @@ typedef struct settings
       /* The permissions pairing asked for that RomM left out, as
        * "a, b". */
       char romm_missing_scopes[256];
+      /* The RomM user the token acts for, as RomM last said; empty when
+       * not known. */
+      char romm_username[256];
       char romm_token[128];
       /* The sidebar groups left open, as "systems|systems/Sega". */
       char romm_sidebar_open[PATH_MAX_LENGTH];

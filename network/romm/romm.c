@@ -68,6 +68,8 @@ static bool romm_syncing = false;
 static bool romm_checking = false;
 /* The running sync was started at startup rather than by the user. */
 static bool romm_syncing_quietly = false;
+/* RomM was asked this run which user the token acts for. */
+static bool romm_username_asked = false;
 
 static void romm_notify(const char *msg,
       enum message_queue_category category)
@@ -118,6 +120,34 @@ static void romm_notify_failure(enum romm_status status, int http_status)
 }
 
 static bool romm_overrides_active(void);
+
+static void romm_note_username(const char *username)
+{
+   settings_t *settings = config_get_ptr();
+   if (*username)
+      strlcpy(settings->arrays.romm_username, username,
+            sizeof(settings->arrays.romm_username));
+}
+
+static void romm_on_username(void *user_data, enum romm_status status,
+      int http_status, const char *username)
+{
+   if (status == ROMM_OK)
+      romm_note_username(username);
+}
+
+/* Asks RomM, once a run, which user the token acts for, when that
+ * isn't known. */
+static void romm_ask_username(void)
+{
+   settings_t *settings = config_get_ptr();
+   if (     romm_username_asked || *settings->arrays.romm_username
+         || string_is_empty(settings->arrays.romm_token))
+      return;
+   romm_username_asked = romm_client_whoami(
+         settings->arrays.romm_server_url, settings->arrays.romm_token,
+         romm_on_username, NULL);
+}
 
 /* What Check Connection has found so far */
 typedef struct
@@ -173,6 +203,7 @@ static void romm_check_token_cb(void *user_data,
 
    if (status == ROMM_OK)
    {
+      romm_note_username(username);
       /* And whether RomM gave this device every permission. */
       strlcpy(check->username, username, sizeof(check->username));
       if (romm_client_token_scopes(settings->arrays.romm_server_url,
@@ -488,6 +519,9 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
          sizeof(settings->arrays.romm_device_id));
    strlcpy(settings->arrays.romm_missing_scopes, missing_scopes,
          sizeof(settings->arrays.romm_missing_scopes));
+   /* The new token may act for another user. */
+   *settings->arrays.romm_username = '\0';
+   romm_username_asked             = false;
 #ifdef HAVE_CLOUDSYNC
    cloud_sync = romm_cloud_sync_check(settings, missing_scopes,
          url, sizeof(url));
@@ -504,6 +538,7 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
 #endif
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   romm_ask_username();
 #ifdef HAVE_CLOUDSYNC
    if (     cloud_sync_now
          && settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
@@ -1042,6 +1077,7 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
       romm_sidebar_systems(&romm_sidebar_cache, lib);
 #endif
       romm_manifest_read = true;
+      romm_ask_username();
    }
    romm_reload_playlists();
 
