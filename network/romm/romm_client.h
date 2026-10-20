@@ -217,8 +217,9 @@ typedef struct
    /* Its games' ids, an RBUF. */
    unsigned *rom_ids;
    bool smart;
-   /* The user's favorites. */
+   /* Someone's favorites. */
    bool favorite;
+   bool is_public;
 } romm_collection_t;
 
 /* @collections holds @count entries, valid only during the call; NULL

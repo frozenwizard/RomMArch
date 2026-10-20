@@ -479,6 +479,9 @@ typedef struct
    size_t platforms;
    size_t games;
    bool had_old;
+   unsigned favorites_id;
+   size_t favorites;
+   bool favorites_listed;
 } sync_result_t;
 
 static void on_sync(void *user_data, enum romm_status status,
@@ -490,6 +493,9 @@ static void on_sync(void *user_data, enum romm_status status,
    r->status      = status;
    r->http_status = http_status;
    r->had_old     = old != NULL;
+   r->favorites_id     = lib->favorites_id;
+   r->favorites        = RBUF_LEN(lib->favorite_ids);
+   r->favorites_listed = lib->favorites_listed;
    r->platforms = RBUF_LEN(lib->platforms);
    r->games     = 0;
    for (i = 0; i < r->platforms; i++)
@@ -1346,7 +1352,10 @@ static void test_sync_collections(void)
    sync_answer(200, "[{\"id\": 3, \"name\": \"Co-op: Best\","
          " \"rom_ids\": [101, 100, 999], \"owner_username\": \"alice\","
          " \"is_favorite\": false},"
-         " {\"id\": 4, \"name\": \"Favourites\", \"rom_ids\": [100],"
+         " {\"id\": 8, \"name\": \"Favorites\", \"rom_ids\": [102],"
+         " \"is_favorite\": true, \"is_public\": true,"
+         " \"owner_username\": \"alice\"},"
+         " {\"id\": 4, \"name\": \"Favourites\", \"rom_ids\": [100, 999],"
          " \"is_favorite\": true},"
          " {\"id\": 5, \"name\": \"Unseen\", \"rom_ids\": [999]},"
          " {\"id\": 6, \"name\": \"Co-op: Best\", \"rom_ids\": [102],"
@@ -1360,6 +1369,9 @@ static void test_sync_collections(void)
    CHECK(sync_run_out() && r.status == ROMM_OK, "first: status %d",
          r.status);
    CHECK(written_count == 4, "first: %u playlists written", written_count);
+   CHECK(r.favorites_listed && r.favorites_id == 4 && r.favorites == 2,
+         "favorites: listed %d id %u, %u games", r.favorites_listed,
+         r.favorites_id, (unsigned)r.favorites);
    CHECK(count_entries(coop) == 2 && count_entries(alice) == 1
          && count_entries(recent) == 1, "entries %u %u %u",
          count_entries(coop), count_entries(alice), count_entries(recent));
@@ -1381,8 +1393,10 @@ static void test_sync_collections(void)
          && !strcmp(lib.collections[0].playlist, "Collection - Co-op_ Best.lpl")
          && !strcmp(lib.collections[1].playlist,
                "Collection - Co-op_ Best (alice).lpl")
-         && lib.collections[2].smart,
-         "manifest: %u collections", (unsigned)RBUF_LEN(lib.collections));
+         && lib.collections[2].smart && lib.favorites_id == 4
+         && !lib.favorite_ids,
+         "manifest: %u collections, favorites %u",
+         (unsigned)RBUF_LEN(lib.collections), lib.favorites_id);
    romm_library_free(&lib);
 
    /* Alice's is gone and the smart list fails: hers is removed, the
@@ -1394,7 +1408,9 @@ static void test_sync_collections(void)
    sync_answer(200, "{\"rom_id_index\": [100, 101, 102]}");
    sync_answer(200, "{\"items\": []}");
    sync_answer(200, "[{\"id\": 3, \"name\": \"Co-op: Best\","
-         " \"rom_ids\": [100, 101], \"owner_username\": \"alice\"}]");
+         " \"rom_ids\": [100, 101], \"owner_username\": \"alice\"},"
+         " {\"id\": 4, \"name\": \"Favourites\", \"rom_ids\": [101],"
+         " \"is_favorite\": true}]");
    sync_answer(500, NULL);
    CHECK(sync_run_out() && r.status == ROMM_OK, "second: status %d",
          r.status);
@@ -1407,6 +1423,25 @@ static void test_sync_collections(void)
          && !strcmp(lib.collections[1].playlist, "Collection - Recent.lpl")
          && lib.collections[1].smart,
          "second manifest: %u collections",
+         (unsigned)RBUF_LEN(lib.collections));
+   romm_library_free(&lib);
+
+   /* No collection list: the favorites aren't known, their collection
+    * still is, and the collections' playlists stay. */
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", COLL_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, plat);
+   sync_answer(200, "{\"rom_id_index\": [100, 101, 102]}");
+   sync_answer(200, "{\"items\": []}");
+   sync_answer(403, "{\"detail\": \"Forbidden\"}");
+   sync_answer(200, "[]");
+   CHECK(sync_run_out() && r.status == ROMM_OK && !r.favorites_listed
+         && r.favorites_id == 4 && !r.favorites && path_is_valid(coop),
+         "unlisted: status %d listed %d id %u", r.status,
+         r.favorites_listed, r.favorites_id);
+   CHECK(romm_library_load(&lib, manifest) && lib.favorites_id == 4
+         && RBUF_LEN(lib.collections) == 1,
+         "unlisted manifest: favorites %u, %u collections", lib.favorites_id,
          (unsigned)RBUF_LEN(lib.collections));
    romm_library_free(&lib);
 
@@ -2117,6 +2152,17 @@ static void test_sidebar_group(void)
    RBUF_FREE(systems);
 }
 
+static void test_path_id(void)
+{
+   CHECK(romm_library_path_id("romm://46/Advance Wars (USA).gba") == 46
+         && romm_library_path_id("romm://301/Disc One (USA).m3u") == 301
+         && !romm_library_path_id("romm://46")
+         && !romm_library_path_id("romm://x/a.gba")
+         && !romm_library_path_id("/games/romm://46/a.gba")
+         && !romm_library_path_id(""), "path ids");
+   CHECK(!romm_library_path_id(NULL), "no path");
+}
+
 int main(void)
 {
    test_content_path();
@@ -2143,6 +2189,7 @@ int main(void)
    test_sidebar_systems();
    test_sidebar_open();
    test_sidebar_group();
+   test_path_id();
 
    if (failures)
    {

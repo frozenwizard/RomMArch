@@ -972,6 +972,8 @@ static void romm_collections_member(void *ctx, const char *key,
 
    if (string_is_equal(key, "is_favorite"))
       c->favorite = type == RJSON_TRUE;
+   else if (string_is_equal(key, "is_public"))
+      c->is_public = type == RJSON_TRUE;
    else if (type != RJSON_STRING && type != RJSON_NUMBER)
       return;
    else if (string_is_equal(key, "rom_ids"))

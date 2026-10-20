@@ -59,6 +59,12 @@ typedef struct
    int64_t synced_at;
    romm_library_platform_t *platforms; /* an RBUF */
    romm_library_collection_t *collections; /* an RBUF */
+   /* The user's favorites collection, 0 when RomM has none. */
+   unsigned favorites_id;
+   /* Its games, an RBUF, when this sync listed collections: then
+    * @favorites_listed is set. Neither is in the manifest. */
+   unsigned *favorite_ids;
+   bool favorites_listed;
 } romm_library_t;
 
 /* The playlist path of @rom: romm://<id>/<RomM file name>. A folder
@@ -141,6 +147,18 @@ const char *romm_library_core_option_default(const char *key);
 /* @lib's games sorted by id, for romm_library_follow_game(): an RBUF
  * for the caller to free, valid while @lib is. */
 const romm_rom_t **romm_library_index(const romm_library_t *lib);
+
+/* The game @id in @index, as romm_library_index() made it; NULL when
+ * there is none. */
+const romm_rom_t *romm_library_find(const romm_rom_t *const *index,
+      unsigned id);
+
+/* The RomM game id in @path, 0 unless it is a romm:// path. */
+unsigned romm_library_path_id(const char *path);
+
+/* The playlist of the platform @rom is on in @lib, "" if none. */
+const char *romm_library_rom_playlist(const romm_library_t *lib,
+      const romm_rom_t *rom);
 
 /* After a sync from @old to @lib (as indexed by romm_library_index()),
  * what becomes of an entry for @path, labelled @label, in a list of

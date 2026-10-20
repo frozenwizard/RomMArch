@@ -353,7 +353,7 @@ static void test_collections(void)
          " \"id\": 4, \"owner_username\": \"alice\"},"
          " {\"name\": \"No id\", \"rom_ids\": [1, 2]},"
          " {\"name\": \"Empty\", \"rom_ids\": [], \"id\": 9,"
-         " \"owner_username\": \"alice\"}]");
+         " \"is_public\": true, \"owner_username\": \"alice\"}]");
    CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 3,
          "list: calls %u status %d count %u", r.calls, r.status,
          (unsigned)r.count);
@@ -361,6 +361,7 @@ static void test_collections(void)
          && !strcmp(r.collections[0].name, "Couch Co-op")
          && !strcmp(r.collections[0].owner, "alice")
          && !r.collections[0].favorite && !r.collections[0].smart
+         && !r.collections[0].is_public
          && r.rom_count[0] == 3 && r.rom_ids[0][0] == 12
          && r.rom_ids[0][1] == 10 && r.rom_ids[0][2] == 11,
          "first: %u %s %s %u games", r.collections[0].id,
@@ -370,6 +371,7 @@ static void test_collections(void)
          "favorites: %d %u", r.collections[1].favorite,
          (unsigned)r.rom_count[1]);
    CHECK(r.collections[2].id == 9 && r.rom_count[2] == 0
+         && r.collections[2].is_public
          && !strcmp(r.collections[2].owner, "alice"),
          "empty: %u %u", r.collections[2].id, (unsigned)r.rom_count[2]);
 

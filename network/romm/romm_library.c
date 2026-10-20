@@ -701,6 +701,8 @@ bool romm_library_load(romm_library_t *lib, const char *path)
       romm_json_items(doc, (size_t)len, "collections",
             romm_lib_load_collection_member, romm_lib_load_collection_end,
             load);
+      if (romm_json_get(doc, (size_t)len, "favorites_id", num, sizeof(num)))
+         lib->favorites_id = (unsigned)strtoul(num, NULL, 10);
    }
 
    free(load);
@@ -732,6 +734,7 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
    rjsonwriter_add_spaces(writer, 2);
    rjsonwriter_add_string(writer, "synced_at");
    rjsonwriter_rawf(writer, ": %lld,\n", (long long)lib->synced_at);
+   romm_lib_json_member_int(writer, "favorites_id", (int)lib->favorites_id);
 
    rjsonwriter_add_spaces(writer, 2);
    rjsonwriter_add_string(writer, "platforms");
@@ -848,6 +851,7 @@ void romm_library_free(romm_library_t *lib)
       RBUF_FREE(lib->platforms[i].roms);
    RBUF_FREE(lib->platforms);
    RBUF_FREE(lib->collections);
+   RBUF_FREE(lib->favorite_ids);
    memset(lib, 0, sizeof(*lib));
 }
 
@@ -963,6 +967,8 @@ static void romm_lib_sync_save_partial(romm_lib_sync_t *sync)
       if (!romm_lib_playlist_taken(&sync->lib,
             sync->old.collections[i].playlist))
          RBUF_PUSH(sync->lib.collections, sync->old.collections[i]);
+   if (!sync->lib.favorites_listed)
+      sync->lib.favorites_id = sync->old.favorites_id;
    strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
    sync->lib.synced_at = sync->old.synced_at;
    romm_library_save(&sync->lib, sync->manifest);
@@ -1409,6 +1415,24 @@ static const romm_rom_t *romm_lib_index_find(const romm_rom_t *const *index,
    return found ? *found : NULL;
 }
 
+const romm_rom_t *romm_library_find(const romm_rom_t *const *index,
+      unsigned id)
+{
+   return romm_lib_index_find(index, id);
+}
+
+unsigned romm_library_path_id(const char *path)
+{
+   char *end;
+   unsigned long n;
+
+   if (     !path || !string_starts_with(path, ROMM_SCHEME)
+         || !ISDIGIT((unsigned char)path[STRLEN_CONST(ROMM_SCHEME)]))
+      return 0;
+   n = strtoul(path + STRLEN_CONST(ROMM_SCHEME), &end, 10);
+   return *end == '/' ? (unsigned)n : 0;
+}
+
 bool romm_library_follow_game(const romm_rom_t *const *old,
       const romm_rom_t *const *lib, const char *path, const char *label,
       char *new_path, size_t path_len, char *new_label, size_t label_len)
@@ -1851,8 +1875,7 @@ static int romm_lib_cmp_rom_name(const void *a, const void *b)
    return c ? c : (x->id > y->id) - (x->id < y->id);
 }
 
-/* The playlist of the platform game @rom is on. */
-static const char *romm_lib_rom_playlist(const romm_library_t *lib,
+const char *romm_library_rom_playlist(const romm_library_t *lib,
       const romm_rom_t *rom)
 {
    size_t i;
@@ -1907,8 +1930,18 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
       char path[PATH_MAX_LENGTH];
       bool changed          = false;
 
+      /* The user's favorites go to Favorites, not a playlist of their
+       * own; another user's public favorites are left out. */
       if (c->favorite)
+      {
+         if (!c->is_public && !sync->lib.favorites_id)
+         {
+            sync->lib.favorites_id = c->id;
+            for (j = 0; j < RBUF_LEN(c->rom_ids); j++)
+               RBUF_PUSH(sync->lib.favorite_ids, c->rom_ids[j]);
+         }
          continue;
+      }
       for (j = 0; j < RBUF_LEN(c->rom_ids); j++)
       {
          const romm_rom_t *rom = romm_lib_index_find(index, c->rom_ids[j]);
@@ -1931,7 +1964,7 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
 
       qsort(roms, RBUF_LEN(roms), sizeof(*roms), romm_lib_cmp_rom_name);
       for (j = 0; j < RBUF_LEN(roms); j++)
-         RBUF_PUSH(db_names, romm_lib_rom_playlist(&sync->lib, &roms[j]));
+         RBUF_PUSH(db_names, romm_library_rom_playlist(&sync->lib, &roms[j]));
       fill_pathname_join(path, sync->playlist_dir, entry.playlist,
             sizeof(path));
       if ((ok = romm_lib_write_playlist(path, NULL, db_names, NULL, NULL,
@@ -1949,6 +1982,8 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
       RBUF_FREE(roms);
    }
    RBUF_FREE(index);
+
+   sync->lib.favorites_listed = sync->collections_listed;
 
    for (i = 0; ok && i < RBUF_LEN(sync->old.collections); i++)
    {
@@ -2104,6 +2139,8 @@ static void romm_lib_sync_handler(retro_task_t *task)
             break;
          }
          romm_lib_sync_remove_stale(sync);
+         if (!sync->lib.favorites_listed)
+            sync->lib.favorites_id = sync->old.favorites_id;
          strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
          sync->lib.synced_at = (int64_t)time(NULL);
          romm_lib_sync_finish(sync,

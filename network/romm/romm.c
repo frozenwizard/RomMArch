@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include <array/rbuf.h>
+#include <compat/posix_string.h>
 #include <compat/strl.h>
 #include <features/features_cpu.h>
 #include <file/config_file.h>
@@ -714,6 +715,85 @@ static void romm_follow_games(playlist_t *playlist,
    }
 }
 
+static int romm_cmp_rom_title_desc(const void *a, const void *b)
+{
+   const romm_rom_t *x = *(const romm_rom_t *const*)a;
+   const romm_rom_t *y = *(const romm_rom_t *const*)b;
+   return strcasecmp(y->name, x->name);
+}
+
+/* Favorites follow RomM's favorites collection: RomM games it doesn't
+ * hold leave, and those it holds join, at the top in title order, as a
+ * favorite added here would. Other content stays as it is. */
+static void romm_follow_favorites(playlist_t *favorites,
+      const romm_library_t *lib, const romm_rom_t *const *index)
+{
+   const romm_rom_t **add = NULL;
+   unsigned *have         = NULL;
+   bool changed           = false;
+   size_t i               = playlist_size(favorites);
+   size_t j;
+
+   while (i--)
+   {
+      const struct playlist_entry *entry = NULL;
+      unsigned id;
+
+      playlist_get_index(favorites, i, &entry);
+      if (!entry || !(id = romm_library_path_id(entry->path)))
+         continue;
+      for (j = 0; j < RBUF_LEN(lib->favorite_ids); j++)
+         if (lib->favorite_ids[j] == id)
+            break;
+      if (j < RBUF_LEN(lib->favorite_ids))
+      {
+         RBUF_PUSH(have, id);
+         continue;
+      }
+      RARCH_LOG("[RomM] %s is no longer a favorite in RomM.\n", entry->path);
+      playlist_delete_index(favorites, i);
+      changed = true;
+   }
+
+   for (i = 0; i < RBUF_LEN(lib->favorite_ids); i++)
+   {
+      const romm_rom_t *rom = romm_library_find(index, lib->favorite_ids[i]);
+      for (j = 0; j < RBUF_LEN(have); j++)
+         if (have[j] == lib->favorite_ids[i])
+            break;
+      if (rom && j == RBUF_LEN(have))
+         RBUF_PUSH(add, rom);
+   }
+   if (RBUF_LEN(add))
+      qsort(add, RBUF_LEN(add), sizeof(*add), romm_cmp_rom_title_desc);
+   for (i = 0; i < RBUF_LEN(add); i++)
+   {
+      struct playlist_entry entry = {0};
+      char path[PATH_MAX_LENGTH];
+
+      if (!romm_library_content_path(path, sizeof(path), add[i]))
+         continue;
+      entry.path      = path;
+      entry.label     = (char*)add[i]->name;
+      entry.core_path = (char*)FILE_PATH_DETECT;
+      entry.core_name = (char*)FILE_PATH_DETECT;
+      entry.db_name   = (char*)romm_library_rom_playlist(lib, add[i]);
+      if (playlist_push(favorites, &entry))
+      {
+         RARCH_LOG("[RomM] %s is a favorite in RomM.\n", path);
+         changed = true;
+      }
+   }
+   RBUF_FREE(add);
+   RBUF_FREE(have);
+
+   if (changed)
+   {
+      playlist_write_file(favorites);
+      romm_playlist_changed(playlist_get_conf_path(favorites));
+   }
+}
+
 static bool romm_find_core(const char *const *cores, char *path,
       size_t path_len, char *name, size_t name_len)
 {
@@ -848,7 +928,11 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
       if (g_defaults.content_history)
          romm_follow_games(g_defaults.content_history, old_index, index);
       if (g_defaults.content_favorites)
+      {
          romm_follow_games(g_defaults.content_favorites, old_index, index);
+         if (lib->favorites_listed)
+            romm_follow_favorites(g_defaults.content_favorites, lib, index);
+      }
       RBUF_FREE(old_index);
       RBUF_FREE(index);
 #ifdef HAVE_MENU
