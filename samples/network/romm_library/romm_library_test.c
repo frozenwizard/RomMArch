@@ -21,6 +21,7 @@
 #include <boolean.h>
 
 #include "../../../network/romm/romm_library.c"
+#include "../../../network/romm/romm_sidebar.c"
 
 #include "../romm_client/stubs_retroarch.h"
 
@@ -1769,6 +1770,215 @@ static void test_core_option_defaults(void)
          && !romm_library_core_option_default(NULL), "other options");
 }
 
+static void sidebar_platform(romm_library_t *lib, const char *playlist,
+      const char *family_name, const char *libretro_slug)
+{
+   romm_library_platform_t p;
+   memset(&p, 0, sizeof(p));
+   strlcpy(p.playlist, playlist, sizeof(p.playlist));
+   strlcpy(p.platform.family_name, family_name,
+         sizeof(p.platform.family_name));
+   strlcpy(p.platform.libretro_slug, libretro_slug,
+         sizeof(p.platform.libretro_slug));
+   RBUF_PUSH(lib->platforms, p);
+}
+
+static romm_sidebar_system_t *sidebar_systems(void)
+{
+   romm_library_t lib;
+   romm_sidebar_system_t *systems = NULL;
+
+   memset(&lib, 0, sizeof(lib));
+   sidebar_platform(&lib, "Sega - Mega Drive - Genesis.lpl", "",
+         "Sega - Mega Drive - Genesis");
+   sidebar_platform(&lib, "Sega - Mega Drive - Genesis.lpl", "Sega",
+         "Sega - Mega Drive - Genesis");
+   sidebar_platform(&lib, "Nintendo - Super Nintendo Entertainment System.lpl",
+         "", "Nintendo - Super Nintendo Entertainment System");
+   sidebar_platform(&lib, "RomM - Nintendo Switch.lpl", "nintendo", "");
+   sidebar_platform(&lib, "Nintendo - Game Boy.lpl", "Nintendo",
+         "Nintendo - Game Boy");
+   sidebar_platform(&lib, "RomM - PlayStation 3.lpl", "", "");
+   sidebar_platform(&lib, "RomM - Pipes.lpl", "A|B", "");
+   sidebar_platform(&lib, "", "Sega", "Sega - Saturn");
+   romm_sidebar_systems(&systems, &lib);
+   RBUF_FREE(lib.platforms);
+   return systems;
+}
+
+static void test_sidebar_systems(void)
+{
+   romm_sidebar_system_t *systems = sidebar_systems();
+
+   CHECK(RBUF_LEN(systems) == 6, "%u systems", (unsigned)RBUF_LEN(systems));
+   if (RBUF_LEN(systems) == 6)
+   {
+      CHECK(!strcmp(systems[0].playlist, "Sega - Mega Drive - Genesis.lpl")
+            && !strcmp(systems[0].maker, "Sega"),
+            "shared playlist, maker from the libretro name: %s [%s]",
+            systems[0].playlist, systems[0].maker);
+      CHECK(!strcmp(systems[1].maker, "Nintendo"),
+            "maker from the libretro name: [%s]", systems[1].maker);
+      CHECK(!strcmp(systems[2].maker, "nintendo"),
+            "RomM's maker as RomM spells it: [%s]", systems[2].maker);
+      CHECK(!*systems[4].maker, "no maker: [%s]", systems[4].maker);
+      CHECK(!strcmp(systems[5].maker, "A B"), "no '|': [%s]",
+            systems[5].maker);
+   }
+   RBUF_FREE(systems);
+}
+
+static void test_sidebar_open(void)
+{
+   char open[24];
+
+   CHECK(romm_sidebar_is_open("collections|systems", "systems")
+         && romm_sidebar_is_open("systems|x", "systems")
+         && !romm_sidebar_is_open("systems/Sega", "systems")
+         && !romm_sidebar_is_open("systems", "system")
+         && !romm_sidebar_is_open("", "systems"),
+         "is_open");
+
+   open[0] = '\0';
+   romm_sidebar_toggle(open, sizeof(open), "systems");
+   CHECK(!strcmp(open, "systems"), "open one: [%s]", open);
+   romm_sidebar_toggle(open, sizeof(open), "systems/Sega");
+   CHECK(!strcmp(open, "systems|systems/Sega"), "open two: [%s]", open);
+   romm_sidebar_toggle(open, sizeof(open), "systems");
+   CHECK(!strcmp(open, "systems/Sega"), "close the first: [%s]", open);
+   romm_sidebar_toggle(open, sizeof(open), "systems/Nintendo");
+   CHECK(!strcmp(open, "systems/Sega"), "no room: [%s]", open);
+   strlcpy(open, "a||b|", sizeof(open));
+   romm_sidebar_toggle(open, sizeof(open), "b");
+   CHECK(!strcmp(open, "a"), "empty keys dropped: [%s]", open);
+}
+
+#define SIDEBAR_ROW_TYPE  5
+#define SIDEBAR_GROUP_TYPE 77
+
+static file_list_t *sidebar_rows(void)
+{
+   static const char *rows[][2] = {
+      { "Nintendo - Game Boy.lpl", "Game Boy" },
+      { "Sega - Mega Drive - Genesis.lpl", "Mega Drive - Genesis" },
+      { "RomM - PlayStation 3.lpl", "PlayStation 3" },
+      { "Nintendo - Super Nintendo Entertainment System.lpl",
+        "Super Nintendo Entertainment System" },
+      { "My Own.lpl", "My Own" },
+      { "RomM - Nintendo Switch.lpl", "Nintendo Switch" },
+   };
+   size_t i;
+   file_list_t *list = (file_list_t*)calloc(1, sizeof(*list));
+
+   for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++)
+   {
+      file_list_append(list, rows[i][0], "", SIDEBAR_ROW_TYPE, 0, 99);
+      file_list_set_alt_at_offset(list, i, rows[i][1]);
+      /* What a menu attaches must move with its row. */
+      list->list[i].userdata = strdup(rows[i][1]);
+   }
+   return list;
+}
+
+static void sidebar_check_row(const file_list_t *list, size_t i,
+      const char *path, const char *key, const char *name, size_t depth)
+{
+   const struct item_file *it = &list->list[i];
+   if (i >= list->size)
+   {
+      CHECK(false, "row %u missing", (unsigned)i);
+      return;
+   }
+   if (key)
+      CHECK(it->type == SIDEBAR_GROUP_TYPE && !it->path && it->label
+            && !strcmp(it->label, key) && it->alt && !strcmp(it->alt, name)
+            && it->entry_idx == depth,
+            "row %u: group %s [%s] depth %u", (unsigned)i,
+            it->label ? it->label : "-", it->alt ? it->alt : "-",
+            (unsigned)it->entry_idx);
+   else
+      CHECK(it->path && !strcmp(it->path, path) && it->type == SIDEBAR_ROW_TYPE
+            && it->userdata && !strcmp((char*)it->userdata, it->alt)
+            && it->entry_idx == depth,
+            "row %u: %s depth %u", (unsigned)i, it->path ? it->path : "-",
+            (unsigned)it->entry_idx);
+}
+
+static void test_sidebar_group(void)
+{
+   romm_sidebar_system_t *systems = sidebar_systems();
+   romm_sidebar_names_t names;
+   file_list_t *list;
+   const char **members = NULL;
+
+   names.systems    = "Systems";
+   names.other      = "Other";
+   names.group_type = SIDEBAR_GROUP_TYPE;
+
+   list = sidebar_rows();
+   romm_sidebar_group(list, systems, "collections|systems|systems/nintendo"
+         "|systems/Nintendo|systems/", &names);
+   CHECK(list->size == 9, "open: %u rows", (unsigned)list->size);
+   sidebar_check_row(list, 0, NULL, "systems", "Systems", 0);
+   sidebar_check_row(list, 1, NULL, "systems/Nintendo", "Nintendo", 1);
+   sidebar_check_row(list, 2, "Nintendo - Game Boy.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 3, "RomM - Nintendo Switch.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 4,
+         "Nintendo - Super Nintendo Entertainment System.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 5, NULL, "systems/Sega", "Sega", 1);
+   sidebar_check_row(list, 6, NULL, "systems/", "Other", 1);
+   sidebar_check_row(list, 7, "RomM - PlayStation 3.lpl", NULL, NULL, 2);
+   /* A row RomM didn't write follows, ungrouped. */
+   sidebar_check_row(list, 8, "My Own.lpl", NULL, NULL, 0);
+   file_list_free(list);
+
+   /* Closed groups drop their rows, which free what was attached. */
+   list = sidebar_rows();
+   romm_sidebar_group(list, systems, "", &names);
+   CHECK(list->size == 2, "closed: %u rows", (unsigned)list->size);
+   sidebar_check_row(list, 0, NULL, "systems", "Systems", 0);
+   sidebar_check_row(list, 1, "My Own.lpl", NULL, NULL, 0);
+   file_list_free(list);
+
+   list = sidebar_rows();
+   romm_sidebar_group(list, systems, "systems", &names);
+   CHECK(list->size == 5, "makers closed: %u rows", (unsigned)list->size);
+   sidebar_check_row(list, 1, NULL, "systems/Nintendo", "Nintendo", 1);
+   sidebar_check_row(list, 2, NULL, "systems/Sega", "Sega", 1);
+   sidebar_check_row(list, 3, NULL, "systems/", "Other", 1);
+   sidebar_check_row(list, 4, "My Own.lpl", NULL, NULL, 0);
+   file_list_free(list);
+
+   /* Without a library, the list stays as it was. */
+   list = sidebar_rows();
+   romm_sidebar_group(list, NULL, "systems", &names);
+   CHECK(list->size == 6 && !strcmp(list->list[4].path, "My Own.lpl")
+         && list->list[4].entry_idx == 99, "no library: %u rows",
+         (unsigned)list->size);
+   file_list_free(list);
+
+   romm_sidebar_members(&members, systems, "systems");
+   CHECK(RBUF_LEN(members) == 6
+         && !strcmp(members[0], "RomM - Pipes.lpl")
+         && !strcmp(members[1], "Nintendo - Game Boy.lpl")
+         && !strcmp(members[3], "RomM - Nintendo Switch.lpl")
+         && !strcmp(members[5], "RomM - PlayStation 3.lpl"),
+         "all systems: %u", (unsigned)RBUF_LEN(members));
+   romm_sidebar_members(&members, systems, "systems/Sega");
+   CHECK(RBUF_LEN(members) == 1
+         && !strcmp(members[0], "Sega - Mega Drive - Genesis.lpl"),
+         "Sega: %u", (unsigned)RBUF_LEN(members));
+   romm_sidebar_members(&members, systems, "systems/");
+   CHECK(RBUF_LEN(members) == 1
+         && !strcmp(members[0], "RomM - PlayStation 3.lpl"),
+         "Other: %u", (unsigned)RBUF_LEN(members));
+   romm_sidebar_members(&members, systems, "systemsx");
+   CHECK(RBUF_LEN(members) == 0, "not a group: %u",
+         (unsigned)RBUF_LEN(members));
+   RBUF_FREE(members);
+   RBUF_FREE(systems);
+}
+
 int main(void)
 {
    test_content_path();
@@ -1791,6 +2001,9 @@ int main(void)
    test_covers_superseded();
    test_covers_shared_name();
    test_covers_in_steps();
+   test_sidebar_systems();
+   test_sidebar_open();
+   test_sidebar_group();
 
    if (failures)
    {

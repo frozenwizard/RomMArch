@@ -253,7 +253,8 @@ jobs:
           # Includes network/romm/romm_library.c and plays RomM: the
           # library sync's playlists, manifest, paging, incremental
           # changes, games removed or renamed, platforms gone, covers
-          # and default cores.
+          # and default cores; and the sidebar's groups of systems by
+          # maker (romm_sidebar.c).
           make clean all SANITIZER=address,undefined
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
              UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 60 \

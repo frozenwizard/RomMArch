@@ -2956,6 +2956,7 @@ ifeq ($(HAVE_ROMM), 1)
               network/romm/romm_library.o \
               network/romm/romm_launch.o \
               network/romm/romm_saves.o \
+              network/romm/romm_sidebar.o \
               network/romm/romm_platform.o \
               network/romm/romm.o \
               $(LIBRETRO_COMM_DIR)/vfs/vfs_implementation_romm.o
