@@ -1319,6 +1319,8 @@ typedef struct settings
        * "a, b". */
       char romm_missing_scopes[256];
       char romm_token[128];
+      /* The sidebar groups left open, as "systems|systems/Sega". */
+      char romm_sidebar_open[PATH_MAX_LENGTH];
 #endif
 #endif
 

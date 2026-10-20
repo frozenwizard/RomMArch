@@ -32,6 +32,7 @@
 #include "romm_library.h"
 #include "romm_platform.h"
 #include "romm_saves.h"
+#include "romm_sidebar.h"
 #include "../../command.h"
 #include "../../configuration.h"
 #include "../../core_info.h"
@@ -742,6 +743,94 @@ static bool romm_find_core(const char *const *cores, char *path,
    return false;
 }
 
+#ifdef HAVE_MENU
+/* The library's system playlists and their makers, for the sidebar. */
+static romm_sidebar_system_t *romm_sidebar_cache = NULL;
+static bool romm_sidebar_cache_read              = false;
+
+static void romm_sidebar_cache_load(void)
+{
+   settings_t *settings = config_get_ptr();
+   romm_library_t lib;
+   char path[PATH_MAX_LENGTH];
+
+   if (romm_sidebar_cache_read)
+      return;
+   romm_sidebar_cache_read = true;
+   romm_library_manifest_path(path, sizeof(path),
+         settings->paths.directory_playlist);
+   if (romm_library_load(&lib, path))
+      romm_sidebar_systems(&romm_sidebar_cache, &lib);
+   romm_library_free(&lib);
+}
+
+void romm_menu_sidebar_group(file_list_t *list)
+{
+   romm_sidebar_names_t names;
+
+   romm_sidebar_cache_load();
+   names.systems    = msg_hash_to_str(MSG_ROMM_SIDEBAR_SYSTEMS);
+   names.other      = msg_hash_to_str(MSG_ROMM_SIDEBAR_OTHER);
+   names.group_type = MENU_ROMM_GROUP;
+   romm_sidebar_group(list, romm_sidebar_cache,
+         config_get_ptr()->arrays.romm_sidebar_open, &names);
+}
+
+bool romm_menu_sidebar_toggle(const struct item_file *row)
+{
+   settings_t *settings = config_get_ptr();
+   char open[sizeof(settings->arrays.romm_sidebar_open)];
+
+   if (!row || row->type != MENU_ROMM_GROUP || !row->label)
+      return false;
+   strlcpy(open, settings->arrays.romm_sidebar_open, sizeof(open));
+   romm_sidebar_toggle(open, sizeof(open), row->label);
+   configuration_set_string(settings, settings->arrays.romm_sidebar_open,
+         open);
+   return true;
+}
+
+bool romm_menu_sidebar_is_open(const struct item_file *row)
+{
+   return row && row->type == MENU_ROMM_GROUP && row->label
+      && romm_sidebar_is_open(config_get_ptr()->arrays.romm_sidebar_open,
+            row->label);
+}
+
+unsigned romm_menu_sidebar_depth(const file_list_t *list, size_t i)
+{
+   /* A grouped list starts with a group. */
+   if (!list->size || list->list[0].type != MENU_ROMM_GROUP)
+      return 0;
+   return (unsigned)list->list[i].entry_idx;
+}
+
+unsigned romm_menu_sidebar_list(file_list_t *list, const char *key)
+{
+   size_t i;
+   const char *dir        = config_get_ptr()->paths.directory_playlist;
+   const char **playlists = NULL;
+   unsigned count         = 0;
+
+   romm_sidebar_cache_load();
+   romm_sidebar_members(&playlists, romm_sidebar_cache, key);
+   for (i = 0; i < RBUF_LEN(playlists); i++)
+   {
+      char path[PATH_MAX_LENGTH];
+      fill_pathname_join_special(path, dir, playlists[i], sizeof(path));
+      /* A platform without games has no playlist. */
+      if (!path_is_valid(path))
+         continue;
+      if (menu_entries_append(list, path, "",
+            MENU_ENUM_LABEL_PLAYLIST_COLLECTION_ENTRY,
+            FILE_TYPE_PLAYLIST_COLLECTION, 0, count, NULL))
+         count++;
+   }
+   RBUF_FREE(playlists);
+   return count;
+}
+#endif
+
 static void romm_on_library_synced(void *user_data, enum romm_status status,
       int http_status, const romm_library_t *old, const romm_library_t *lib)
 {
@@ -761,6 +850,10 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
          romm_follow_games(g_defaults.content_favorites, old_index, index);
       RBUF_FREE(old_index);
       RBUF_FREE(index);
+#ifdef HAVE_MENU
+      romm_sidebar_systems(&romm_sidebar_cache, lib);
+      romm_sidebar_cache_read = true;
+#endif
    }
    romm_reload_playlists();
 

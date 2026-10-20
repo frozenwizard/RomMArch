@@ -138,6 +138,9 @@
 #if defined(HAVE_NETWORKING) && defined(HAVE_WIFI)
 #include "../network/wifi_driver.h"
 #endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../network/romm/romm.h"
+#endif
 #include "../tasks/task_content.h"
 #include "../tasks/tasks_internal.h"
 #include "../dynamic.h"
@@ -4571,6 +4574,18 @@ static int menu_displaylist_parse_horizontal_list(
    /* When opening a saved view the explore menu will handle the list */
    if (item->type == MENU_EXPLORE_TAB)
       menu_displaylist_ctl(DISPLAYLIST_EXPLORE, info, settings);
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* A RomM group lists its playlists. */
+   else if (item->type == MENU_ROMM_GROUP)
+   {
+      if (!romm_menu_sidebar_list(info->list, item->label))
+         menu_entries_append(info->list,
+               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_NO_PLAYLISTS),
+               MENU_ENUM_LABEL_NO_PLAYLISTS_STR,
+               MENU_ENUM_LABEL_NO_PLAYLISTS,
+               MENU_SETTING_NO_ITEM, 0, 0, NULL);
+   }
+#endif
    else
    {
       playlist_t *playlist         = NULL;

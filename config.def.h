@@ -1834,6 +1834,8 @@
 #define DEFAULT_PLAYLIST_USE_FILENAME false
 
 #define DEFAULT_ROMM_REFRESH_ON_START true
+/* Each maker's group starts closed. */
+#define DEFAULT_ROMM_SIDEBAR_OPEN "collections|systems"
 
 #ifdef HAVE_ROMM
 /* Most of RomM's covers are JPEG. */

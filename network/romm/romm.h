@@ -17,6 +17,7 @@
 
 #include <stddef.h>
 #include <boolean.h>
+#include <lists/file_list.h>
 #include <retro_common_api.h>
 
 RETRO_BEGIN_DECLS
@@ -83,6 +84,25 @@ void romm_content_closed(void);
 /* Sends the saves of games that changed since their last sync but
  * didn't go up: played offline, left running at quit, or refused. */
 void romm_sync_owed_saves(void);
+
+/* Groups a sidebar's playlist rows, @list, as romm_sidebar_group()
+ * does, with the groups the user left open. */
+void romm_menu_sidebar_group(file_list_t *list);
+
+/* Opens or closes the group sidebar row @row is; false if it isn't a
+ * group. */
+bool romm_menu_sidebar_toggle(const struct item_file *row);
+
+/* Whether sidebar row @row is an open group. */
+bool romm_menu_sidebar_is_open(const struct item_file *row);
+
+/* How deep in the groups row @i of sidebar @list sits: 0 unless
+ * romm_menu_sidebar_group() grouped it. */
+unsigned romm_menu_sidebar_depth(const file_list_t *list, size_t i);
+
+/* Lists in @list, as the Playlists menu does, the playlists in the
+ * group with key @key. Returns how many. */
+unsigned romm_menu_sidebar_list(file_list_t *list, const char *key);
 
 RETRO_END_DECLS
 

@@ -326,6 +326,11 @@ enum menu_settings_type
    MENU_SETTING_ACTION_CONTENTLESS_CORE_RUN,
    MENU_SETTING_ACTION_STATE_SLOT_RUN,
 
+#ifdef HAVE_ROMM
+   /* A sidebar row grouping RomM playlists. */
+   MENU_ROMM_GROUP,
+#endif
+
    MENU_SETTINGS_LAST
 };
 

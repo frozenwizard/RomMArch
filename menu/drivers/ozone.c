@@ -64,6 +64,10 @@
 #include <compat/strl.h>
 #endif
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../../network/romm/romm.h"
+#endif
+
 /* Force a render phase out of line even though it has a single call
  * site.  Follows the RXML_NOINLINE precedent in
  * libretro-common/formats/xml/rxml.c.
@@ -3272,6 +3276,33 @@ static void ozone_draw_icon(
    }
 }
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+/* A RomM group's marker in an icon's place: a triangle pointing down
+ * when the group is open, right when it's closed. Drawn in 1 px
+ * strips, it needs no icon asset or glyph. */
+static void ozone_draw_romm_group_marker(gfx_display_t *p_disp,
+      void *userdata, unsigned video_dims, float x, float y,
+      unsigned icon_size, unsigned row_height, bool open, float *color)
+{
+   int i;
+   int half = (int)icon_size / 5;
+   int cx   = (int)x + (int)icon_size / 2;
+   int cy   = (int)y + (int)row_height / 2;
+
+   for (i = 0; i < half; i++)
+   {
+      if (open)
+         gfx_display_draw_quad(p_disp, userdata, video_dims,
+               cx - half + i, cy - half / 2 + i,
+               VIDEO_SCALE_PACK(2 * (half - i), 1), video_dims, color, NULL);
+      else
+         gfx_display_draw_quad(p_disp, userdata, video_dims,
+               cx - half / 2 + i, cy - half + i,
+               VIDEO_SCALE_PACK(1, 2 * (half - i)), video_dims, color, NULL);
+   }
+}
+#endif
+
 static int ozone_wiggle(ozone_handle_t* ozone, float t)
 {
    float a = ozone->cursor_wiggle_state.amplitude;
@@ -3933,6 +3964,12 @@ OZONE_NOINLINE static void ozone_draw_sidebar(
          bool selected        = (ozone->categories_selection_ptr == ozone->system_tab_end + 1 + i);
          uint32_t text_color  = 0;
          float    text_color_hp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+         int indent           = 0;
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         indent = (int)romm_menu_sidebar_depth(&ozone->horizontal_list, i)
+               * (int)ozone->dimensions.sidebar_entry_icon_size / 2;
+#endif
 
          /* Cull off-screen sidebar entries */
          tab_y_screen = y + ozone->animations.scroll_y_sidebar;
@@ -3962,6 +3999,20 @@ OZONE_NOINLINE static void ozone_draw_sidebar(
 
          gfx_display_set_alpha(col, ozone->animations.alpha);
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         if (ozone->horizontal_list.list[i].type == MENU_ROMM_GROUP)
+            ozone_draw_romm_group_marker(p_disp, userdata, video_dims,
+                  ozone->sidebar_offset
+                        + ozone->dimensions.sidebar_padding_horizontal
+                        + ozone->dimensions.sidebar_entry_icon_padding
+                        + indent,
+                  y + ozone->animations.scroll_y_sidebar,
+                  ozone->dimensions.sidebar_entry_icon_size,
+                  ozone->dimensions.sidebar_entry_height,
+                  romm_menu_sidebar_is_open(&ozone->horizontal_list.list[i]),
+                  col);
+         else
+#endif
          /* node->icon holds only a texture the node owns; an entry
           * without one (an explore view, a playlist icon not landed)
           * draws the cursor, which stays the icon set's. */
@@ -3978,7 +4029,8 @@ OZONE_NOINLINE static void ozone_draw_sidebar(
                   icon_tex,
                ozone->sidebar_offset
                      + ozone->dimensions.sidebar_padding_horizontal
-                     + ozone->dimensions.sidebar_entry_icon_padding,
+                     + ozone->dimensions.sidebar_entry_icon_padding
+                     + indent,
                y
                      + ozone->dimensions.sidebar_entry_height / 2
                      - ozone->dimensions.sidebar_entry_icon_size / 2
@@ -4002,7 +4054,8 @@ OZONE_NOINLINE static void ozone_draw_sidebar(
          {
             int avail_width                = entry_width
                   - ozone->dimensions.sidebar_entry_icon_size
-                  - (int)(40.0f * scale_factor);
+                  - (int)(40.0f * scale_factor)
+                  - indent;
             unsigned ticker_field_width    = avail_width > 0
                   ? (unsigned)avail_width : 0;
 
@@ -4037,7 +4090,8 @@ OZONE_NOINLINE static void ozone_draw_sidebar(
                      + ozone->sidebar_offset
                      + ozone->dimensions.sidebar_padding_horizontal
                      + ozone->dimensions.sidebar_entry_icon_padding * 2
-                     + ozone->dimensions.sidebar_entry_icon_size,
+                     + ozone->dimensions.sidebar_entry_icon_size
+                     + indent,
                y
                      + ozone->dimensions.sidebar_entry_height / 2
                      + ozone->fonts.sidebar.line_centre_offset
@@ -5375,6 +5429,10 @@ static void ozone_init_horizontal_list(ozone_handle_t *ozone, settings_t *settin
          && ozone_sort_after_truncate
          && (list_size > 0))
       file_list_sort_on_alt(&ozone->horizontal_list);
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   romm_menu_sidebar_group(&ozone->horizontal_list);
+#endif
 }
 
 static void ozone_context_destroy_horizontal_list(ozone_handle_t *ozone)
@@ -5442,6 +5500,17 @@ static void ozone_context_reset_horizontal_list(ozone_handle_t *ozone)
           * which does not free its values, or from nothing at all. */
          ozone->horizontal_list.list[i].userdata = node;
       }
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      if (ozone->horizontal_list.list[i].type == MENU_ROMM_GROUP)
+      {
+         if (node->console_name)
+            free(node->console_name);
+         node->console_name = strdup(ozone->horizontal_list.list[i].alt
+               ? ozone->horizontal_list.list[i].alt : "");
+         continue;
+      }
+#endif
 
       if (!(path = ozone->horizontal_list.list[i].path))
          continue;
@@ -5537,6 +5606,26 @@ static void ozone_refresh_horizontal_list(ozone_handle_t *ozone,
 
    ozone_context_reset_horizontal_list(ozone);
 }
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+/* Opens or closes the sidebar's selected row if it is a RomM group.
+ * The rows above it stay as they are, so it keeps its place. */
+static bool ozone_romm_toggle_group(ozone_handle_t *ozone)
+{
+   size_t selection = ozone->categories_selection_ptr;
+
+   if (     selection <= ozone->system_tab_end
+         || selection - ozone->system_tab_end - 1
+            >= ozone->horizontal_list.size
+         || !romm_menu_sidebar_toggle(&ozone->horizontal_list.list[
+               selection - ozone->system_tab_end - 1]))
+      return false;
+
+   ozone_refresh_horizontal_list(ozone, config_get_ptr());
+   ozone_sidebar_goto(ozone, selection);
+   return true;
+}
+#endif
 
 static void ozone_refresh_system_tabs_list(ozone_handle_t * ozone)
 {
@@ -6528,6 +6617,11 @@ border_iterate:
                for (offset = 0; offset < ozone->horizontal_list.size; offset++)
                {
                   char playlist_file_noext[NAME_MAX_LENGTH];
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+                  /* RomM groups have no file. */
+                  if (!ozone->horizontal_list.list[offset].path)
+                     continue;
+#endif
                   fill_pathname(playlist_file_noext,
                         ozone->horizontal_list.list[offset].path, "",
                         sizeof(playlist_file_noext));
@@ -6589,6 +6683,11 @@ border_iterate:
                   for (offset = 0; offset < ozone->horizontal_list.size; offset++)
                   {
                      char playlist_file_noext[NAME_MAX_LENGTH];
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+                     /* RomM groups have no file. */
+                     if (!ozone->horizontal_list.list[offset].path)
+                        continue;
+#endif
                      fill_pathname(playlist_file_noext,
                            ozone->horizontal_list.list[offset].path, "",
                            sizeof(playlist_file_noext));
@@ -8828,6 +8927,17 @@ static bool ozone_manage_available(ozone_handle_t *ozone,
    if (kiosk_mode_enable)
       return false;
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* A RomM group isn't a playlist to manage. */
+   if (     (ozone->flags & OZONE_FLAG_CURSOR_IN_SIDEBAR)
+         && ozone->categories_selection_ptr > ozone->system_tab_end
+         && ozone->categories_selection_ptr - ozone->system_tab_end - 1
+            < ozone->horizontal_list.size
+         && ozone->horizontal_list.list[ozone->categories_selection_ptr
+            - ozone->system_tab_end - 1].type == MENU_ROMM_GROUP)
+      return false;
+#endif
+
    if (     (ozone->flags & OZONE_FLAG_CURSOR_IN_SIDEBAR)
          && (ozone->flags & OZONE_FLAG_IS_PLAYLIST)
          && ozone->categories_selection_ptr > ozone->system_tab_end)
@@ -9502,6 +9612,14 @@ static enum menu_action ozone_parse_menu_entry_action(
 
          if (ozone->flags & OZONE_FLAG_CURSOR_IN_SIDEBAR)
          {
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+            /* OK on a RomM group opens or closes it. */
+            if (ozone_romm_toggle_group(ozone))
+            {
+               new_action = MENU_ACTION_NOOP;
+               break;
+            }
+#endif
             ozone_refresh_sidebars(ozone, ozone_collapse_sidebar, VIDEO_SCALE_H(ozone->last_dims));
             if (!(ozone->flags & OZONE_FLAG_EMPTY_PLAYLIST))
                ozone_leave_sidebar(ozone, ozone_collapse_sidebar, tag,
