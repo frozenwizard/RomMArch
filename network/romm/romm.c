@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <array/rbuf.h>
 #include <compat/posix_string.h>
@@ -880,6 +881,32 @@ static unsigned romm_favorites_changes_at_sync = 0;
 static unsigned *romm_favorites_waiting        = NULL;
 static bool romm_favorites_creating            = false;
 
+/* The library as the manifest, then each sync, has it: when it was
+ * synced, its games and systems, and the systems that sync left for a
+ * manual one, as "NES, PlayStation". */
+static int64_t romm_library_synced_at = 0;
+static unsigned romm_library_games    = 0;
+static unsigned romm_library_systems  = 0;
+static char romm_library_waiting[128];
+
+static void romm_note_library(const romm_library_t *lib)
+{
+   size_t _len = 0;
+   size_t i;
+
+   romm_library_synced_at = lib->synced_at;
+   romm_library_systems   = (unsigned)RBUF_LEN(lib->platforms);
+   romm_library_games     = 0;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      romm_library_games += (unsigned)RBUF_LEN(lib->platforms[i].roms);
+   *romm_library_waiting = '\0';
+   for (i = 0; i < RBUF_LEN(lib->waiting)
+         && _len < sizeof(romm_library_waiting); i++)
+      _len += snprintf(romm_library_waiting + _len,
+            sizeof(romm_library_waiting) - _len, "%s%s",
+            i ? ", " : "", lib->waiting[i].platform.name);
+}
+
 static void romm_manifest_load(void)
 {
    settings_t *settings = config_get_ptr();
@@ -893,6 +920,7 @@ static void romm_manifest_load(void)
          settings->paths.directory_playlist);
    if (romm_library_load(&lib, path))
    {
+      romm_note_library(&lib);
       romm_favorites_collection = lib.favorites_id;
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, &lib);
@@ -1020,6 +1048,59 @@ unsigned romm_menu_sidebar_depth(const file_list_t *list, size_t i)
    return (unsigned)list->list[i].entry_idx;
 }
 
+static bool romm_menu_status_line(file_list_t *list, const char *line)
+{
+   return menu_entries_append(list, line, "",
+         MENU_ENUM_LABEL_ROMM_STATUS_ENTRY, MENU_SETTINGS_CORE_INFO_NONE,
+         0, 0, NULL);
+}
+
+unsigned romm_menu_status_list(file_list_t *list)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned count       = 0;
+   char line[512];
+
+   romm_manifest_load();
+   if (string_is_empty(settings->arrays.romm_token))
+      strlcpy(line, msg_hash_to_str(MSG_ROMM_STATUS_NOT_PAIRED),
+            sizeof(line));
+   else if (*settings->arrays.romm_username)
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_STATUS_PAIRED_AS),
+            settings->arrays.romm_username);
+   else
+      strlcpy(line, msg_hash_to_str(MSG_ROMM_STATUS_PAIRED), sizeof(line));
+   if (romm_menu_status_line(list, line))
+      count++;
+
+   if (romm_syncing)
+      strlcpy(line, msg_hash_to_str(MSG_ROMM_STATUS_SYNCING), sizeof(line));
+   else if (romm_library_synced_at > 0)
+   {
+      time_t t      = (time_t)romm_library_synced_at;
+      struct tm *tm = localtime(&t);
+      char when[32];
+      if (!tm || !strftime(when, sizeof(when), "%Y-%m-%d %H:%M", tm))
+         *when = '\0';
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_STATUS_LIBRARY),
+            romm_library_games, romm_library_systems, when);
+   }
+   else
+      strlcpy(line, msg_hash_to_str(MSG_ROMM_STATUS_NOT_SYNCED),
+            sizeof(line));
+   if (romm_menu_status_line(list, line))
+      count++;
+
+   if (*romm_library_waiting)
+   {
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_STATUS_WAITING),
+            romm_library_waiting);
+      if (romm_menu_status_line(list, line))
+         count++;
+   }
+   return count;
+}
+
 unsigned romm_menu_sidebar_list(file_list_t *list, const char *key)
 {
    size_t i;
@@ -1073,6 +1154,7 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
       RBUF_FREE(index);
       if (favorites_kept)
          romm_favorites_collection = lib->favorites_id;
+      romm_note_library(lib);
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
 #endif
@@ -1091,15 +1173,11 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
          romm_notify_failure(status, http_status);
       return;
    }
-   if (RBUF_LEN(lib->waiting))
+   if (*romm_library_waiting)
    {
-      char names[128];
-      size_t _len = 0;
-      for (i = 0; i < RBUF_LEN(lib->waiting) && _len < sizeof(names); i++)
-         _len += snprintf(names + _len, sizeof(names) - _len, "%s%s",
-               i ? ", " : "", lib->waiting[i].platform.name);
       snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNC_WAITING),
-            config_get_ptr()->uints.romm_sync_start_limit, names);
+            config_get_ptr()->uints.romm_sync_start_limit,
+            romm_library_waiting);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
    }
    if (quiet)

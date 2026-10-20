@@ -33853,6 +33853,34 @@ MSG_HASH(
    "Unsupported"
    )
 MSG_HASH(
+   MSG_ROMM_STATUS_NOT_PAIRED,
+   "Status: Not paired"
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_PAIRED,
+   "Status: Paired"
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_PAIRED_AS,
+   "Status: Paired as %s"
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_NOT_SYNCED,
+   "Library: Not synced yet"
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_SYNCING,
+   "Library: Syncing now"
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_LIBRARY,
+   "Library: %u games on %u systems, synced %s"
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_WAITING,
+   "Not synced at start: %s. Refresh Library syncs them."
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

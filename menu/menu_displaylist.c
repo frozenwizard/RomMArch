@@ -13251,6 +13251,7 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_ROMM_SYNC_START_LIMIT, PARSE_ONLY_UINT},
             };
 
+            count += romm_menu_status_list(list);
             for (i = 0; i < ARRAY_SIZE(build_list); i++)
             {
                if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,

@@ -116,6 +116,11 @@ unsigned romm_menu_sidebar_depth(const file_list_t *list, size_t i);
  * group with key @key. Returns how many. */
 unsigned romm_menu_sidebar_list(file_list_t *list, const char *key);
 
+/* Lists in @list the status lines of Settings > RomM: whether the
+ * device is paired and as whom, and the library as the last sync left
+ * it. Read from what's stored, without asking RomM. Returns how many. */
+unsigned romm_menu_status_list(file_list_t *list);
+
 RETRO_END_DECLS
 
 #endif
