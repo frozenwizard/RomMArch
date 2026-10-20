@@ -33741,8 +33741,8 @@ MSG_HASH(
    "BIOS %s is missing from the system folder."
    )
 MSG_HASH(
-   MSG_ROMM_CORE_MISSING,
-   "%s isn't installed. Select Run again to download it."
+   MSG_ROMM_CORE_DOWNLOADING,
+   "Downloading %s to run this game."
    )
 MSG_HASH(
    MSG_ROMM_CORE_INSTALLING,

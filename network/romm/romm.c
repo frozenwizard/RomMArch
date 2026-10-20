@@ -1824,9 +1824,6 @@ int romm_launch_from_menu(const char *core_path, const char *content_path,
 }
 
 #if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
-/* How soon a second Run must follow to confirm a core download */
-#define ROMM_CORE_CONFIRM_USEC 10000000
-
 /* A core download, and the game to launch once it's in */
 typedef struct
 {
@@ -1842,8 +1839,6 @@ typedef struct
 } romm_core_install_t;
 
 static bool romm_installing_core = false;
-static char romm_offered_content[PATH_MAX_LENGTH];
-static retro_time_t romm_offered_at;
 
 /* The core's own name in its info file, such as "Genesis Plus GX";
  * the info files cover cores not yet installed. */
@@ -2018,36 +2013,23 @@ bool romm_launch_without_core(const char *content_path, const char *label,
 #if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
    {
       settings_t *settings = config_get_ptr();
-      retro_time_t now     = cpu_features_get_time_usec();
       char msg[NAME_MAX_LENGTH];
 
       if (     !settings->bools.menu_show_core_updater
             || settings->bools.kiosk_mode_enable)
          return false;
       romm_core_name(cores[0], name, sizeof(name));
+      /* The platform's first emulator is fetched, and the game runs
+       * once it's in. */
       if (romm_installing_core)
          snprintf(msg, sizeof(msg),
                msg_hash_to_str(MSG_ROMM_CORE_INSTALLING), name);
-      /* Asked already: this Run is the go-ahead. */
-      else if (   string_is_equal(romm_offered_content, content_path)
-               && now - romm_offered_at < ROMM_CORE_CONFIRM_USEC)
-      {
-         romm_offered_content[0] = '\0';
-         if (romm_install_core(cores[0], name, content_path, label))
-            return true;
+      else if (romm_install_core(cores[0], name, content_path, label))
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_ROMM_CORE_DOWNLOADING), name);
+      else
          snprintf(msg, sizeof(msg),
                msg_hash_to_str(MSG_ROMM_CORE_INSTALL_FAILED), name);
-      }
-      else
-      {
-         strlcpy(romm_offered_content, content_path,
-               sizeof(romm_offered_content));
-         romm_offered_at = now;
-         snprintf(msg, sizeof(msg),
-               msg_hash_to_str(MSG_ROMM_CORE_MISSING), name);
-         RARCH_LOG("[RomM] %s isn't installed; offered to download it.\n",
-               cores[0]);
-      }
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
       return true;
    }
