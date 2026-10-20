@@ -886,6 +886,8 @@ static void romm_platforms_member(void *ctx, const char *key,
       strlcpy(p->slug, value, sizeof(p->slug));
    else if (string_is_equal(key, "libretro_slug"))
       strlcpy(p->libretro_slug, value, sizeof(p->libretro_slug));
+   else if (string_is_equal(key, "family_name"))
+      strlcpy(p->family_name, value, sizeof(p->family_name));
    /* display_name includes the user's custom name. */
    else if (string_is_equal(key, "display_name") && *value)
       strlcpy(p->name, value, sizeof(p->name));

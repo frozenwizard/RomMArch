@@ -539,6 +539,9 @@ static void romm_lib_load_platform_member(void *ctx, const char *key,
    else if (string_is_equal(key, "libretro_slug"))
       strlcpy(p->platform.libretro_slug, value,
             sizeof(p->platform.libretro_slug));
+   else if (string_is_equal(key, "family_name"))
+      strlcpy(p->platform.family_name, value,
+            sizeof(p->platform.family_name));
    else if (string_is_equal(key, "playlist"))
       strlcpy(p->playlist, value, sizeof(p->playlist));
 }
@@ -690,6 +693,10 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
       rjsonwriter_add_string(writer, "libretro_slug");
       rjsonwriter_raw(writer, ": ", 2);
       rjsonwriter_add_string(writer, p->platform.libretro_slug);
+      rjsonwriter_raw(writer, ", ", 2);
+      rjsonwriter_add_string(writer, "family_name");
+      rjsonwriter_raw(writer, ": ", 2);
+      rjsonwriter_add_string(writer, p->platform.family_name);
       rjsonwriter_raw(writer, ", ", 2);
       rjsonwriter_add_string(writer, "playlist");
       rjsonwriter_raw(writer, ": ", 2);

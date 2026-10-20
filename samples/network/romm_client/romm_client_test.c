@@ -437,10 +437,12 @@ static void test_platforms(void)
    answer(200, "[{\"id\": 28, \"slug\": \"dc\", \"fs_slug\": \"dc\","
          " \"rom_count\": 29, \"name\": \"Dreamcast\", \"igdb_slug\": \"dc\","
          " \"libretro_slug\": \"Sega - Dreamcast\", \"custom_name\": \"\","
+         " \"family_name\": \"Sega\","
          " \"firmware\": [{\"id\": 2, \"platform_id\": 28,"
          " \"file_name\": \"boot.bin\"}], \"display_name\": \"Dreamcast\"},"
          " {\"id\": 26, \"slug\": \"switch\", \"rom_count\": 81,"
          " \"name\": \"Nintendo Switch\", \"libretro_slug\": null,"
+         " \"family_name\": null,"
          " \"custom_name\": \"Switch\", \"firmware\": [],"
          " \"display_name\": \"Switch\"},"
          " {\"slug\": \"broken\", \"name\": \"No id\"},"
@@ -453,11 +455,13 @@ static void test_platforms(void)
    CHECK(r.platforms[0].id == 28 && r.platforms[0].rom_count == 29
          && !strcmp(r.platforms[0].slug, "dc")
          && !strcmp(r.platforms[0].name, "Dreamcast")
-         && !strcmp(r.platforms[0].libretro_slug, "Sega - Dreamcast"),
-         "dc: %u %u %s %s %s", r.platforms[0].id, r.platforms[0].rom_count,
+         && !strcmp(r.platforms[0].libretro_slug, "Sega - Dreamcast")
+         && !strcmp(r.platforms[0].family_name, "Sega"),
+         "dc: %u %u %s %s %s %s", r.platforms[0].id, r.platforms[0].rom_count,
          r.platforms[0].slug, r.platforms[0].name,
-         r.platforms[0].libretro_slug);
+         r.platforms[0].libretro_slug, r.platforms[0].family_name);
    CHECK(r.platforms[1].id == 26 && !*r.platforms[1].libretro_slug
+         && !*r.platforms[1].family_name
          && !strcmp(r.platforms[1].name, "Switch"),
          "custom name, no libretro name: %s [%s]", r.platforms[1].name,
          r.platforms[1].libretro_slug);

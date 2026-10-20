@@ -81,6 +81,8 @@ typedef struct
    /* The libretro database name, such as "Nintendo - Super Nintendo
     * Entertainment System"; empty when RomM knows none. */
    char libretro_slug[128];
+   /* Its maker, such as "Nintendo"; empty when RomM knows none. */
+   char family_name[64];
 } romm_platform_t;
 
 /* A game in the user's RomM library. */

@@ -311,6 +311,8 @@ static romm_library_platform_t lib_platform(unsigned id, const char *slug,
    strlcpy(p.platform.name, "Name of \"it\"", sizeof(p.platform.name));
    strlcpy(p.platform.libretro_slug, libretro_slug,
          sizeof(p.platform.libretro_slug));
+   strlcpy(p.platform.family_name, *libretro_slug ? "Maker \"A\"" : "",
+         sizeof(p.platform.family_name));
    strlcpy(p.playlist, playlist, sizeof(p.playlist));
    return p;
 }
@@ -374,12 +376,13 @@ static void test_manifest(void)
                && !strcmp(a->platform.slug, b->platform.slug)
                && !strcmp(a->platform.name, b->platform.name)
                && !strcmp(a->platform.libretro_slug, b->platform.libretro_slug)
+               && !strcmp(a->platform.family_name, b->platform.family_name)
                && !strcmp(a->playlist, b->playlist)
                && a->playlist_size == b->playlist_size
                && a->playlist_mtime == b->playlist_mtime,
-               "platform %u: %u %s [%s] [%s] %s %lld %lld", (unsigned)i,
+               "platform %u: %u %s [%s] [%s] [%s] %s %lld %lld", (unsigned)i,
                b->platform.id, b->platform.slug, b->platform.name,
-               b->platform.libretro_slug, b->playlist,
+               b->platform.libretro_slug, b->platform.family_name, b->playlist,
                (long long)b->playlist_size, (long long)b->playlist_mtime);
          CHECK(RBUF_LEN(a->roms) == RBUF_LEN(b->roms), "platform %u: %u games",
                (unsigned)i, (unsigned)RBUF_LEN(b->roms));
@@ -582,7 +585,8 @@ static const char *sync_platforms_reply =
    " {\"id\": 26, \"slug\": \"switch\", \"rom_count\": 0,"
    " \"name\": \"Nintendo Switch\", \"libretro_slug\": null},"
    " {\"id\": 8, \"slug\": \"genesis\", \"rom_count\": 300,"
-   " \"name\": \"Genesis\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+   " \"name\": \"Genesis\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\","
+   " \"family_name\": \"Sega\"},"
    " {\"id\": 30, \"slug\": \"megadrive\", \"rom_count\": 1,"
    " \"name\": \"Mega Drive\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
    " {\"id\": 40, \"slug\": \"ps3\", \"rom_count\": 5,"
@@ -667,10 +671,12 @@ static void test_sync(void)
       CHECK(lib.platforms[1].platform.id == 8
             && RBUF_LEN(lib.platforms[1].roms) == 300
             && lib.platforms[1].roms[299].id == 399
+            && !strcmp(lib.platforms[1].platform.family_name, "Sega")
+            && !*lib.platforms[0].platform.family_name
             && !strcmp(lib.platforms[2].playlist,
                "Sega - Mega Drive - Genesis.lpl"),
-            "manifest Genesis: %u games", (unsigned)RBUF_LEN(
-               lib.platforms[1].roms));
+            "manifest Genesis: %u games, maker [%s]", (unsigned)RBUF_LEN(
+               lib.platforms[1].roms), lib.platforms[1].platform.family_name);
    romm_library_free(&lib);
 
    /* No response part way: reported, the manifest left as it was. */
