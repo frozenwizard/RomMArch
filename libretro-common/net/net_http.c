@@ -1823,7 +1823,10 @@ static bool net_http_build_head(struct http_t *state)
 {
    struct request *request = &state->request;
    const char *method      = request->method ? request->method : "GET";
-   bool body_method        = request->method && request->method[0] == 'P';
+   /* A body needs its length whatever the method: a DELETE can carry
+    * one. */
+   bool body_method        = (request->method && request->method[0] == 'P')
+         || request->postdata || request->source;
    size_t cap              = 192
       + strlen(method) + strlen(request->path) + strlen(request->domain)
       + (request->headers     ? strlen(request->headers)     : 0)
