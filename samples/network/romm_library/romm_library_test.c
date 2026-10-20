@@ -443,6 +443,7 @@ static void test_manifest(void)
 static romm_library_find_core_t test_find_core;
 static bool sync_collections;
 static const char *sync_refetch;
+static romm_library_core_runs_t test_core_runs;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -470,6 +471,7 @@ static bool sync_start(const char *server, const char *token,
    params.playlist_changed = on_playlist_changed;
    params.collections    = sync_collections;
    params.refetch        = sync_refetch;
+   params.core_runs      = test_core_runs;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1868,6 +1870,13 @@ static bool find_core(const char *const *cores, char *path,
    return false;
 }
 
+/* Only Genesis cores run Genesis. */
+static bool core_runs(const char *core_path, const char *libretro_slug)
+{
+   return !strstr(core_path, "handy")
+      && !strcmp(libretro_slug, "Sega - Mega Drive - Genesis");
+}
+
 /* Syncs Genesis: a full fetch of @page the first time, else its ids
  * and @page as the changes. */
 static void genesis_sync(sync_result_t *r, const char *ids, const char *page)
@@ -1960,6 +1969,40 @@ static void test_sync_default_core(void)
       free(doc);
       doc = NULL;
    }
+
+   /* A core that can run the system stays the user's choice; one that
+    * can't, such as Handy (Lynx) set on Genesis by mistake, gives way
+    * to the preferred core at the next sync, though nothing changed. */
+   test_core_runs = core_runs;
+   genesis_sync(&r, "{\"rom_id_index\": [1, 2]}", "{\"items\": []}");
+   CHECK(filestream_read_file(pl, (void**)&doc, &len) && doc
+         && lpl_get(doc, len, -1, "default_core_path", s, sizeof(s))
+         && !strcmp(s, "/cores/picodrive_libretro.dylib"),
+         "core that runs it replaced: %s", s);
+   if (doc)
+   {
+      char *p = strstr(doc, "picodrive_libretro.dylib");
+      if (p)
+      {
+         char edited[4096];
+         snprintf(edited, sizeof(edited), "%.*shandy_libretro.dylib%s",
+               (int)(p - doc), doc, p + 24);
+         filestream_write_file(pl, edited, (int64_t)strlen(edited));
+      }
+      free(doc);
+      doc = NULL;
+   }
+   genesis_sync(&r, "{\"rom_id_index\": [1, 2]}", "{\"items\": []}");
+   if (filestream_read_file(pl, (void**)&doc, &len) && doc)
+   {
+      CHECK(lpl_get(doc, len, -1, "default_core_path", s, sizeof(s))
+            && !strcmp(s, "/cores/genesis_plus_gx_libretro.dylib"),
+            "core that can't run it kept: %s", s);
+      CHECK(count_entries(pl) == 2, "entries lost");
+      free(doc);
+      doc = NULL;
+   }
+   test_core_runs = NULL;
 
    test_find_core = NULL;
    filestream_delete(pl);

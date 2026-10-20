@@ -1065,6 +1065,18 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    romm_sync_owed_saves();
 }
 
+/* A core whose info file doesn't list the system can't run it, such as
+ * Handy set on Game Boy; one without an info file is given the benefit
+ * of the doubt. */
+static bool romm_core_runs(const char *core_path, const char *libretro_slug)
+{
+   core_info_t *info = NULL;
+   if (     !core_info_find(core_path, &info) || !info
+         || !info->databases_list)
+      return true;
+   return string_list_find_elem(info->databases_list, libretro_slug) != 0;
+}
+
 static bool romm_start_library_sync(bool quiet, const char *refetch)
 {
    settings_t *settings = config_get_ptr();
@@ -1080,6 +1092,7 @@ static bool romm_start_library_sync(bool quiet, const char *refetch)
    params.playlist_changed = romm_playlist_changed;
    params.collections    = true;
    params.refetch        = refetch;
+   params.core_runs      = romm_core_runs;
    romm_favorites_changes_at_sync = romm_favorites_changes;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;

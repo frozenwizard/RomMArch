@@ -96,6 +96,10 @@ typedef bool (*romm_library_find_core_t)(const char *const *cores,
 /* The playlist at @path was just written or deleted. */
 typedef void (*romm_library_playlist_cb_t)(const char *path);
 
+/* Can the core at @core_path run system @libretro_slug? */
+typedef bool (*romm_library_core_runs_t)(const char *core_path,
+      const char *libretro_slug);
+
 typedef struct
 {
    const char *server;
@@ -120,6 +124,9 @@ typedef struct
     * the incremental shortcut, and their covers, then written anew.
     * NULL for none. */
    const char *refetch;
+   /* A playlist's default core is kept only if this says it runs the
+    * system; NULL keeps any. */
+   romm_library_core_runs_t core_runs;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,

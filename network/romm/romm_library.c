@@ -131,6 +131,7 @@ typedef struct
    bool smart_listed;
    /* The playlist to fetch in full and write anew, or empty */
    char refetch[256];
+   romm_library_core_runs_t core_runs;
    char *token;
    char *covers_title;
    char server[NAME_MAX_LENGTH];
@@ -1650,9 +1651,9 @@ static void romm_lib_sync_roms_cb(void *user_data,
 }
 
 /* The default core the playlist at @path should have: the one it has,
- * which the user may have picked, or else the first installed of the
- * system's preferred cores. @changed is set when that differs from
- * the file's. */
+ * which the user may have picked, unless it can't run the system, or
+ * else the first installed of the system's preferred cores. @changed
+ * is set when that differs from the file's. */
 static void romm_lib_default_core(romm_lib_sync_t *sync, const char *path,
       const romm_platform_t *platform, char *core_path, size_t path_len,
       char *core_name, size_t name_len, bool *changed)
@@ -1671,7 +1672,9 @@ static void romm_lib_default_core(romm_lib_sync_t *sync, const char *path,
    {
       romm_json_get(doc, (size_t)len, "default_core_path",
             file_path, sizeof(file_path));
-      if (*file_path && !string_is_equal(file_path, FILE_PATH_DETECT))
+      if (     *file_path && !string_is_equal(file_path, FILE_PATH_DETECT)
+            && (   !sync->core_runs || !*platform->libretro_slug
+                || sync->core_runs(file_path, platform->libretro_slug)))
       {
          strlcpy(core_path, file_path, path_len);
          romm_json_get(doc, (size_t)len, "default_core_name",
@@ -2259,6 +2262,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->collections = params->collections;
    if (params->refetch)
       strlcpy(sync->refetch, params->refetch, sizeof(sync->refetch));
+   sync->core_runs   = params->core_runs;
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));
