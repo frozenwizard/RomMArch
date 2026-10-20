@@ -5038,6 +5038,12 @@ static int menu_displaylist_parse_horizontal_content_actions(
    {
       const char *playlist_path = NULL;
       const char *playlist_file = NULL;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      /* The library follows RomM, so a sync would undo a rename, or
+       * a removal outside History and Favorites. */
+      bool romm_entry           = entry && entry->path
+            && string_starts_with(entry->path, "romm://");
+#endif
 #ifdef HAVE_AUDIOMIXER
       const char *ext           = NULL;
 
@@ -5108,15 +5114,25 @@ static int menu_displaylist_parse_horizontal_content_actions(
       if (!settings->bools.kiosk_mode_enable)
       {
          bool remove_entry_enabled = false;
+         unsigned remove_enable    = settings->uints.playlist_entry_remove_enable;
 
-         if (settings->bools.playlist_entry_rename)
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         if (romm_entry && remove_enable == PLAYLIST_ENTRY_REMOVE_ENABLE_ALL)
+            remove_enable = PLAYLIST_ENTRY_REMOVE_ENABLE_HIST_FAV;
+#endif
+
+         if (settings->bools.playlist_entry_rename
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+               && !romm_entry
+#endif
+            )
             menu_entries_append(list,
                   msg_hash_to_str(MENU_ENUM_LABEL_VALUE_RENAME_ENTRY),
                   MENU_ENUM_LABEL_RENAME_ENTRY_STR,
                   MENU_ENUM_LABEL_RENAME_ENTRY,
                   FILE_TYPE_PLAYLIST_ENTRY, 0, idx, NULL);
 
-         switch (settings->uints.playlist_entry_remove_enable)
+         switch (remove_enable)
          {
             case PLAYLIST_ENTRY_REMOVE_ENABLE_ALL:
                remove_entry_enabled = true;
@@ -5230,6 +5246,12 @@ static int menu_displaylist_parse_horizontal_content_actions(
 
             if (settings->bools.network_on_demand_thumbnails)
                download_enabled = false;
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+            /* Covers come only from RomM. */
+            if (romm_entry)
+               download_enabled = false;
+#endif
 
             if (download_enabled)
                menu_entries_append(list,
