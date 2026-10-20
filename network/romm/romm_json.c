@@ -102,9 +102,9 @@ bool romm_json_get(const char *data, size_t len, const char *path,
 /* Walks the objects in the top-level array, or in the array at
  * @array_key of the top-level object, skipping nested values. False
  * unless that array is there and complete. */
-bool romm_json_items(const char *data, size_t len,
+static bool romm_json_walk_items(const char *data, size_t len,
       const char *array_key, romm_json_member_cb_t member,
-      romm_json_item_end_cb_t item_end, void *ctx)
+      romm_json_item_end_cb_t item_end, void *ctx, bool arrays)
 {
    /* Depth the array's own items are at; 0 until it starts. */
    unsigned item_depth = 0;
@@ -157,6 +157,16 @@ bool romm_json_items(const char *data, size_t len,
             item_end(ctx);
          continue;
       }
+      /* A value of an array in the item: @key is the array's. */
+      if (     arrays
+            && depth == item_depth + 1
+            && rjson_get_context_type(json) == RJSON_ARRAY
+            && (type == RJSON_STRING || type == RJSON_NUMBER))
+      {
+         str = rjson_get_string(json, &_len);
+         member(ctx, key, type, str, _len);
+         continue;
+      }
       if (     depth != item_depth
             || rjson_get_context_type(json) != RJSON_OBJECT)
          continue;
@@ -183,6 +193,22 @@ bool romm_json_items(const char *data, size_t len,
 
    rjson_free(json);
    return complete;
+}
+
+bool romm_json_items(const char *data, size_t len,
+      const char *array_key, romm_json_member_cb_t member,
+      romm_json_item_end_cb_t item_end, void *ctx)
+{
+   return romm_json_walk_items(data, len, array_key, member, item_end,
+         ctx, false);
+}
+
+bool romm_json_items_with_arrays(const char *data, size_t len,
+      const char *array_key, romm_json_member_cb_t member,
+      romm_json_item_end_cb_t item_end, void *ctx)
+{
+   return romm_json_walk_items(data, len, array_key, member, item_end,
+         ctx, true);
 }
 
 bool romm_json_values(const char *data, size_t len,

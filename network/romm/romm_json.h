@@ -42,6 +42,12 @@ bool romm_json_items(const char *data, size_t len,
       const char *array_key, romm_json_member_cb_t member,
       romm_json_item_end_cb_t item_end, void *ctx);
 
+/* As romm_json_items(), also passing @member the strings and numbers
+ * of an array directly in an object, each under that array's key. */
+bool romm_json_items_with_arrays(const char *data, size_t len,
+      const char *array_key, romm_json_member_cb_t member,
+      romm_json_item_end_cb_t item_end, void *ctx);
+
 /* A scalar item in the array being walked. */
 typedef void (*romm_json_value_cb_t)(void *ctx, enum rjson_type type,
       const char *value, size_t len);

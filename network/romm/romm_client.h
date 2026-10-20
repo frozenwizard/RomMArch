@@ -206,6 +206,27 @@ typedef void (*romm_platforms_cb_t)(void *user_data,
       enum romm_status status, int http_status,
       const romm_platform_t *platforms, size_t count);
 
+/* A collection in RomM: the user's, another user's public one, or a
+ * smart one. */
+typedef struct
+{
+   unsigned id;
+   char name[128];
+   /* The RomM user who made it. */
+   char owner[64];
+   /* Its games' ids, an RBUF. */
+   unsigned *rom_ids;
+   bool smart;
+   /* The user's favorites. */
+   bool favorite;
+} romm_collection_t;
+
+/* @collections holds @count entries, valid only during the call; NULL
+ * unless @status is ROMM_OK. */
+typedef void (*romm_collections_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_collection_t *collections, size_t count);
+
 /* @roms holds @count entries, valid only during the call; NULL unless
  * @status is ROMM_OK. @more is set when RomM's page was full, counting
  * games left out of @roms, so another may follow. */
@@ -306,6 +327,12 @@ void romm_client_pair_cancel(void *wait);
  * order; @cb runs on the main thread. */
 bool romm_client_platforms(const char *server, const char *token,
       romm_platforms_cb_t cb, void *user_data);
+
+/* Lists the collections @token's user can see on @server, their own
+ * and other users' public ones, or with @smart their smart
+ * collections; @cb runs on the main thread. */
+bool romm_client_collections(const char *server, const char *token,
+      bool smart, romm_collections_cb_t cb, void *user_data);
 
 /* Fetches up to @limit of the games on platform @platform_id, from
  * @offset in RomM's title order, leaving out games whose files are

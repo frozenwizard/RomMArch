@@ -101,6 +101,13 @@ typedef struct
 
 typedef struct
 {
+   romm_collections_cb_t cb;
+   void *user_data;
+   bool smart;
+} romm_collections_ctx_t;
+
+typedef struct
+{
    romm_roms_cb_t cb;
    void *user_data;
    unsigned limit;
@@ -945,6 +952,105 @@ bool romm_client_platforms(const char *server, const char *token,
    ctx->user_data = user_data;
 
    if (!romm_get(server, token, "/api/platforms", romm_platforms_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
+typedef struct
+{
+   romm_collection_t *list;
+   romm_collection_t cur;
+} romm_collections_parse_t;
+
+static void romm_collections_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_collection_t *c = &((romm_collections_parse_t*)ctx)->cur;
+
+   if (string_is_equal(key, "is_favorite"))
+      c->favorite = type == RJSON_TRUE;
+   else if (type != RJSON_STRING && type != RJSON_NUMBER)
+      return;
+   else if (string_is_equal(key, "rom_ids"))
+   {
+      unsigned id = romm_json_uint(value);
+      if (id)
+         RBUF_PUSH(c->rom_ids, id);
+   }
+   else if (string_is_equal(key, "id"))
+      c->id = romm_json_uint(value);
+   else if (string_is_equal(key, "name"))
+      strlcpy(c->name, value, sizeof(c->name));
+   else if (string_is_equal(key, "owner_username"))
+      strlcpy(c->owner, value, sizeof(c->owner));
+}
+
+static void romm_collections_item_end(void *ctx)
+{
+   romm_collections_parse_t *parse = (romm_collections_parse_t*)ctx;
+
+   if (parse->cur.id)
+      RBUF_PUSH(parse->list, parse->cur);
+   else
+      RBUF_FREE(parse->cur.rom_ids);
+   memset(&parse->cur, 0, sizeof(parse->cur));
+}
+
+static void romm_collections_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_collections_ctx_t *ctx = (romm_collections_ctx_t*)user_data;
+   http_transfer_data_t *data  = (http_transfer_data_t*)task_data;
+   enum romm_status status     = romm_response_status(data, 200);
+   int http_status             = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_collections_parse_t parse;
+   size_t i;
+
+   memset(&parse, 0, sizeof(parse));
+   if (     status == ROMM_OK
+         && !romm_json_items_with_arrays(data->data, data->len, NULL,
+               romm_collections_member, romm_collections_item_end, &parse))
+      status = ROMM_ERR_RESPONSE;
+   /* A walk cut short leaves one half read. */
+   RBUF_FREE(parse.cur.rom_ids);
+
+   for (i = 0; i < RBUF_LEN(parse.list); i++)
+      parse.list[i].smart = ctx->smart;
+
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "RomM lists %u %scollections.\n",
+            (unsigned)RBUF_LEN(parse.list), ctx->smart ? "smart " : "");
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't list %scollections (status %d, HTTP %d).\n",
+            ctx->smart ? "smart " : "", status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? parse.list : NULL,
+         status == ROMM_OK ? RBUF_LEN(parse.list) : 0);
+   for (i = 0; i < RBUF_LEN(parse.list); i++)
+      RBUF_FREE(parse.list[i].rom_ids);
+   RBUF_FREE(parse.list);
+   free(ctx);
+}
+
+bool romm_client_collections(const char *server, const char *token,
+      bool smart, romm_collections_cb_t cb, void *user_data)
+{
+   romm_collections_ctx_t *ctx;
+
+   if (!(ctx = (romm_collections_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   ctx->smart     = smart;
+
+   if (!romm_get(server, token,
+         smart ? "/api/collections/smart" : "/api/collections",
+         romm_collections_cb, ctx))
    {
       free(ctx);
       return false;

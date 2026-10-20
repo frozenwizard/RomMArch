@@ -247,6 +247,18 @@ static void test_json_items(void)
    CHECK(!items("[{\"id\": 1}, {\"id\": 2", NULL, &l),
          "truncated array reported complete");
    CHECK(!items("<html>", NULL, &l), "HTML walked as JSON");
+
+   /* With arrays: the values of an array directly in an item, under
+    * its key, and nothing deeper. */
+   memset(&l, 0, sizeof(l));
+   {
+      const char *doc = "[{\"id\": 1, \"ids\": [3, \"x\", {\"a\": 1}, [4], true],"
+            " \"m\": {\"y\": [5]}, \"n\": \"a\"}, {\"id\": 2, \"ids\": []}]";
+      CHECK(romm_json_items_with_arrays(doc, strlen(doc), NULL,
+               items_member, items_end, &l)
+            && !strcmp(l.log, "id=1;ids=3;ids=x;n=a;|id=2;|"),
+            "with arrays: %s", l.log);
+   }
 }
 
 static void values_value(void *ctx, enum rjson_type type,
@@ -278,6 +290,107 @@ static void test_json_values(void)
          "not an array");
    CHECK(!values("{\"rom_id_index\": [1, 2", "rom_id_index", &l),
          "truncated array reported complete");
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   int http_status;
+   bool has_list;
+   size_t count;
+   romm_collection_t collections[3];
+   unsigned rom_ids[3][4];
+   size_t rom_count[3];
+} collections_result_t;
+
+static void on_collections(void *user_data, enum romm_status status,
+      int http_status, const romm_collection_t *collections, size_t count)
+{
+   collections_result_t *r = (collections_result_t*)user_data;
+   size_t i, j;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->has_list    = collections != NULL;
+   r->count       = count;
+   for (i = 0; i < count && i < 3; i++)
+   {
+      r->collections[i]         = collections[i];
+      r->collections[i].rom_ids = NULL;
+      r->rom_count[i]           = RBUF_LEN(collections[i].rom_ids);
+      for (j = 0; j < r->rom_count[i] && j < 4; j++)
+         r->rom_ids[i][j] = collections[i].rom_ids[j];
+   }
+}
+
+static void collections(collections_result_t *r, bool smart)
+{
+   memset(r, 0, sizeof(*r));
+   stub_reset();
+   CHECK(romm_client_collections("http://romm.local:8090/", "rmm_0123abcd",
+         smart, on_collections, r), "collection list not started");
+   CHECK(stub_req.count == 1 && !strcmp(stub_req.method, "GET"),
+         "%u requests, method %s", stub_req.count, stub_req.method);
+   CHECK(!strcmp(stub_req.url, smart
+            ? "http://romm.local:8090/api/collections/smart"
+            : "http://romm.local:8090/api/collections"),
+         "URL %s", stub_req.url);
+}
+
+static void test_collections(void)
+{
+   collections_result_t r;
+
+   /* Shaped like RomM's CollectionSchema; covers are paths, not ids. */
+   collections(&r, false);
+   answer(200, "[{\"name\": \"Couch Co-op\", \"description\": \"\","
+         " \"rom_ids\": [12, 10, 11], \"path_covers_small\": [\"a/1.png\"],"
+         " \"is_public\": false, \"is_favorite\": false, \"is_virtual\": false,"
+         " \"is_smart\": false, \"id\": 3, \"url_cover\": null,"
+         " \"user_id\": 1, \"owner_username\": \"alice\"},"
+         " {\"name\": \"Favourites\", \"rom_ids\": [7], \"is_favorite\": true,"
+         " \"id\": 4, \"owner_username\": \"alice\"},"
+         " {\"name\": \"No id\", \"rom_ids\": [1, 2]},"
+         " {\"name\": \"Empty\", \"rom_ids\": [], \"id\": 9,"
+         " \"owner_username\": \"alice\"}]");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has_list && r.count == 3,
+         "list: calls %u status %d count %u", r.calls, r.status,
+         (unsigned)r.count);
+   CHECK(r.collections[0].id == 3
+         && !strcmp(r.collections[0].name, "Couch Co-op")
+         && !strcmp(r.collections[0].owner, "alice")
+         && !r.collections[0].favorite && !r.collections[0].smart
+         && r.rom_count[0] == 3 && r.rom_ids[0][0] == 12
+         && r.rom_ids[0][1] == 10 && r.rom_ids[0][2] == 11,
+         "first: %u %s %s %u games", r.collections[0].id,
+         r.collections[0].name, r.collections[0].owner,
+         (unsigned)r.rom_count[0]);
+   CHECK(r.collections[1].favorite && r.rom_count[1] == 1,
+         "favorites: %d %u", r.collections[1].favorite,
+         (unsigned)r.rom_count[1]);
+   CHECK(r.collections[2].id == 9 && r.rom_count[2] == 0
+         && !strcmp(r.collections[2].owner, "alice"),
+         "empty: %u %u", r.collections[2].id, (unsigned)r.rom_count[2]);
+
+   collections(&r, true);
+   answer(200, "[{\"id\": 5, \"name\": \"Unplayed RPGs\","
+         " \"filter_criteria\": {\"genres\": [\"RPG\"], \"ids\": [99]},"
+         " \"rom_ids\": [21, 22], \"is_smart\": true}]");
+   CHECK(r.status == ROMM_OK && r.count == 1 && r.collections[0].smart
+         && r.rom_count[0] == 2 && r.rom_ids[0][1] == 22,
+         "smart: status %d count %u smart %d %u games", r.status,
+         (unsigned)r.count, r.collections[0].smart, (unsigned)r.rom_count[0]);
+
+   collections(&r, false);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_FORBIDDEN && !r.has_list,
+         "403: status %d", r.status);
+
+   collections(&r, false);
+   answer(200, "[{\"id\": 3, \"rom_ids\": [1, 2");
+   CHECK(r.status == ROMM_ERR_RESPONSE && !r.has_list,
+         "cut short: status %d", r.status);
 }
 
 static void heartbeat(heartbeat_result_t *r)
@@ -2058,6 +2171,7 @@ int main(void)
    test_heartbeat();
    test_whoami();
    test_platforms();
+   test_collections();
    test_roms();
    test_rom_ids();
    test_rom_files();
