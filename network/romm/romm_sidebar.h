@@ -27,19 +27,23 @@ RETRO_BEGIN_DECLS
 
 /* Group keys, as a sidebar's open groups name them. A maker's group is
  * ROMM_SIDEBAR_SYSTEMS "/" and its name. */
-#define ROMM_SIDEBAR_SYSTEMS "systems"
+#define ROMM_SIDEBAR_COLLECTIONS "collections"
+#define ROMM_SIDEBAR_SYSTEMS     "systems"
 
-/* A RomM system's playlist and the maker it is grouped under. */
+/* A playlist the RomM library writes: a system's, with the maker it is
+ * grouped under, or a collection's. */
 typedef struct
 {
    char playlist[256];
    /* Empty when neither RomM nor the libretro name tells. */
    char maker[64];
+   bool collection;
 } romm_sidebar_system_t;
 
 typedef struct
 {
    /* Names shown on group rows. */
+   const char *collections;
    const char *systems;
    /* The group of systems without a maker. */
    const char *other;
@@ -48,16 +52,17 @@ typedef struct
 } romm_sidebar_names_t;
 
 /* Fills @systems, an RBUF it empties first, with the library's system
- * playlists, each once, and their makers. */
+ * playlists, each once, and their makers, then its collections'. */
 void romm_sidebar_systems(romm_sidebar_system_t **systems,
       const romm_library_t *lib);
 
 /* Rewrites @list, one row per playlist file (path the file name, alt
- * the name shown), into groups: Systems, a group per maker inside it,
- * each system under its maker, and after them any playlist that isn't
- * a RomM system. A group's rows are left out unless @open names its
- * key; keys are separated by '|'. Group rows have no path, their key as
- * label and their name as alt. Each row's entry_idx is its depth. */
+ * the name shown), into groups: Collections, then Systems with a group
+ * per maker inside it, each system under its maker, and after them any
+ * playlist that isn't RomM's. A group's rows are left out unless @open
+ * names its key; keys are separated by '|'. Group rows have no path,
+ * their key as label and their name as alt. Each row's entry_idx is its
+ * depth. */
 void romm_sidebar_group(file_list_t *list,
       const romm_sidebar_system_t *systems, const char *open,
       const romm_sidebar_names_t *names);
@@ -69,7 +74,8 @@ bool romm_sidebar_is_open(const char *open, const char *key);
 void romm_sidebar_toggle(char *open, size_t len, const char *key);
 
 /* Fills @playlists, an RBUF it empties first, with the playlist files
- * in group @key, ordered by maker, then by file name. */
+ * in group @key: collections by file name, systems by maker, then by
+ * file name. */
 void romm_sidebar_members(const char ***playlists,
       const romm_sidebar_system_t *systems, const char *key);
 

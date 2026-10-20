@@ -1913,8 +1913,19 @@ static romm_sidebar_system_t *sidebar_systems(void)
    sidebar_platform(&lib, "RomM - PlayStation 3.lpl", "", "");
    sidebar_platform(&lib, "RomM - Pipes.lpl", "A|B", "");
    sidebar_platform(&lib, "", "Sega", "Sega - Saturn");
+   {
+      romm_library_collection_t c;
+      memset(&c, 0, sizeof(c));
+      c.id = 3;
+      strlcpy(c.playlist, "Collection - Co-op.lpl", sizeof(c.playlist));
+      RBUF_PUSH(lib.collections, c);
+      c.id = 4;
+      strlcpy(c.playlist, "Collection - Absent.lpl", sizeof(c.playlist));
+      RBUF_PUSH(lib.collections, c);
+   }
    romm_sidebar_systems(&systems, &lib);
    RBUF_FREE(lib.platforms);
+   RBUF_FREE(lib.collections);
    return systems;
 }
 
@@ -1922,9 +1933,13 @@ static void test_sidebar_systems(void)
 {
    romm_sidebar_system_t *systems = sidebar_systems();
 
-   CHECK(RBUF_LEN(systems) == 6, "%u systems", (unsigned)RBUF_LEN(systems));
-   if (RBUF_LEN(systems) == 6)
+   CHECK(RBUF_LEN(systems) == 8, "%u playlists", (unsigned)RBUF_LEN(systems));
+   if (RBUF_LEN(systems) == 8)
    {
+      CHECK(!systems[0].collection && systems[6].collection
+            && !*systems[6].maker
+            && !strcmp(systems[7].playlist, "Collection - Absent.lpl"),
+            "collections last: %s", systems[6].playlist);
       CHECK(!strcmp(systems[0].playlist, "Sega - Mega Drive - Genesis.lpl")
             && !strcmp(systems[0].maker, "Sega"),
             "shared playlist, maker from the libretro name: %s [%s]",
@@ -1973,6 +1988,7 @@ static file_list_t *sidebar_rows(void)
    static const char *rows[][2] = {
       { "Nintendo - Game Boy.lpl", "Game Boy" },
       { "Sega - Mega Drive - Genesis.lpl", "Mega Drive - Genesis" },
+      { "Collection - Co-op.lpl", "Co-op" },
       { "RomM - PlayStation 3.lpl", "PlayStation 3" },
       { "Nintendo - Super Nintendo Entertainment System.lpl",
         "Super Nintendo Entertainment System" },
@@ -2023,6 +2039,7 @@ static void test_sidebar_group(void)
    file_list_t *list;
    const char **members = NULL;
 
+   names.collections = "Collections";
    names.systems    = "Systems";
    names.other      = "Other";
    names.group_type = SIDEBAR_GROUP_TYPE;
@@ -2030,42 +2047,46 @@ static void test_sidebar_group(void)
    list = sidebar_rows();
    romm_sidebar_group(list, systems, "collections|systems|systems/nintendo"
          "|systems/Nintendo|systems/", &names);
-   CHECK(list->size == 9, "open: %u rows", (unsigned)list->size);
-   sidebar_check_row(list, 0, NULL, "systems", "Systems", 0);
-   sidebar_check_row(list, 1, NULL, "systems/Nintendo", "Nintendo", 1);
-   sidebar_check_row(list, 2, "Nintendo - Game Boy.lpl", NULL, NULL, 2);
-   sidebar_check_row(list, 3, "RomM - Nintendo Switch.lpl", NULL, NULL, 2);
-   sidebar_check_row(list, 4,
+   CHECK(list->size == 11, "open: %u rows", (unsigned)list->size);
+   sidebar_check_row(list, 0, NULL, "collections", "Collections", 0);
+   sidebar_check_row(list, 1, "Collection - Co-op.lpl", NULL, NULL, 1);
+   sidebar_check_row(list, 2, NULL, "systems", "Systems", 0);
+   sidebar_check_row(list, 3, NULL, "systems/Nintendo", "Nintendo", 1);
+   sidebar_check_row(list, 4, "Nintendo - Game Boy.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 5, "RomM - Nintendo Switch.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 6,
          "Nintendo - Super Nintendo Entertainment System.lpl", NULL, NULL, 2);
-   sidebar_check_row(list, 5, NULL, "systems/Sega", "Sega", 1);
-   sidebar_check_row(list, 6, NULL, "systems/", "Other", 1);
-   sidebar_check_row(list, 7, "RomM - PlayStation 3.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 7, NULL, "systems/Sega", "Sega", 1);
+   sidebar_check_row(list, 8, NULL, "systems/", "Other", 1);
+   sidebar_check_row(list, 9, "RomM - PlayStation 3.lpl", NULL, NULL, 2);
    /* A row RomM didn't write follows, ungrouped. */
-   sidebar_check_row(list, 8, "My Own.lpl", NULL, NULL, 0);
+   sidebar_check_row(list, 10, "My Own.lpl", NULL, NULL, 0);
    file_list_free(list);
 
    /* Closed groups drop their rows, which free what was attached. */
    list = sidebar_rows();
    romm_sidebar_group(list, systems, "", &names);
-   CHECK(list->size == 2, "closed: %u rows", (unsigned)list->size);
-   sidebar_check_row(list, 0, NULL, "systems", "Systems", 0);
-   sidebar_check_row(list, 1, "My Own.lpl", NULL, NULL, 0);
+   CHECK(list->size == 3, "closed: %u rows", (unsigned)list->size);
+   sidebar_check_row(list, 0, NULL, "collections", "Collections", 0);
+   sidebar_check_row(list, 1, NULL, "systems", "Systems", 0);
+   sidebar_check_row(list, 2, "My Own.lpl", NULL, NULL, 0);
    file_list_free(list);
 
    list = sidebar_rows();
    romm_sidebar_group(list, systems, "systems", &names);
-   CHECK(list->size == 5, "makers closed: %u rows", (unsigned)list->size);
-   sidebar_check_row(list, 1, NULL, "systems/Nintendo", "Nintendo", 1);
-   sidebar_check_row(list, 2, NULL, "systems/Sega", "Sega", 1);
-   sidebar_check_row(list, 3, NULL, "systems/", "Other", 1);
-   sidebar_check_row(list, 4, "My Own.lpl", NULL, NULL, 0);
+   CHECK(list->size == 6, "makers closed: %u rows", (unsigned)list->size);
+   sidebar_check_row(list, 0, NULL, "collections", "Collections", 0);
+   sidebar_check_row(list, 2, NULL, "systems/Nintendo", "Nintendo", 1);
+   sidebar_check_row(list, 3, NULL, "systems/Sega", "Sega", 1);
+   sidebar_check_row(list, 4, NULL, "systems/", "Other", 1);
+   sidebar_check_row(list, 5, "My Own.lpl", NULL, NULL, 0);
    file_list_free(list);
 
    /* Without a library, the list stays as it was. */
    list = sidebar_rows();
    romm_sidebar_group(list, NULL, "systems", &names);
-   CHECK(list->size == 6 && !strcmp(list->list[4].path, "My Own.lpl")
-         && list->list[4].entry_idx == 99, "no library: %u rows",
+   CHECK(list->size == 7 && !strcmp(list->list[5].path, "My Own.lpl")
+         && list->list[5].entry_idx == 99, "no library: %u rows",
          (unsigned)list->size);
    file_list_free(list);
 
@@ -2084,6 +2105,11 @@ static void test_sidebar_group(void)
    CHECK(RBUF_LEN(members) == 1
          && !strcmp(members[0], "RomM - PlayStation 3.lpl"),
          "Other: %u", (unsigned)RBUF_LEN(members));
+   romm_sidebar_members(&members, systems, "collections");
+   CHECK(RBUF_LEN(members) == 2
+         && !strcmp(members[0], "Collection - Absent.lpl")
+         && !strcmp(members[1], "Collection - Co-op.lpl"),
+         "collections: %u", (unsigned)RBUF_LEN(members));
    romm_sidebar_members(&members, systems, "systemsx");
    CHECK(RBUF_LEN(members) == 0, "not a group: %u",
          (unsigned)RBUF_LEN(members));

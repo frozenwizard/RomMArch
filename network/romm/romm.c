@@ -769,6 +769,7 @@ void romm_menu_sidebar_group(file_list_t *list)
    romm_sidebar_names_t names;
 
    romm_sidebar_cache_load();
+   names.collections = msg_hash_to_str(MSG_ROMM_SIDEBAR_COLLECTIONS);
    names.systems    = msg_hash_to_str(MSG_ROMM_SIDEBAR_SYSTEMS);
    names.other      = msg_hash_to_str(MSG_ROMM_SIDEBAR_OTHER);
    names.group_type = MENU_ROMM_GROUP;

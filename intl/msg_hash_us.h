@@ -33817,6 +33817,10 @@ MSG_HASH(
    "Saves don't sync with RomM until you pair this device again with every permission ticked."
    )
 MSG_HASH(
+   MSG_ROMM_SIDEBAR_COLLECTIONS,
+   "Collections"
+   )
+MSG_HASH(
    MSG_ROMM_SIDEBAR_SYSTEMS,
    "Systems"
    )
