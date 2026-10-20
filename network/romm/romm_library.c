@@ -18,6 +18,7 @@
 #include <time.h>
 
 #include <array/rbuf.h>
+#include <compat/posix_string.h>
 #include <compat/strl.h>
 #include <features/features_cpu.h>
 #include <file/file_path.h>
@@ -76,6 +77,10 @@ enum romm_lib_sync_state
    /* All its games, a page at a time */
    ROMM_LIB_SYNC_ROMS,
    ROMM_LIB_SYNC_WRITE,
+   /* RomM's collections, its smart ones, then a playlist each */
+   ROMM_LIB_SYNC_COLLECTIONS,
+   ROMM_LIB_SYNC_SMART,
+   ROMM_LIB_SYNC_WRITE_COLLECTIONS,
    /* The covers to fetch and to delete, a slice of games at a time */
    ROMM_LIB_SYNC_COVERS,
    ROMM_LIB_SYNC_SAVE
@@ -119,6 +124,11 @@ typedef struct
    size_t cover_game;
    romm_library_find_core_t find_core;
    romm_library_playlist_cb_t playlist_changed;
+   /* RomM's collections, when asked for, and which lists it gave */
+   romm_collection_t *remote_collections;
+   bool collections;
+   bool collections_listed;
+   bool smart_listed;
    char *token;
    char *covers_title;
    char server[NAME_MAX_LENGTH];
@@ -407,9 +417,13 @@ static void romm_lib_free_game_cores(romm_lib_game_core_t *list)
    RBUF_FREE(list);
 }
 
-bool romm_library_write_playlist(const char *path, const char *db_name,
+/* As romm_library_write_playlist(); a game's db_name is @db_names[i]
+ * when @db_names is given. With @changed, the file is written only when
+ * it would come out different, and @changed says whether it was. */
+static bool romm_lib_write_playlist(const char *path, const char *db_name,
+      const char *const *db_names,
       const char *default_core_path, const char *default_core_name,
-      const romm_rom_t *roms, size_t count)
+      const romm_rom_t *roms, size_t count, bool *changed)
 {
    romm_lib_game_core_t *game_cores;
    romm_lib_display_t display;
@@ -488,7 +502,8 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
       romm_lib_json_member(writer, 6, "core_name",
             core ? core->core_name : FILE_PATH_DETECT, false);
       romm_lib_json_member(writer, 6, "crc32", crc32, false);
-      romm_lib_json_member(writer, 6, "db_name", db_name, true);
+      romm_lib_json_member(writer, 6, "db_name",
+            db_names ? db_names[i] : db_name, true);
       rjsonwriter_add_spaces(writer, 4);
       rjsonwriter_raw(writer, "}", 1);
    }
@@ -496,10 +511,30 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
    rjsonwriter_raw(writer, "\n  ]\n}\n", 7);
 
    if ((buf = rjsonwriter_get_memory_buffer(writer, &buf_len)))
-      ok = filestream_write_file_atomic(path, buf, buf_len);
+   {
+      void *old     = NULL;
+      int64_t len   = 0;
+      bool same     = changed
+         && path_is_valid(path)
+         && filestream_read_file(path, &old, &len)
+         && len == buf_len
+         && !memcmp(old, buf, (size_t)buf_len);
+      free(old);
+      ok = same || filestream_write_file_atomic(path, buf, buf_len);
+      if (changed)
+         *changed = ok && !same;
+   }
    rjsonwriter_free(writer);
    romm_lib_free_game_cores(game_cores);
    return ok;
+}
+
+bool romm_library_write_playlist(const char *path, const char *db_name,
+      const char *default_core_path, const char *default_core_name,
+      const romm_rom_t *roms, size_t count)
+{
+   return romm_lib_write_playlist(path, db_name, NULL, default_core_path,
+         default_core_name, roms, count, NULL);
 }
 
 size_t romm_library_manifest_path(char *s, size_t len,
@@ -515,6 +550,7 @@ typedef struct
    romm_library_t *lib;
    romm_library_platform_t cur;
    romm_rom_t rom;
+   romm_library_collection_t collection;
    /* The platform the last game was added to. */
    size_t last;
 } romm_lib_load_t;
@@ -604,6 +640,30 @@ static void romm_lib_load_rom_end(void *ctx)
    memset(&load->rom, 0, sizeof(load->rom));
 }
 
+static void romm_lib_load_collection_member(void *ctx, const char *key,
+      enum rjson_type type, const char *value, size_t len)
+{
+   romm_library_collection_t *c = &((romm_lib_load_t*)ctx)->collection;
+
+   if (string_is_equal(key, "smart"))
+      c->smart = type == RJSON_TRUE;
+   else if (string_is_equal(key, "id"))
+      c->id = (unsigned)strtoul(value, NULL, 10);
+   else if (string_is_equal(key, "name"))
+      strlcpy(c->name, value, sizeof(c->name));
+   else if (string_is_equal(key, "playlist"))
+      strlcpy(c->playlist, value, sizeof(c->playlist));
+}
+
+static void romm_lib_load_collection_end(void *ctx)
+{
+   romm_lib_load_t *load = (romm_lib_load_t*)ctx;
+
+   if (load->collection.id && *load->collection.playlist)
+      RBUF_PUSH(load->lib->collections, load->collection);
+   memset(&load->collection, 0, sizeof(load->collection));
+}
+
 bool romm_library_load(romm_library_t *lib, const char *path)
 {
    romm_lib_load_t *load;
@@ -637,6 +697,10 @@ bool romm_library_load(romm_library_t *lib, const char *path)
    {
       lib->synced_at = (int64_t)strtoll(num, NULL, 10);
       ok             = true;
+      /* A manifest from before collections has none. */
+      romm_json_items(doc, (size_t)len, "collections",
+            romm_lib_load_collection_member, romm_lib_load_collection_end,
+            load);
    }
 
    free(load);
@@ -705,6 +769,28 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
    }
    rjsonwriter_raw(writer, "\n  ],\n", 6);
 
+   rjsonwriter_add_spaces(writer, 2);
+   rjsonwriter_add_string(writer, "collections");
+   rjsonwriter_raw(writer, ": [", 3);
+   for (i = 0; i < RBUF_LEN(lib->collections); i++)
+   {
+      const romm_library_collection_t *c = &lib->collections[i];
+      rjsonwriter_raw(writer, i ? ",\n" : "\n", i ? 2 : 1);
+      rjsonwriter_add_spaces(writer, 4);
+      rjsonwriter_rawf(writer, "{\"id\": %u, \"smart\": %s, ", c->id,
+            c->smart ? "true" : "false");
+      rjsonwriter_add_string(writer, "name");
+      rjsonwriter_raw(writer, ": ", 2);
+      rjsonwriter_add_string(writer, c->name);
+      rjsonwriter_raw(writer, ", ", 2);
+      rjsonwriter_add_string(writer, "playlist");
+      rjsonwriter_raw(writer, ": ", 2);
+      rjsonwriter_add_string(writer, c->playlist);
+      rjsonwriter_raw(writer, "}", 1);
+   }
+   rjsonwriter_raw(writer, RBUF_LEN(lib->collections) ? "\n  ],\n" : "],\n",
+         RBUF_LEN(lib->collections) ? 6 : 3);
+
    /* One line per game keeps the file readable at thousands of games. */
    rjsonwriter_add_spaces(writer, 2);
    rjsonwriter_add_string(writer, "roms");
@@ -761,6 +847,7 @@ void romm_library_free(romm_library_t *lib)
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
       RBUF_FREE(lib->platforms[i].roms);
    RBUF_FREE(lib->platforms);
+   RBUF_FREE(lib->collections);
    memset(lib, 0, sizeof(*lib));
 }
 
@@ -816,25 +903,44 @@ static bool romm_lib_has_playlist(const romm_library_t *lib,
    return false;
 }
 
+/* Does @lib write playlist @name, for a platform or a collection? */
+static bool romm_lib_playlist_taken(const romm_library_t *lib,
+      const char *name)
+{
+   size_t i;
+   if (romm_lib_has_playlist(lib, name))
+      return true;
+   for (i = 0; i < RBUF_LEN(lib->collections); i++)
+      if (string_is_equal(lib->collections[i].playlist, name))
+         return true;
+   return false;
+}
+
+static void romm_lib_sync_remove(romm_lib_sync_t *sync, const char *name)
+{
+   char path[PATH_MAX_LENGTH];
+
+   fill_pathname_join(path, sync->playlist_dir, name, sizeof(path));
+   if (path_is_valid(path) && !filestream_delete(path))
+   {
+      RARCH_LOG(ROMM_LIB_PFX "Removed %s, gone from RomM.\n", name);
+      if (sync->playlist_changed)
+         sync->playlist_changed(path);
+   }
+}
+
 /* Deletes the playlists the last sync wrote that this one didn't. */
 static void romm_lib_sync_remove_stale(romm_lib_sync_t *sync)
 {
    size_t i;
    for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
-   {
-      const char *name = sync->old.platforms[i].playlist;
-      char path[PATH_MAX_LENGTH];
-
-      if (romm_lib_has_playlist(&sync->lib, name))
-         continue;
-      fill_pathname_join(path, sync->playlist_dir, name, sizeof(path));
-      if (path_is_valid(path) && !filestream_delete(path))
-      {
-         RARCH_LOG(ROMM_LIB_PFX "Removed %s, gone from RomM.\n", name);
-         if (sync->playlist_changed)
-            sync->playlist_changed(path);
-      }
-   }
+      if (!romm_lib_playlist_taken(&sync->lib,
+            sync->old.platforms[i].playlist))
+         romm_lib_sync_remove(sync, sync->old.platforms[i].playlist);
+   for (i = 0; i < RBUF_LEN(sync->old.collections); i++)
+      if (!romm_lib_playlist_taken(&sync->lib,
+            sync->old.collections[i].playlist))
+         romm_lib_sync_remove(sync, sync->old.collections[i].playlist);
 }
 
 /* A sync that stopped part way has rewritten some playlists; the
@@ -853,6 +959,10 @@ static void romm_lib_sync_save_partial(romm_lib_sync_t *sync)
       RBUF_PUSH(sync->lib.platforms, sync->old.platforms[i]);
       sync->old.platforms[i].roms = NULL;
    }
+   for (i = 0; i < RBUF_LEN(sync->old.collections); i++)
+      if (!romm_lib_playlist_taken(&sync->lib,
+            sync->old.collections[i].playlist))
+         RBUF_PUSH(sync->lib.collections, sync->old.collections[i]);
    strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
    sync->lib.synced_at = sync->old.synced_at;
    romm_library_save(&sync->lib, sync->manifest);
@@ -1699,6 +1809,157 @@ static bool romm_lib_sync_drop_gone(romm_lib_sync_t *sync)
    return true;
 }
 
+static void romm_lib_sync_collections_cb(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_collection_t *collections, size_t count)
+{
+   romm_lib_sync_t *sync = (romm_lib_sync_t*)user_data;
+   bool smart            = sync->state == ROMM_LIB_SYNC_SMART;
+   size_t i;
+
+   sync->pending    = false;
+   sync->task->when = 0;
+   /* Without one list, the last sync's playlists for it stay. */
+   if (status == ROMM_OK)
+   {
+      for (i = 0; i < count; i++)
+      {
+         romm_collection_t c = collections[i];
+         c.rom_ids           = NULL;
+         if (RBUF_TRYFIT(c.rom_ids, RBUF_LEN(collections[i].rom_ids)))
+         {
+            RBUF_RESIZE(c.rom_ids, RBUF_LEN(collections[i].rom_ids));
+            memcpy(c.rom_ids, collections[i].rom_ids,
+                  RBUF_SIZEOF(collections[i].rom_ids));
+         }
+         RBUF_PUSH(sync->remote_collections, c);
+      }
+      if (smart)
+         sync->smart_listed       = true;
+      else
+         sync->collections_listed = true;
+   }
+   sync->state = smart
+      ? ROMM_LIB_SYNC_WRITE_COLLECTIONS : ROMM_LIB_SYNC_SMART;
+}
+
+static int romm_lib_cmp_rom_name(const void *a, const void *b)
+{
+   const romm_rom_t *x = (const romm_rom_t*)a;
+   const romm_rom_t *y = (const romm_rom_t*)b;
+   int c               = strcasecmp(x->name, y->name);
+   return c ? c : (x->id > y->id) - (x->id < y->id);
+}
+
+/* The playlist of the platform game @rom is on. */
+static const char *romm_lib_rom_playlist(const romm_library_t *lib,
+      const romm_rom_t *rom)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (lib->platforms[i].platform.id == rom->platform_id)
+         return lib->platforms[i].playlist;
+   return "";
+}
+
+/* "Collection - <name>.lpl", with the owner's name and then the id
+ * added when another playlist has that name. */
+static bool romm_lib_collection_playlist(char *s, size_t len,
+      const romm_library_t *lib, const romm_collection_t *c)
+{
+   int i;
+
+   for (i = 0; i < 3; i++)
+   {
+      int _len;
+      if (i == 0)
+         _len = snprintf(s, len, "Collection - %s.lpl", c->name);
+      else if (i == 1 && *c->owner)
+         _len = snprintf(s, len, "Collection - %s (%s).lpl", c->name,
+               c->owner);
+      else
+         _len = snprintf(s, len, "Collection - %s (%u).lpl", c->name,
+               c->id);
+      if (_len < 0 || (size_t)_len >= len)
+         continue;
+      romm_lib_scrub_file_name(s);
+      if (!romm_lib_playlist_taken(lib, s))
+         return true;
+   }
+   return false;
+}
+
+/* Writes a playlist for each collection RomM listed that holds games
+ * in the library, in title order, each game's db_name its platform's
+ * playlist. Collections of a list RomM didn't give keep theirs. */
+static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
+{
+   const romm_rom_t **index = romm_library_index(&sync->lib);
+   bool ok                  = true;
+   size_t i, j;
+
+   for (i = 0; ok && i < RBUF_LEN(sync->remote_collections); i++)
+   {
+      const romm_collection_t *c = &sync->remote_collections[i];
+      romm_library_collection_t entry;
+      romm_rom_t *roms      = NULL;
+      const char **db_names = NULL;
+      char path[PATH_MAX_LENGTH];
+      bool changed          = false;
+
+      if (c->favorite)
+         continue;
+      for (j = 0; j < RBUF_LEN(c->rom_ids); j++)
+      {
+         const romm_rom_t *rom = romm_lib_index_find(index, c->rom_ids[j]);
+         if (rom)
+            RBUF_PUSH(roms, *rom);
+      }
+      memset(&entry, 0, sizeof(entry));
+      entry.id    = c->id;
+      entry.smart = c->smart;
+      strlcpy(entry.name, c->name, sizeof(entry.name));
+      /* Like a platform, one without games the user can see gets no
+       * playlist. */
+      if (     !RBUF_LEN(roms)
+            || !romm_lib_collection_playlist(entry.playlist,
+                  sizeof(entry.playlist), &sync->lib, c))
+      {
+         RBUF_FREE(roms);
+         continue;
+      }
+
+      qsort(roms, RBUF_LEN(roms), sizeof(*roms), romm_lib_cmp_rom_name);
+      for (j = 0; j < RBUF_LEN(roms); j++)
+         RBUF_PUSH(db_names, romm_lib_rom_playlist(&sync->lib, &roms[j]));
+      fill_pathname_join(path, sync->playlist_dir, entry.playlist,
+            sizeof(path));
+      if ((ok = romm_lib_write_playlist(path, NULL, db_names, NULL, NULL,
+            roms, RBUF_LEN(roms), &changed)))
+      {
+         RBUF_PUSH(sync->lib.collections, entry);
+         if (changed)
+         {
+            sync->rewritten++;
+            if (sync->playlist_changed)
+               sync->playlist_changed(path);
+         }
+      }
+      RBUF_FREE(db_names);
+      RBUF_FREE(roms);
+   }
+   RBUF_FREE(index);
+
+   for (i = 0; ok && i < RBUF_LEN(sync->old.collections); i++)
+   {
+      const romm_library_collection_t *c = &sync->old.collections[i];
+      if (     !(c->smart ? sync->smart_listed : sync->collections_listed)
+            && !romm_lib_playlist_taken(&sync->lib, c->playlist))
+         RBUF_PUSH(sync->lib.collections, *c);
+   }
+   return ok;
+}
+
 /* The last sync's entry for platform @id, if it wrote one. */
 static const romm_library_platform_t *romm_lib_find_platform(
       const romm_library_t *lib, unsigned id)
@@ -1749,7 +2010,8 @@ static void romm_lib_sync_handler(retro_task_t *task)
             sync->platform++;
          if (sync->platform >= count)
          {
-            sync->state = ROMM_LIB_SYNC_COVERS;
+            sync->state = sync->collections
+               ? ROMM_LIB_SYNC_COLLECTIONS : ROMM_LIB_SYNC_COVERS;
             break;
          }
          task_set_progress(task, (int8_t)(sync->platform * 100 / count));
@@ -1809,6 +2071,26 @@ static void romm_lib_sync_handler(retro_task_t *task)
          sync->platform++;
          sync->state = ROMM_LIB_SYNC_NEXT;
          break;
+      case ROMM_LIB_SYNC_COLLECTIONS:
+      case ROMM_LIB_SYNC_SMART:
+         if (romm_client_collections(sync->server, sync->token,
+               sync->state == ROMM_LIB_SYNC_SMART,
+               romm_lib_sync_collections_cb, sync))
+            sync->pending = true;
+         else
+            sync->state = sync->state == ROMM_LIB_SYNC_SMART
+               ? ROMM_LIB_SYNC_WRITE_COLLECTIONS : ROMM_LIB_SYNC_SMART;
+         break;
+      case ROMM_LIB_SYNC_WRITE_COLLECTIONS:
+         if (!romm_lib_sync_write_collections(sync))
+         {
+            RARCH_WARN(ROMM_LIB_PFX "Couldn't write a collection's "
+                  "playlist.\n");
+            romm_lib_sync_finish(sync, ROMM_ERR_WRITE);
+            break;
+         }
+         sync->state = ROMM_LIB_SYNC_COVERS;
+         break;
       case ROMM_LIB_SYNC_COVERS:
          if (!*sync->thumbnails_dir || romm_lib_sync_plan_covers(sync))
             sync->state = ROMM_LIB_SYNC_SAVE;
@@ -1848,8 +2130,9 @@ static void romm_lib_sync_cb(retro_task_t *task, void *task_data,
       games += RBUF_LEN(sync->lib.platforms[i].roms);
    if (sync->status == ROMM_OK)
       RARCH_LOG(ROMM_LIB_PFX "Library synced: %u platforms, %u games, "
-            "%u playlists rewritten, in %u ms.\n",
+            "%u collections, %u playlists rewritten, in %u ms.\n",
             (unsigned)RBUF_LEN(sync->lib.platforms), (unsigned)games,
+            (unsigned)RBUF_LEN(sync->lib.collections),
             sync->rewritten, (unsigned)((cpu_features_get_time_usec()
                - sync->started) / 1000));
    else
@@ -1875,6 +2158,9 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
       romm_library_free(&sync->old);
       romm_library_free(&sync->lib);
       romm_lib_covers_free(sync->covers);
+      for (i = 0; i < RBUF_LEN(sync->remote_collections); i++)
+         RBUF_FREE(sync->remote_collections[i].rom_ids);
+      RBUF_FREE(sync->remote_collections);
       RBUF_FREE(sync->remote);
       RBUF_FREE(sync->roms);
       RBUF_FREE(sync->ids);
@@ -1919,6 +2205,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->task      = task;
    sync->find_core = params->find_core;
    sync->playlist_changed = params->playlist_changed;
+   sync->collections = params->collections;
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));

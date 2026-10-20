@@ -438,8 +438,10 @@ static void test_manifest(void)
 
 #define TEST_DIR "romm_library_test_dir"
 
-/* What sync_start() passes as the installed-core finder. */
+/* What sync_start() passes as the installed-core finder, and whether
+ * it asks for collections. */
 static romm_library_find_core_t test_find_core;
+static bool sync_collections;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -465,6 +467,7 @@ static bool sync_start(const char *server, const char *token,
    params.covers_title   = covers_title;
    params.find_core      = test_find_core;
    params.playlist_changed = on_playlist_changed;
+   params.collections    = sync_collections;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1307,6 +1310,115 @@ static void game_json(char *s, size_t len, unsigned id, const char *name,
          _len > 12 ? ", " : "", id, id, name, updated_at);
 }
 
+#define COLL_DIR "romm_library_test_coll"
+
+static void test_sync_collections(void)
+{
+   const char *plat   = "[{\"id\": 8, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]";
+   const char *coop   = COLL_DIR "/Collection - Co-op_ Best.lpl";
+   const char *alice  = COLL_DIR "/Collection - Co-op_ Best (alice).lpl";
+   const char *recent = COLL_DIR "/Collection - Recent.lpl";
+   sync_result_t r;
+   romm_library_t lib;
+   char manifest[256];
+   char page[2048];
+   char *doc   = NULL;
+   int64_t len = 0;
+
+   path_mkdir(COLL_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), COLL_DIR);
+   stub_reset();
+   sync_collections = true;
+
+   /* Mine, another user's of the same name, the favorites, one of games
+    * the user can't see, and a smart one. */
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", COLL_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, plat);
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 100, "a game", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 101, "B game", "2026-10-03T00:23:20+00:00");
+   game_json(page, sizeof(page), 102, "C game", "2026-10-01T10:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   sync_answer(200, "[{\"id\": 3, \"name\": \"Co-op: Best\","
+         " \"rom_ids\": [101, 100, 999], \"owner_username\": \"alice\","
+         " \"is_favorite\": false},"
+         " {\"id\": 4, \"name\": \"Favourites\", \"rom_ids\": [100],"
+         " \"is_favorite\": true},"
+         " {\"id\": 5, \"name\": \"Unseen\", \"rom_ids\": [999]},"
+         " {\"id\": 6, \"name\": \"Co-op: Best\", \"rom_ids\": [102],"
+         " \"owner_username\": \"alice\"}]");
+   CHECK(!strcmp(stub_req.url, "http://h/api/collections"),
+         "collections request %s", stub_req.url);
+   sync_answer(200, "[{\"id\": 3, \"name\": \"Recent\", \"rom_ids\": [102],"
+         " \"is_smart\": true}]");
+   CHECK(!strcmp(stub_req.url, "http://h/api/collections/smart"),
+         "smart request %s", stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK, "first: status %d",
+         r.status);
+   CHECK(written_count == 4, "first: %u playlists written", written_count);
+   CHECK(count_entries(coop) == 2 && count_entries(alice) == 1
+         && count_entries(recent) == 1, "entries %u %u %u",
+         count_entries(coop), count_entries(alice), count_entries(recent));
+   if (filestream_read_file(coop, (void**)&doc, &len) && doc)
+   {
+      const char *a = strstr(doc, "\"label\": \"a game\"");
+      const char *b = strstr(doc, "\"label\": \"B game\"");
+      CHECK(a && b && a < b, "title order, case left aside");
+      CHECK(strstr(doc, "\"db_name\": \"Sega - Mega Drive - Genesis.lpl\"")
+            && strstr(doc, "\"path\": \"romm://101/g101.md\""),
+            "entries name their platform's playlist:\n%s", doc);
+      free(doc);
+      doc = NULL;
+   }
+   CHECK(romm_library_load(&lib, manifest)
+         && RBUF_LEN(lib.collections) == 3
+         && lib.collections[0].id == 3 && !lib.collections[0].smart
+         && !strcmp(lib.collections[0].name, "Co-op: Best")
+         && !strcmp(lib.collections[0].playlist, "Collection - Co-op_ Best.lpl")
+         && !strcmp(lib.collections[1].playlist,
+               "Collection - Co-op_ Best (alice).lpl")
+         && lib.collections[2].smart,
+         "manifest: %u collections", (unsigned)RBUF_LEN(lib.collections));
+   romm_library_free(&lib);
+
+   /* Alice's is gone and the smart list fails: hers is removed, the
+    * smart one stays as it was, and the unchanged one isn't rewritten. */
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", COLL_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, plat);
+   sync_answer(200, "{\"rom_id_index\": [100, 101, 102]}");
+   sync_answer(200, "{\"items\": []}");
+   sync_answer(200, "[{\"id\": 3, \"name\": \"Co-op: Best\","
+         " \"rom_ids\": [100, 101], \"owner_username\": \"alice\"}]");
+   sync_answer(500, NULL);
+   CHECK(sync_run_out() && r.status == ROMM_OK, "second: status %d",
+         r.status);
+   CHECK(written_count == 1 && !path_is_valid(alice)
+         && path_is_valid(coop) && path_is_valid(recent),
+         "second: %u changes, alice's %d", written_count,
+         path_is_valid(alice));
+   CHECK(romm_library_load(&lib, manifest)
+         && RBUF_LEN(lib.collections) == 2
+         && !strcmp(lib.collections[1].playlist, "Collection - Recent.lpl")
+         && lib.collections[1].smart,
+         "second manifest: %u collections",
+         (unsigned)RBUF_LEN(lib.collections));
+   romm_library_free(&lib);
+
+   sync_collections = false;
+   filestream_delete(coop);
+   filestream_delete(recent);
+   filestream_delete(COLL_DIR "/Sega - Mega Drive - Genesis.lpl");
+   filestream_delete(manifest);
+   filestream_delete(COLL_DIR "/romm");
+   filestream_delete(COLL_DIR);
+}
+
 static void test_sync_incremental(void)
 {
    const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
@@ -1992,6 +2104,7 @@ int main(void)
    test_sync_reconcile();
    test_cursor();
    test_sync_incremental();
+   test_sync_collections();
    test_sync_shared_playlist();
    test_follow_game();
    test_preferred_cores();

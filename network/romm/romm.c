@@ -890,6 +890,7 @@ static bool romm_start_library_sync(bool quiet)
    params.covers_title   = msg_hash_to_str(MSG_ROMM_FETCHING_COVERS);
    params.find_core      = romm_find_core;
    params.playlist_changed = romm_playlist_changed;
+   params.collections    = true;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
    romm_syncing         = true;

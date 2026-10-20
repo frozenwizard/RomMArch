@@ -42,12 +42,23 @@ typedef struct
 
 /* What the last sync wrote. Kept with the playlists so the next sync
  * knows which playlists are RomM's and what has changed. */
+/* A RomM collection the sync wrote a playlist for. */
+typedef struct
+{
+   unsigned id;
+   bool smart;
+   char name[128];
+   /* Its playlist's file name in the playlist folder. */
+   char playlist[256];
+} romm_library_collection_t;
+
 typedef struct
 {
    char server[256];
    /* When that sync finished, in seconds since the epoch. */
    int64_t synced_at;
    romm_library_platform_t *platforms; /* an RBUF */
+   romm_library_collection_t *collections; /* an RBUF */
 } romm_library_t;
 
 /* The playlist path of @rom: romm://<id>/<RomM file name>. A folder
@@ -96,6 +107,9 @@ typedef struct
     * memory can be read again, or dropped, before anything writes that
     * back; may be NULL. */
    romm_library_playlist_cb_t playlist_changed;
+   /* Also writes a playlist per RomM collection, the user's, other
+    * users' public ones and smart ones, but not the favorites. */
+   bool collections;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,
