@@ -14262,6 +14262,14 @@ static int ozone_pointer_up(void *userdata,
                if (ozone->pointer_categories_selection <= ozone->system_tab_end + horizontal_list_size)
                   ozone_sidebar_goto(ozone, ozone->pointer_categories_selection);
             }
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+            /* Tapping a RomM group opens or closes it. */
+            if (     gesture == MENU_INPUT_GESTURE_TAP
+                  && (ozone->flags & OZONE_FLAG_CURSOR_IN_SIDEBAR)
+                  && ozone->pointer_categories_selection
+                     == ozone->categories_selection_ptr)
+               ozone_romm_toggle_group(ozone);
+#endif
          }
          break;
       case MENU_INPUT_GESTURE_LONG_PRESS:
