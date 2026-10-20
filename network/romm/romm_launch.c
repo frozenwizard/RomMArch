@@ -187,6 +187,9 @@ static bool romm_launch_ext_is(const char *path, const char *const *exts)
 static const char *const romm_launch_archive_exts[] = {
    "zip", "7z", "rar", NULL };
 static const char *const romm_launch_rar_ext[] = { "rar", NULL };
+/* Archives RetroArch unpacks a cartridge from itself */
+static const char *const romm_launch_cart_archive_exts[] = {
+   "zip", "7z", NULL };
 
 /* Disc descriptors, then disc images */
 static const char *const romm_launch_disc_tiers[][6] = {
@@ -273,11 +276,16 @@ static bool romm_launch_pick_discs(romm_launch_t *launch)
                      romm_launch_disc_tiers[t])
                && romm_launch_core_takes(launch, launch->files[i].path))
             RBUF_PUSH(picked, &launch->files[i]);
-   /* A cartridge in a folder, beside a manual or a readme */
+   /* A cartridge in a folder, beside a manual or a readme; else one
+    * zipped, which the loader unpacks for the core */
    if (!picked && launch->core_exts && *launch->core_exts)
    {
       for (i = 0; i < count; i++)
          if (romm_launch_core_takes(launch, launch->files[i].path))
+            RBUF_PUSH(picked, &launch->files[i]);
+      for (i = 0; i < count && !picked; i++)
+         if (romm_launch_ext_is(launch->files[i].path,
+               romm_launch_cart_archive_exts))
             RBUF_PUSH(picked, &launch->files[i]);
       alone = true;
    }

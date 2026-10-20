@@ -407,6 +407,40 @@ static void test_folder_cartridge(void)
          && !path_is_valid("romm://71/Sonic.m3u"),
          "lone .bin: status %d path %s", r.status, r.launch_path);
 
+   /* As RomM lists a zipped cartridge moved into a folder with its
+    * manual (has_nested_single_file): the zip, fetched alone. */
+   start_core(&r, "romm://169/Addams Family, The (U).zip", NULL, 0, gb);
+   answer_str(200, "{\"id\": 169, \"fs_name\": \"Addams Family, The (U)\","
+         " \"fs_path\": \"roms/gb/roms\", \"has_simple_single_file\": false,"
+         " \"has_nested_single_file\": true,"
+         " \"files\": [{\"id\": 167, \"file_name\": \"Addams Family, The (U).zip\","
+         " \"full_path\": \"roms/gb/roms/Addams Family, The (U)/Addams Family, The (U).zip\","
+         " \"file_size_bytes\": 4, \"category\": \"game\"},"
+         "{\"id\": 9445, \"file_name\": \"Addams Family, The (en).pdf\","
+         " \"full_path\": \"roms/gb/roms/Addams Family, The (U)/manual/Addams Family, The (en).pdf\","
+         " \"file_size_bytes\": 6731858, \"category\": \"manual\"}]}");
+   answer_str(206, "PK\x03\x04");
+   CHECK(strstr(stub_req.url, "file_ids=167") != NULL, "zip request %s",
+         stub_req.url);
+   before = stub_req.count;
+   CHECK(run_out() && r.status == ROMM_OK && stub_req.count == before
+         && !strcmp(r.launch_path, "romm://169/Addams Family, The (U).zip"),
+         "zipped cartridge folder: status %d path %s", r.status,
+         r.launch_path);
+
+   /* What the core takes comes before a zip. */
+   start_core(&r, "romm://74/Both.m3u", NULL, 0, gb);
+   answer_str(200, "{\"id\": 74, \"fs_name\": \"Both\","
+         " \"fs_path\": \"roms/gb/roms\", \"has_simple_single_file\": false,"
+         " \"files\": [{\"id\": 1, \"file_name\": \"Both.zip\","
+         " \"full_path\": \"roms/gb/roms/Both/Both.zip\", \"file_size_bytes\": 4},"
+         "{\"id\": 2, \"file_name\": \"Both.gb\","
+         " \"full_path\": \"roms/gb/roms/Both/Both.gb\", \"file_size_bytes\": 4}]}");
+   answer_str(206, "both");
+   CHECK(run_out() && r.status == ROMM_OK
+         && !strcmp(r.launch_path, "romm://74/Both.gb"),
+         "core's own file first: status %d path %s", r.status, r.launch_path);
+
    start_core(&r, "romm://72/Docs.m3u", NULL, 0, gb);
    answer_str(200, "{\"id\": 72, \"fs_name\": \"Docs\","
          " \"fs_path\": \"roms/gb/roms\", \"has_simple_single_file\": false,"
