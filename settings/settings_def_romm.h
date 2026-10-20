@@ -33,6 +33,10 @@ S_ACTION_EX(ROMM_REFRESH_LIBRARY,
       "romm_refresh_library", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_LIBRARY,
       "Refresh Library",
       "Update the game lists from RomM, adding and removing platforms and games to match it.")
+S_ACTION_EX(ROMM_REFRESH_PLAYLIST,
+      "romm_refresh_playlist", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_PLAYLIST,
+      "Refresh Playlist",
+      "Fetch this playlist's games and covers from RomM again, all of them, and write it anew as RomM has it.")
 S_BOOL(romm_refresh_on_start, ROMM_REFRESH_ON_START,
       "romm_refresh_on_start",
       DEFAULT_ROMM_REFRESH_ON_START, SD_FLAG_NONE, 0, 0,

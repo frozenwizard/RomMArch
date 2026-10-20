@@ -85,6 +85,14 @@ void romm_content_closed(void);
  * didn't go up: played offline, left running at quit, or refused. */
 void romm_sync_owed_saves(void);
 
+/* Fetches the playlist the menu has cached from RomM again, in full,
+ * and writes it anew, in a library sync. */
+void romm_refresh_playlist(void);
+
+/* Is @playlist_file, a file name in the playlist folder, one the RomM
+ * library writes? */
+bool romm_menu_owns_playlist(const char *playlist_file);
+
 /* Content at @content_path was added to Favorites or, without @added,
  * taken out: for a RomM game, the same goes to RomM's favorites. */
 void romm_favorite_changed(const char *content_path, bool added);

@@ -959,6 +959,17 @@ bool romm_menu_sidebar_toggle(const struct item_file *row)
    return true;
 }
 
+bool romm_menu_owns_playlist(const char *playlist_file)
+{
+   size_t i;
+
+   romm_manifest_load();
+   for (i = 0; i < RBUF_LEN(romm_sidebar_cache); i++)
+      if (string_is_equal(romm_sidebar_cache[i].playlist, playlist_file))
+         return true;
+   return false;
+}
+
 bool romm_menu_sidebar_is_open(const struct item_file *row)
 {
    return row && row->type == MENU_ROMM_GROUP && row->label
@@ -1054,7 +1065,7 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    romm_sync_owed_saves();
 }
 
-static bool romm_start_library_sync(bool quiet)
+static bool romm_start_library_sync(bool quiet, const char *refetch)
 {
    settings_t *settings = config_get_ptr();
    romm_library_sync_params_t params;
@@ -1068,6 +1079,7 @@ static bool romm_start_library_sync(bool quiet)
    params.find_core      = romm_find_core;
    params.playlist_changed = romm_playlist_changed;
    params.collections    = true;
+   params.refetch        = refetch;
    romm_favorites_changes_at_sync = romm_favorites_changes;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
@@ -1083,10 +1095,10 @@ void romm_refresh_library_at_start(void)
    if (     !romm_syncing
          && !string_is_empty(settings->arrays.romm_server_url)
          && !string_is_empty(settings->arrays.romm_token))
-      romm_start_library_sync(true);
+      romm_start_library_sync(true, NULL);
 }
 
-void romm_refresh_library(void)
+static void romm_refresh(const char *refetch)
 {
    settings_t *settings = config_get_ptr();
 
@@ -1109,8 +1121,22 @@ void romm_refresh_library(void)
       return;
    }
 
-   if (!romm_start_library_sync(false))
+   if (!romm_start_library_sync(false, refetch))
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+}
+
+void romm_refresh_library(void)
+{
+   romm_refresh(NULL);
+}
+
+void romm_refresh_playlist(void)
+{
+   playlist_t *playlist = playlist_get_cached();
+   const char *path     = playlist ? playlist_get_conf_path(playlist) : NULL;
+
+   if (path && *path)
+      romm_refresh(path_basename(path));
 }
 
 /* The entry being fetched, loaded once it's in memory and its saves

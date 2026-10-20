@@ -173,6 +173,8 @@ enum event_command
    CMD_EVENT_ROMM_PAIR,
    /* Sync the game library from RomM */
    CMD_EVENT_ROMM_REFRESH_LIBRARY,
+   /* Fetch the cached playlist from RomM again in full */
+   CMD_EVENT_ROMM_REFRESH_PLAYLIST,
 #endif
    /* Shutdown the OS */
    CMD_EVENT_SHUTDOWN,

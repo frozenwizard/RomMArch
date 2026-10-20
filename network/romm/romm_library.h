@@ -116,6 +116,10 @@ typedef struct
    /* Also writes a playlist per RomM collection, the user's, other
     * users' public ones and smart ones, but not the favorites. */
    bool collections;
+   /* A playlist to fetch from RomM again in full: its games, without
+    * the incremental shortcut, and their covers, then written anew.
+    * NULL for none. */
+   const char *refetch;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,

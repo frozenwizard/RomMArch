@@ -442,6 +442,7 @@ static void test_manifest(void)
  * it asks for collections. */
 static romm_library_find_core_t test_find_core;
 static bool sync_collections;
+static const char *sync_refetch;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -468,6 +469,7 @@ static bool sync_start(const char *server, const char *token,
    params.find_core      = test_find_core;
    params.playlist_changed = on_playlist_changed;
    params.collections    = sync_collections;
+   params.refetch        = sync_refetch;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1454,6 +1456,67 @@ static void test_sync_collections(void)
    filestream_delete(COLL_DIR);
 }
 
+/* Refetching a playlist fetches its games in full, with no id list or
+ * cursor, and writes it though nothing changed; others stay
+ * incremental. */
+static void test_sync_refetch(void)
+{
+   const char *plat = "[{\"id\": 8, \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+         " {\"id\": 15, \"rom_count\": 1,"
+         " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"}]";
+   sync_result_t r;
+   char manifest[256];
+   char page[2048];
+   char cd[1024];
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 100, "A", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 101, "B", "2026-10-03T00:23:20+00:00");
+   strlcat(page, "]}", sizeof(page));
+   strlcpy(cd, "{\"items\": [{\"id\": 300, \"platform_id\": 15,"
+         " \"fs_name\": \"cd.cue\", \"name\": \"CD\","
+         " \"has_simple_single_file\": true,"
+         " \"updated_at\": \"2026-10-01T00:00:00+00:00\"}]}", sizeof(cd));
+
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, plat);
+   sync_answer(200, page);
+   sync_answer(200, cd);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3,
+         "first: status %d games %u", r.status, (unsigned)r.games);
+
+   written_count = 0;
+   sync_refetch  = "Sega - Mega Drive - Genesis.lpl";
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, plat);
+   sync_answer(200, page);
+   CHECK(strstr(stub_req.url, "platform_ids=8&")
+         && strstr(stub_req.url, "with_rom_id_index=false")
+         && !strstr(stub_req.url, "updated_after"),
+         "refetch asks for every game: %s", stub_req.url);
+   sync_answer(200, "{\"rom_id_index\": [300]}");
+   CHECK(strstr(stub_req.url, "platform_ids=15&")
+         && strstr(stub_req.url, "with_rom_id_index=true"),
+         "others stay incremental: %s", stub_req.url);
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.games == 3
+         && written_count == 1
+         && strstr(written_path, "Sega - Mega Drive - Genesis.lpl"),
+         "refetch: status %d, %u rewritten (%s)", r.status, written_count,
+         written_path);
+   sync_refetch = NULL;
+
+   filestream_delete(TEST_DIR "/Sega - Mega Drive - Genesis.lpl");
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(manifest);
+}
+
 static void test_sync_incremental(void)
 {
    const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
@@ -2187,6 +2250,7 @@ int main(void)
    test_cursor();
    test_sync_incremental();
    test_sync_collections();
+   test_sync_refetch();
    test_sync_shared_playlist();
    test_follow_game();
    test_preferred_cores();

@@ -5347,6 +5347,9 @@ bool command_event(enum event_command cmd, void *data)
       case CMD_EVENT_ROMM_REFRESH_LIBRARY:
          romm_refresh_library();
          break;
+      case CMD_EVENT_ROMM_REFRESH_PLAYLIST:
+         romm_refresh_playlist();
+         break;
 #endif
       case CMD_EVENT_MENU_RESET_TO_DEFAULT_CONFIG:
          config_set_defaults(config_get_ptr());

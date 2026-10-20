@@ -1560,6 +1560,7 @@
 #define MENU_ENUM_LABEL_ROMM_CHECK_CONNECTION_STR "romm_check_connection"
 #define MENU_ENUM_LABEL_ROMM_PAIR_STR "romm_pair"
 #define MENU_ENUM_LABEL_ROMM_REFRESH_LIBRARY_STR "romm_refresh_library"
+#define MENU_ENUM_LABEL_ROMM_REFRESH_PLAYLIST_STR "romm_refresh_playlist"
 #define MENU_ENUM_LABEL_ROMM_REFRESH_ON_START_STR "romm_refresh_on_start"
 #define MENU_ENUM_LABEL_ROMM_SERVER_URL_STR "romm_server_url"
 #define MENU_ENUM_LABEL_ROMM_SETTINGS_STR "romm_settings"

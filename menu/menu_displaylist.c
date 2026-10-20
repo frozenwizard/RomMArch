@@ -6108,6 +6108,9 @@ static bool menu_displaylist_parse_playlist_manager_settings(
 {
    bool is_content_history      = false;
    bool is_media_history        = false;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   bool romm_playlist           = false;
+#endif
    enum msg_hash_enums right_thumbnail_label_value;
    enum msg_hash_enums left_thumbnail_label_value;
    const char *playlist_file    = NULL;
@@ -6132,6 +6135,12 @@ static bool menu_displaylist_parse_playlist_manager_settings(
 
    if (!(playlist = playlist_get_cached()))
       return false;
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* RomM decides what its playlists hold: they are fetched again,
+    * never cleaned or deleted here. */
+   romm_playlist = romm_menu_owns_playlist(playlist_file);
+#endif
 
    /* Check whether this is a content history playlist */
    is_content_history = string_ends_with_size(
@@ -6227,6 +6236,15 @@ static bool menu_displaylist_parse_playlist_manager_settings(
             MENU_ENUM_LABEL_PLAYLIST_MANAGER_RESET_CORES,
             MENU_SETTING_ACTION_PLAYLIST_MANAGER_RESET_CORES, 0, 0, NULL);
    }
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   if (romm_playlist)
+   {
+      MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+            MENU_ENUM_LABEL_ROMM_REFRESH_PLAYLIST, PARSE_ACTION, false);
+      return true;
+   }
+#endif
 
    /* Refresh playlist */
    if (playlist_scan_refresh_enabled(playlist))

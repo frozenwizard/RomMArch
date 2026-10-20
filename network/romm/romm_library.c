@@ -129,6 +129,8 @@ typedef struct
    bool collections;
    bool collections_listed;
    bool smart_listed;
+   /* The playlist to fetch in full and write anew, or empty */
+   char refetch[256];
    char *token;
    char *covers_title;
    char server[NAME_MAX_LENGTH];
@@ -1132,7 +1134,8 @@ static void romm_lib_plan_cover(romm_lib_sync_t *sync,
          sync->cover_old, RBUF_LEN(sync->cover_old),
          sizeof(*sync->cover_old), romm_lib_cmp_rom_id) : NULL;
    if (     romm_lib_cover_exists(dest)
-         && old && string_is_equal((*old)->cover, rom->cover))
+         && old && string_is_equal((*old)->cover, rom->cover)
+         && !string_is_equal(p->playlist, sync->refetch))
       return;
 
    /* Only a cache buster, with a space in it. */
@@ -1748,6 +1751,7 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
     * copy, may not list what the manifest does. */
    romm_lib_file_stamp(path, &size, &mtime);
    write = !old
+      || string_is_equal(entry.playlist, sync->refetch)
       || core_changed
       || !string_is_equal(old->playlist, entry.playlist)
       || !romm_lib_same_roms(old->roms, sync->roms)
@@ -1967,8 +1971,10 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
          RBUF_PUSH(db_names, romm_library_rom_playlist(&sync->lib, &roms[j]));
       fill_pathname_join(path, sync->playlist_dir, entry.playlist,
             sizeof(path));
+      if (string_is_equal(entry.playlist, sync->refetch))
+         changed = true;
       if ((ok = romm_lib_write_playlist(path, NULL, db_names, NULL, NULL,
-            roms, RBUF_LEN(roms), &changed)))
+            roms, RBUF_LEN(roms), changed ? NULL : &changed)))
       {
          RBUF_PUSH(sync->lib.collections, entry);
          if (changed)
@@ -2056,6 +2062,14 @@ static void romm_lib_sync_handler(retro_task_t *task)
          sync->state        = ROMM_LIB_SYNC_ROMS;
          sync->old_platform = romm_lib_find_platform(&sync->old,
                sync->remote[sync->platform].id);
+         if (*sync->refetch)
+         {
+            char playlist[256];
+            if (     romm_library_playlist_name(playlist, sizeof(playlist),
+                        &sync->remote[sync->platform])
+                  && string_is_equal(playlist, sync->refetch))
+               break;
+         }
          if (sync->old_platform)
          {
             const romm_library_platform_t *old = sync->old_platform;
@@ -2243,6 +2257,8 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->find_core = params->find_core;
    sync->playlist_changed = params->playlist_changed;
    sync->collections = params->collections;
+   if (params->refetch)
+      strlcpy(sync->refetch, params->refetch, sizeof(sync->refetch));
    sync->started   = cpu_features_get_time_usec();
    strlcpy(sync->server, server, sizeof(sync->server));
    strlcpy(sync->playlist_dir, playlist_dir, sizeof(sync->playlist_dir));
