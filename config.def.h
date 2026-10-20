@@ -986,11 +986,21 @@
 #define DEFAULT_CONTENT_SHOW_FAVORITES true
 #define DEFAULT_CONTENT_SHOW_FAVORITES_FIRST false
 #ifdef HAVE_IMAGEVIEWER
+#ifdef HAVE_ROMM
+/* The image viewer's and video player's history: Rommarch opens no
+ * images or videos. */
+#define DEFAULT_CONTENT_SHOW_IMAGES false
+#else
 #define DEFAULT_CONTENT_SHOW_IMAGES true
+#endif
 #endif
 #define DEFAULT_CONTENT_SHOW_MUSIC false
 #if defined(HAVE_FFMPEG) || defined(HAVE_MPV)
+#ifdef HAVE_ROMM
+#define DEFAULT_CONTENT_SHOW_VIDEO false
+#else
 #define DEFAULT_CONTENT_SHOW_VIDEO true
+#endif
 #endif
 
 #ifdef HAVE_ROMM
