@@ -527,7 +527,15 @@ static void frontend_darwin_get_env(int *argc, char *argv[],
              application_data
        );
        NSString *bundleVersionString = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"];
-       NSInteger bundleVersion = [bundleVersionString integerValue] || 1;
+       NSInteger bundleVersion = [bundleVersionString integerValue];
+       if (bundleVersion < 1)
+          bundleVersion = 1;
+#ifdef HAVE_ROMM
+       /* Rommarch's assets (OSX/assets.zip, rebuild-assets.sh -m -M) have
+        * a version of their own: raise it when they change, and installs
+        * unpack them again. */
+       bundleVersion = 2;
+#endif
        configuration_set_uint(settings, settings->uints.bundle_assets_extract_version_current, (uint)bundleVersion);
     }
 
