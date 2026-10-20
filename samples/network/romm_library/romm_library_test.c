@@ -490,6 +490,7 @@ typedef struct
    bool favorites_listed;
    size_t waiting;
    size_t waiting_games;
+   size_t waiting_covers;
 } sync_result_t;
 
 static void on_sync(void *user_data, enum romm_status status,
@@ -506,6 +507,7 @@ static void on_sync(void *user_data, enum romm_status status,
    r->favorites_listed = lib->favorites_listed;
    r->waiting          = RBUF_LEN(lib->waiting);
    r->waiting_games    = r->waiting ? lib->waiting[0].games : 0;
+   r->waiting_covers   = r->waiting ? lib->waiting[0].covers : 0;
    r->platforms = RBUF_LEN(lib->platforms);
    r->games     = 0;
    for (i = 0; i < r->platforms; i++)
@@ -1096,6 +1098,77 @@ static void test_covers(void)
             "cancelled covers task");
    }
 
+   filestream_delete(COVER_DIR);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
+/* Runs the covers task to its end, each download answered with a
+ * PNG; the downloads it made. */
+static unsigned covers_run(void)
+{
+   unsigned fetched = 0;
+   unsigned steps   = 0;
+
+   while (stub_task && steps++ < 20)
+   {
+      unsigned before = stub_log_count;
+      unsigned i;
+      if (sync_step())
+         break;
+      for (i = before + 1; i <= stub_log_count; i++, fetched++)
+         answer_download(i, 200, PNG_DATA);
+   }
+   return fetched;
+}
+
+static void test_covers_limit(void)
+{
+   const char *cover1 = "/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20";
+   const char *cover2 = "/assets/romm/resources/roms/15/2/cover/big.png?ts=2026-10-03 00:23:21";
+   const char *ids    = "{\"rom_id_index\": [1, 2]}";
+   sync_result_t r;
+   char manifest[256];
+   char *page;
+   unsigned fetched;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+
+   page = covers_page(cover1, cover2, NULL);
+   covers_sync(&r, NULL, page);
+   free(page);
+   fetched = covers_run();
+   CHECK(fetched == 2, "%u covers fetched first", fetched);
+
+   /* No game changed, but one cover did and the other is gone from
+    * disk: two covers are over a limit of one, so neither is fetched. */
+   filestream_delete(COVER_DIR "Game 2 _ Co (USA).png");
+   sync_limit = 1;
+   page = covers_page("/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-09 10:00:00",
+         cover2, NULL);
+   covers_sync(&r, ids, page);
+   CHECK(!stub_task && r.waiting == 1 && !r.waiting_games
+         && r.waiting_covers == 2,
+         "over the limit: task %p, %u waiting (%u games, %u covers)",
+         (void*)stub_task, (unsigned)r.waiting, (unsigned)r.waiting_games,
+         (unsigned)r.waiting_covers);
+
+   /* The changed one still is, for the next sync without a limit. */
+   sync_limit = 0;
+   covers_sync(&r, ids, page);
+   free(page);
+   fetched = covers_run();
+   CHECK(fetched == 2 && !r.waiting, "%u covers fetched after the limit",
+         fetched);
+
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).png");
+   filestream_delete(COVER_DIR "Game 2 _ Co (USA).png");
    filestream_delete(COVER_DIR);
    filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
    filestream_delete(TEST_DIR "/thumbs");
@@ -2406,6 +2479,7 @@ int main(void)
    test_sync_limit();
    test_cover_path();
    test_covers();
+   test_covers_limit();
    test_covers_superseded();
    test_covers_shared_name();
    test_covers_in_steps();

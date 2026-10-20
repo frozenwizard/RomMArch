@@ -57,8 +57,10 @@ typedef struct
 typedef struct
 {
    romm_platform_t platform;
-   /* Games to fetch: at least this many. */
+   /* Games to fetch: at least this many; 0 when only covers wait. */
    size_t games;
+   /* Covers to fetch, or 0. */
+   size_t covers;
 } romm_library_waiting_t;
 
 typedef struct
@@ -140,8 +142,9 @@ typedef struct
     * system; NULL keeps any. */
    romm_library_core_runs_t core_runs;
    /* A platform with more games new or changed than this is left as
-    * the last sync wrote it, or not written yet, and listed in the
-    * library's waiting; 0 fetches everything. */
+    * the last sync wrote it, or not written yet; one with more covers
+    * to fetch leaves them for a later sync. Either is listed in the
+    * library's waiting. 0 fetches everything. */
    size_t limit;
 } romm_library_sync_params_t;
 

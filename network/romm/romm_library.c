@@ -130,6 +130,9 @@ typedef struct
    char **cover_dests;
    size_t cover_platform;
    size_t cover_game;
+   /* The platform whose covers are being planned, from that job on */
+   size_t cover_limited;
+   size_t cover_from;
    romm_library_find_core_t find_core;
    romm_library_playlist_cb_t playlist_changed;
    /* RomM's collections, when asked for, and which lists it gave */
@@ -1180,6 +1183,57 @@ static void romm_lib_drop_cover(romm_lib_sync_t *sync,
       romm_lib_cover_delete(dest, NULL);
 }
 
+/* Over the limit, drops the covers just planned for the platform being
+ * planned. Its games keep the covers the last sync saw, or none, so
+ * the next sync still finds them changed. */
+static void romm_lib_limit_covers(romm_lib_sync_t *sync)
+{
+   size_t count = RBUF_LEN(sync->covers) - sync->cover_from;
+   romm_library_platform_t *p;
+   romm_library_waiting_t waiting;
+   size_t i;
+
+   if (     !sync->limit || count <= sync->limit
+         || sync->cover_limited >= RBUF_LEN(sync->lib.platforms))
+   {
+      sync->cover_from = RBUF_LEN(sync->covers);
+      return;
+   }
+   for (i = sync->cover_from; i < RBUF_LEN(sync->covers); i++)
+   {
+      free(sync->covers[i].url_path);
+      free(sync->covers[i].dest);
+   }
+   RBUF_RESIZE(sync->covers, sync->cover_from);
+
+   p = &sync->lib.platforms[sync->cover_limited];
+   for (i = 0; i < RBUF_LEN(p->roms); i++)
+   {
+      const romm_rom_t *rom = &p->roms[i];
+      const romm_rom_t **old = sync->cover_old
+         ? (const romm_rom_t**)bsearch(&rom, sync->cover_old,
+               RBUF_LEN(sync->cover_old), sizeof(*sync->cover_old),
+               romm_lib_cmp_rom_id)
+         : NULL;
+      strlcpy(p->roms[i].cover, old ? (*old)->cover : "",
+            sizeof(p->roms[i].cover));
+   }
+
+   RARCH_LOG(ROMM_LIB_PFX "%s: %u covers to fetch, more than %u; left for "
+         "a manual sync.\n", p->platform.name, (unsigned)count,
+         (unsigned)sync->limit);
+   for (i = 0; i < RBUF_LEN(sync->lib.waiting); i++)
+      if (sync->lib.waiting[i].platform.id == p->platform.id)
+      {
+         sync->lib.waiting[i].covers += count;
+         return;
+      }
+   waiting.platform = p->platform;
+   waiting.games    = 0;
+   waiting.covers   = count;
+   RBUF_PUSH(sync->lib.waiting, waiting);
+}
+
 /* Lists the covers to fetch: those not on disk, and those RomM changed
  * since the last sync. Deletes the covers of games no longer listed,
  * or listed under another name. Each game is looked for on disk, so
@@ -1214,10 +1268,16 @@ static bool romm_lib_sync_plan_covers(romm_lib_sync_t *sync)
    {
       while ((rom = romm_lib_next_game(sync, &sync->lib, &p)))
       {
+         if (sync->cover_platform != sync->cover_limited)
+         {
+            romm_lib_limit_covers(sync);
+            sync->cover_limited = sync->cover_platform;
+         }
          romm_lib_plan_cover(sync, p, rom);
          if (!--budget)
             return false;
       }
+      romm_lib_limit_covers(sync);
       romm_lib_covers_dedupe(&sync->covers);
       if (sync->cover_dests)
          qsort(sync->cover_dests, RBUF_LEN(sync->cover_dests),
@@ -1524,6 +1584,7 @@ static void romm_lib_sync_wait(romm_lib_sync_t *sync, size_t games)
 
    waiting.platform = sync->remote[sync->platform];
    waiting.games    = games;
+   waiting.covers   = 0;
    RBUF_PUSH(sync->lib.waiting, waiting);
    RARCH_LOG(ROMM_LIB_PFX "%s: %u games to fetch, more than %u; left for "
          "a manual sync.\n", waiting.platform.name, (unsigned)games,
