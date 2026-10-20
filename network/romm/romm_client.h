@@ -287,6 +287,10 @@ typedef void (*romm_token_scopes_cb_t)(void *user_data,
 typedef void (*romm_done_cb_t)(void *user_data,
       enum romm_status status, int http_status);
 
+/* @id is the new collection's, 0 unless @status is ROMM_OK. */
+typedef void (*romm_collection_created_cb_t)(void *user_data,
+      enum romm_status status, int http_status, unsigned id);
+
 /* Joins @server (with or without a trailing slash) and @path. */
 bool romm_client_url(char *s, size_t len, const char *server,
       const char *path);
@@ -425,6 +429,18 @@ bool romm_client_state_content(const char *server, const char *token,
 bool romm_client_states_delete(const char *server, const char *token,
       const unsigned *ids, size_t count, romm_done_cb_t cb,
       void *user_data);
+
+/* Adds the @count games in @ids to the user's collection
+ * @collection_id, or with @remove takes them out. @cb runs on the main
+ * thread. */
+bool romm_client_collection_roms(const char *server, const char *token,
+      unsigned collection_id, const unsigned *ids, size_t count,
+      bool remove, romm_done_cb_t cb, void *user_data);
+
+/* Creates the user's favorites collection, named as RomM's web UI
+ * names it. @cb runs on the main thread. */
+bool romm_client_create_favorites(const char *server, const char *token,
+      romm_collection_created_cb_t cb, void *user_data);
 
 /* Uploads @up as a save. @up's strings and data are copied. @cb runs
  * on the main thread. */

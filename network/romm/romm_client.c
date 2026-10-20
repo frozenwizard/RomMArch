@@ -1815,9 +1815,11 @@ static void romm_states_delete_cb(retro_task_t *task, void *task_data,
    free(ctx);
 }
 
-bool romm_client_states_delete(const char *server, const char *token,
-      const unsigned *ids, size_t count, romm_done_cb_t cb,
-      void *user_data)
+/* Sends {"@key": [@ids]} to @path with @method. */
+static bool romm_send_ids(const char *server, const char *token,
+      const char *path, const char *method, const char *key,
+      const unsigned *ids, size_t count, retro_task_callback_t task_cb,
+      romm_done_cb_t cb, void *user_data)
 {
    char url[2048];
    char headers[512];
@@ -1827,17 +1829,16 @@ bool romm_client_states_delete(const char *server, const char *token,
    bool pushed = false;
 
    if (     !ids || !count || string_is_empty(token)
-         || !romm_client_url(url, sizeof(url), server,
-               "/api/states/delete")
+         || !romm_client_url(url, sizeof(url), server, path)
          || (size_t)snprintf(headers, sizeof(headers),
                "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
             >= sizeof(headers))
       return false;
-   /* {"states": [ids]}: at most 11 bytes an id. */
-   cap = 16 + count * 12;
+   /* At most 11 bytes an id. */
+   cap = 16 + strlen(key) + count * 12;
    if (!(body = (char*)malloc(cap)))
       return false;
-   _len = strlcpy(body, "{\"states\": [", cap);
+   _len = (size_t)snprintf(body, cap, "{\"%s\": [", key);
    for (i = 0; i < count; i++)
       _len += (size_t)snprintf(body + _len, cap - _len, "%s%u",
             i ? "," : "", ids[i]);
@@ -1847,13 +1848,105 @@ bool romm_client_states_delete(const char *server, const char *token,
    {
       ctx->cb        = cb;
       ctx->user_data = user_data;
-      if (!(pushed = task_push_http_transfer_with_content(url, "POST",
+      if (!(pushed = task_push_http_transfer_with_content(url, method,
             body, strlen(body), "application/json", true, false, headers,
-            romm_states_delete_cb, ctx) != NULL))
+            task_cb, ctx) != NULL))
          free(ctx);
    }
    free(body);
    return pushed;
+}
+
+bool romm_client_states_delete(const char *server, const char *token,
+      const unsigned *ids, size_t count, romm_done_cb_t cb,
+      void *user_data)
+{
+   return romm_send_ids(server, token, "/api/states/delete", "POST",
+         "states", ids, count, romm_states_delete_cb, cb, user_data);
+}
+
+static void romm_collection_roms_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_done_ctx_t *ctx       = (romm_done_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+
+   if (status != ROMM_OK)
+      RARCH_WARN(ROMM_PFX "Couldn't change a collection's games (status "
+            "%d, HTTP %d).\n", status, http_status);
+   ctx->cb(ctx->user_data, status, http_status);
+   free(ctx);
+}
+
+bool romm_client_collection_roms(const char *server, const char *token,
+      unsigned collection_id, const unsigned *ids, size_t count,
+      bool remove, romm_done_cb_t cb, void *user_data)
+{
+   char path[64];
+   snprintf(path, sizeof(path), "/api/collections/%u/roms", collection_id);
+   return romm_send_ids(server, token, path, remove ? "DELETE" : "POST",
+         "rom_ids", ids, count, romm_collection_roms_cb, cb, user_data);
+}
+
+typedef struct
+{
+   romm_collection_created_cb_t cb;
+   void *user_data;
+} romm_created_ctx_t;
+
+static void romm_create_favorites_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_created_ctx_t *ctx    = (romm_created_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 200);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   unsigned id                = 0;
+   char num[32];
+
+   if (     status == ROMM_OK
+         && (   !romm_json_get(data->data, data->len, "id", num, sizeof(num))
+             || !(id = romm_json_uint(num))))
+      status = ROMM_ERR_RESPONSE;
+   if (status == ROMM_OK)
+      RARCH_LOG(ROMM_PFX "Created the favorites collection, %u.\n", id);
+   else
+      RARCH_WARN(ROMM_PFX "Couldn't create the favorites collection "
+            "(status %d, HTTP %d).\n", status, http_status);
+   ctx->cb(ctx->user_data, status, http_status, id);
+   free(ctx);
+}
+
+bool romm_client_create_favorites(const char *server, const char *token,
+      romm_collection_created_cb_t cb, void *user_data)
+{
+   static const char body[] = "name=Favorites";
+   char url[2048];
+   char headers[512];
+   romm_created_ctx_t *ctx;
+
+   if (     string_is_empty(token)
+         || !romm_client_url(url, sizeof(url), server,
+               "/api/collections?is_public=false&is_favorite=true")
+         || (size_t)snprintf(headers, sizeof(headers),
+               "Authorization: Bearer %s\r\n" ROMM_HEADERS_JSON, token)
+            >= sizeof(headers)
+         || !(ctx = (romm_created_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   if (!task_push_http_transfer_with_content(url, "POST", body,
+         sizeof(body) - 1, "application/x-www-form-urlencoded", true, false,
+         headers, romm_create_favorites_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
 }
 
 static void romm_upload_cb(retro_task_t *task, void *task_data,

@@ -2077,6 +2077,86 @@ typedef struct
 {
    unsigned calls;
    enum romm_status status;
+   int http_status;
+   unsigned id;
+} created_result_t;
+
+static void on_created(void *user_data, enum romm_status status,
+      int http_status, unsigned id)
+{
+   created_result_t *r = (created_result_t*)user_data;
+   r->calls++;
+   r->status      = status;
+   r->http_status = http_status;
+   r->id          = id;
+}
+
+static void test_collection_roms(void)
+{
+   static const unsigned ids[] = { 10, 11 };
+   done_result_t r;
+   created_result_t c;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_collection_roms("http://romm.local:8090/",
+         "rmm_0123abcd", 7, ids, 2, false, on_done, &r), "add not started");
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url,
+            "http://romm.local:8090/api/collections/7/roms")
+         && !strcmp(stub_req.content_type, "application/json")
+         && strstr(stub_req.headers,
+            "Authorization: Bearer rmm_0123abcd\r\n")
+         && !strcmp(stub_req.body, "{\"rom_ids\": [10,11]}"),
+         "add: %s %s %s", stub_req.method, stub_req.url, stub_req.body);
+   answer(200, "{\"id\": 7, \"name\": \"Favorites\", \"rom_ids\": [10, 11]}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK, "added: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_collection_roms("http://h", "t", 7, ids, 1, true, on_done, &r);
+   CHECK(!strcmp(stub_req.method, "DELETE")
+         && !strcmp(stub_req.url, "http://h/api/collections/7/roms")
+         && !strcmp(stub_req.body, "{\"rom_ids\": [10]}"),
+         "remove: %s %s %s", stub_req.method, stub_req.url, stub_req.body);
+   answer(403, "{\"detail\": \"Forbidden\"}");
+   CHECK(r.status == ROMM_ERR_FORBIDDEN, "403: status %d", r.status);
+
+   stub_reset();
+   CHECK(!romm_client_collection_roms("http://h", "t", 7, ids, 0, false,
+            on_done, &r) && stub_req.count == 0, "started without games");
+
+   memset(&c, 0, sizeof(c));
+   CHECK(romm_client_create_favorites("http://romm.local:8090",
+         "rmm_0123abcd", on_created, &c), "create not started");
+   CHECK(!strcmp(stub_req.method, "POST")
+         && !strcmp(stub_req.url, "http://romm.local:8090/api/collections"
+            "?is_public=false&is_favorite=true")
+         && !strcmp(stub_req.content_type,
+            "application/x-www-form-urlencoded")
+         && !strcmp(stub_req.body, "name=Favorites"),
+         "create: %s %s %s %s", stub_req.method, stub_req.url,
+         stub_req.content_type, stub_req.body);
+   answer(200, "{\"name\": \"Favorites\", \"rom_ids\": [], \"is_favorite\":"
+         " true, \"id\": 12, \"user_id\": 1}");
+   CHECK(c.calls == 1 && c.status == ROMM_OK && c.id == 12,
+         "created: status %d id %u", c.status, c.id);
+
+   memset(&c, 0, sizeof(c));
+   romm_client_create_favorites("http://h", "t", on_created, &c);
+   answer(200, "{\"name\": \"Favorites\"}");
+   CHECK(c.status == ROMM_ERR_RESPONSE && !c.id, "no id: status %d",
+         c.status);
+   memset(&c, 0, sizeof(c));
+   romm_client_create_favorites("http://h", "t", on_created, &c);
+   answer(400, "{\"detail\": \"Collection Favorites already exists\"}");
+   CHECK(c.status == ROMM_ERR_HTTP && c.http_status == 400,
+         "exists: status %d", c.status);
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
    bool found;
    char missing[512];
 } scopes_result_t;
@@ -2182,6 +2262,7 @@ int main(void)
    test_upload();
    test_save_downloaded();
    test_states_delete();
+   test_collection_roms();
    test_token_scopes();
    test_pair_start();
    test_pair_wait();
