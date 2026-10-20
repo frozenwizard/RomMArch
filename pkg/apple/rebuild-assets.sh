@@ -8,9 +8,10 @@ include_databases=""
 include_overlays=""
 include_shaders=""
 include_xmb=""
+include_xmb_monochrome=""
 assets_zip="$WD/assets.zip"
 
-args=`getopt acdhimosx $*`
+args=`getopt acdhimMosx $*`
 set -- $args
 while :; do
     case "$1" in
@@ -42,6 +43,7 @@ while :; do
             echo " -o    Include overlays"
             echo " -s    Include shaders"
             echo " -x    Include XMB assets"
+            echo " -M    Include only XMB's monochrome icons, which Ozone uses on desktop"
             echo " -m    Build for macOS (places in OSX directory)"
             exit 0
             ;;
@@ -51,6 +53,10 @@ while :; do
             ;;
         -m)
             assets_zip="$WD/OSX/assets.zip"
+            shift
+            ;;
+        -M)
+            include_xmb_monochrome=1
             shift
             ;;
         -o)
@@ -106,6 +112,8 @@ echo "Packaging assets"
 mkdir assets ; mv retroarch-assets/{COPYING,glui,menu_widgets,ozone,pkg,rgui,sounds} assets
 if [ -n "$include_xmb" ] ; then
     mv retroarch-assets/xmb assets
+elif [ -n "$include_xmb_monochrome" ] ; then
+    mkdir assets/xmb ; mv retroarch-assets/xmb/monochrome assets/xmb
 fi
 rm -rf retroarch-assets
 rm -rf assets/pkg/wiiu
