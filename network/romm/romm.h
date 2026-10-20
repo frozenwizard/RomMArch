@@ -85,6 +85,10 @@ void romm_content_closed(void);
  * didn't go up: played offline, left running at quit, or refused. */
 void romm_sync_owed_saves(void);
 
+/* Content at @content_path was added to Favorites or, without @added,
+ * taken out: for a RomM game, the same goes to RomM's favorites. */
+void romm_favorite_changed(const char *content_path, bool added);
+
 /* Groups a sidebar's playlist rows, @list, as romm_sidebar_group()
  * does, with the groups the user left open. */
 void romm_menu_sidebar_group(file_list_t *list);

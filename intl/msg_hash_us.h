@@ -33817,6 +33817,10 @@ MSG_HASH(
    "Saves don't sync with RomM until you pair this device again with every permission ticked."
    )
 MSG_HASH(
+   MSG_ROMM_FAVORITES_NOT_SENT,
+   "Couldn't change your favorites in RomM. At the next sync, Favorites goes back to RomM's."
+   )
+MSG_HASH(
    MSG_ROMM_SIDEBAR_COLLECTIONS,
    "Collections"
    )

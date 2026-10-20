@@ -789,6 +789,12 @@ static void romm_follow_favorites(playlist_t *favorites,
 
    if (changed)
    {
+      /* Sorted as CMD_EVENT_ADD_TO_FAVORITES sorts. */
+      enum playlist_sort_mode mode = playlist_get_sort_mode(favorites);
+      if (     (config_get_ptr()->bools.playlist_sort_alphabetical
+               && mode == PLAYLIST_SORT_MODE_DEFAULT)
+            || mode == PLAYLIST_SORT_MODE_ALPHABETICAL)
+         playlist_qsort(favorites);
       playlist_write_file(favorites);
       romm_playlist_changed(playlist_get_conf_path(favorites));
    }
@@ -823,32 +829,113 @@ static bool romm_find_core(const char *const *cores, char *path,
    return false;
 }
 
+/* From the library manifest, read once and then kept by each sync: the
+ * user's favorites collection, and the sidebar's playlists. */
+static unsigned romm_favorites_collection        = 0;
 #ifdef HAVE_MENU
-/* The library's system playlists and their makers, for the sidebar. */
 static romm_sidebar_system_t *romm_sidebar_cache = NULL;
-static bool romm_sidebar_cache_read              = false;
+#endif
+static bool romm_manifest_read                   = false;
+/* Favorites changed here, counted, and that count when the running
+ * library sync started: a sync that overlaps a change leaves Favorites
+ * to the next. */
+static unsigned romm_favorites_changes         = 0;
+static unsigned romm_favorites_changes_at_sync = 0;
+/* Favorites to send once the favorites collection is made. */
+static unsigned *romm_favorites_waiting        = NULL;
+static bool romm_favorites_creating            = false;
 
-static void romm_sidebar_cache_load(void)
+static void romm_manifest_load(void)
 {
    settings_t *settings = config_get_ptr();
    romm_library_t lib;
    char path[PATH_MAX_LENGTH];
 
-   if (romm_sidebar_cache_read)
+   if (romm_manifest_read)
       return;
-   romm_sidebar_cache_read = true;
+   romm_manifest_read = true;
    romm_library_manifest_path(path, sizeof(path),
          settings->paths.directory_playlist);
    if (romm_library_load(&lib, path))
+   {
+      romm_favorites_collection = lib.favorites_id;
+#ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, &lib);
+#endif
+   }
    romm_library_free(&lib);
 }
 
+static void romm_on_favorites_sent(void *user_data,
+      enum romm_status status, int http_status)
+{
+   if (status == ROMM_ERR_UNAUTHORIZED || status == ROMM_ERR_FORBIDDEN)
+      romm_notify_failure(status, http_status);
+   else if (status != ROMM_OK)
+      romm_notify(msg_hash_to_str(MSG_ROMM_FAVORITES_NOT_SENT),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+}
+
+static void romm_send_favorites(const unsigned *ids, size_t count,
+      bool remove)
+{
+   settings_t *settings = config_get_ptr();
+   if (!romm_client_collection_roms(settings->arrays.romm_server_url,
+         settings->arrays.romm_token, romm_favorites_collection, ids, count,
+         remove, romm_on_favorites_sent, NULL))
+      romm_on_favorites_sent(NULL, ROMM_ERR_UNREACHABLE, 0);
+}
+
+static void romm_on_favorites_created(void *user_data,
+      enum romm_status status, int http_status, unsigned id)
+{
+   romm_favorites_creating = false;
+   if (status == ROMM_OK)
+   {
+      romm_favorites_collection = id;
+      if (RBUF_LEN(romm_favorites_waiting))
+         romm_send_favorites(romm_favorites_waiting,
+               RBUF_LEN(romm_favorites_waiting), false);
+   }
+   else
+      romm_on_favorites_sent(NULL, status, http_status);
+   RBUF_FREE(romm_favorites_waiting);
+}
+
+void romm_favorite_changed(const char *content_path, bool added)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned id          = romm_library_path_id(content_path);
+
+   if (!id || !*settings->arrays.romm_token)
+      return;
+   romm_favorites_changes++;
+   romm_manifest_load();
+   if (romm_favorites_collection)
+      romm_send_favorites(&id, 1, !added);
+   /* RomM makes the collection with the first favorite. */
+   else if (added)
+   {
+      RBUF_PUSH(romm_favorites_waiting, id);
+      if (romm_favorites_creating)
+         return;
+      if (romm_client_create_favorites(settings->arrays.romm_server_url,
+            settings->arrays.romm_token, romm_on_favorites_created, NULL))
+         romm_favorites_creating = true;
+      else
+      {
+         RBUF_FREE(romm_favorites_waiting);
+         romm_on_favorites_sent(NULL, ROMM_ERR_UNREACHABLE, 0);
+      }
+   }
+}
+
+#ifdef HAVE_MENU
 void romm_menu_sidebar_group(file_list_t *list)
 {
    romm_sidebar_names_t names;
 
-   romm_sidebar_cache_load();
+   romm_manifest_load();
    names.collections = msg_hash_to_str(MSG_ROMM_SIDEBAR_COLLECTIONS);
    names.systems    = msg_hash_to_str(MSG_ROMM_SIDEBAR_SYSTEMS);
    names.other      = msg_hash_to_str(MSG_ROMM_SIDEBAR_OTHER);
@@ -893,7 +980,7 @@ unsigned romm_menu_sidebar_list(file_list_t *list, const char *key)
    const char **playlists = NULL;
    unsigned count         = 0;
 
-   romm_sidebar_cache_load();
+   romm_manifest_load();
    romm_sidebar_members(&playlists, romm_sidebar_cache, key);
    for (i = 0; i < RBUF_LEN(playlists); i++)
    {
@@ -925,20 +1012,24 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    {
       const romm_rom_t **old_index = romm_library_index(old);
       const romm_rom_t **index     = romm_library_index(lib);
+      bool favorites_kept          = romm_favorites_changes
+            == romm_favorites_changes_at_sync && !romm_favorites_creating;
       if (g_defaults.content_history)
          romm_follow_games(g_defaults.content_history, old_index, index);
       if (g_defaults.content_favorites)
       {
          romm_follow_games(g_defaults.content_favorites, old_index, index);
-         if (lib->favorites_listed)
+         if (lib->favorites_listed && favorites_kept)
             romm_follow_favorites(g_defaults.content_favorites, lib, index);
       }
       RBUF_FREE(old_index);
       RBUF_FREE(index);
+      if (favorites_kept)
+         romm_favorites_collection = lib->favorites_id;
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
-      romm_sidebar_cache_read = true;
 #endif
+      romm_manifest_read = true;
    }
    romm_reload_playlists();
 
@@ -976,6 +1067,7 @@ static bool romm_start_library_sync(bool quiet)
    params.find_core      = romm_find_core;
    params.playlist_changed = romm_playlist_changed;
    params.collections    = true;
+   romm_favorites_changes_at_sync = romm_favorites_changes;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
    romm_syncing         = true;
