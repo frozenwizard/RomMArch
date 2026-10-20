@@ -902,10 +902,20 @@
 #define DEFAULT_MENU_SHOW_CORE_UPDATER true
 #endif
 #define DEFAULT_MENU_SHOW_LOAD_CORE true
+#ifdef HAVE_ROMM
+/* Games come only from RomM. */
+#define DEFAULT_MENU_SHOW_LOAD_CONTENT false
+#else
 #define DEFAULT_MENU_SHOW_LOAD_CONTENT true
+#endif
 #ifdef HAVE_CDROM
+#ifdef HAVE_ROMM
+#define DEFAULT_MENU_SHOW_LOAD_DISC false
+#define DEFAULT_MENU_SHOW_DUMP_DISC false
+#else
 #define DEFAULT_MENU_SHOW_LOAD_DISC true
 #define DEFAULT_MENU_SHOW_DUMP_DISC true
+#endif
 #ifdef HAVE_LAKKA
 #define DEFAULT_MENU_SHOW_EJECT_DISC true
 #endif /* HAVE_LAKKA */
@@ -983,7 +993,11 @@
 #define DEFAULT_CONTENT_SHOW_VIDEO true
 #endif
 
+#ifdef HAVE_ROMM
+#define DEFAULT_MENU_CONTENT_SHOW_ADD_ENTRY MENU_ADD_CONTENT_ENTRY_DISPLAY_HIDDEN
+#else
 #define DEFAULT_MENU_CONTENT_SHOW_ADD_ENTRY MENU_ADD_CONTENT_ENTRY_DISPLAY_PLAYLISTS_TAB
+#endif
 
 /* Share 'Import Content' values */
 #if defined(HAVE_NETWORKING)
@@ -998,7 +1012,12 @@
 #define DEFAULT_CONTENT_SHOW_PLAYLIST_TABS true
 
 #if defined(HAVE_LIBRETRODB)
+#ifdef HAVE_ROMM
+/* Explore files games by libretro's database, not RomM's. */
+#define DEFAULT_MENU_CONTENT_SHOW_EXPLORE false
+#else
 #define DEFAULT_MENU_CONTENT_SHOW_EXPLORE true
+#endif
 #endif
 #define DEFAULT_MENU_CONTENT_SHOW_CONTENTLESS_CORES MENU_CONTENTLESS_CORES_DISPLAY_SINGLE_PURPOSE
 
