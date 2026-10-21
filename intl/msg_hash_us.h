@@ -33973,6 +33973,70 @@ MSG_HASH(
    "This system is no longer in the library."
    )
 MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_SYNCING,
+   "Status: Syncing now"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_REFRESH,
+   "Refresh Now"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_SYNC_NOW,
+   "Sync Now"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_REFETCH,
+   "Refetch"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_REBUILD,
+   "Purge and Rebuild"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_STOP,
+   "Stop Syncing %s"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_STOP_CONFIRM,
+   "Press OK Again to Stop Syncing %s"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_DO_SYNC,
+   "Sync %s"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_QUEUED,
+   "%s syncs once the sync running now ends."
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_SYNCED,
+   "%s synced: %u games."
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STOPPED,
+   "%s is no longer synced on this device."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_SYSTEM_REFRESH,
+   "Fetch what changed in RomM for this system now, however much that is."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_SYSTEM_REFETCH,
+   "Fetch every game and cover of this system again and write its playlist anew. The cores and display choices set in the playlist stay."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_SYSTEM_REBUILD,
+   "Delete this system's playlist and covers, with the cores and display choices set in the playlist, then fetch it all as new. Saves, History and Favorites stay."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_SYSTEM_STOP,
+   "Remove this system's playlist and covers from this device, and don't sync it until you choose Sync. Its saves stay."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_SYSTEM_SYNC,
+   "Fetch this system's games and covers now, and keep them in sync from then on."
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

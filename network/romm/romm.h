@@ -137,6 +137,22 @@ size_t romm_menu_system_title(const char *fs_slug, char *s, size_t len);
  * takes it off the systems marked new. Returns how many rows. */
 unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug);
 
+/* What a system's page can do. */
+enum romm_system_action
+{
+   ROMM_SYSTEM_ACTION_REFRESH = 0,
+   ROMM_SYSTEM_ACTION_REFETCH,
+   ROMM_SYSTEM_ACTION_REBUILD,
+   ROMM_SYSTEM_ACTION_STOP,
+   ROMM_SYSTEM_ACTION_SYNC
+};
+
+/* OK on @action on the page of the system with RomM folder @fs_slug:
+ * starts that system's sync, or queues it behind the one running. Stop
+ * Syncing asks for a second OK first. */
+void romm_menu_system_action(const char *fs_slug,
+      enum romm_system_action action);
+
 RETRO_END_DECLS
 
 #endif

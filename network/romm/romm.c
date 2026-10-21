@@ -70,6 +70,22 @@ static bool romm_syncing = false;
 static bool romm_checking = false;
 /* The running sync was started at startup rather than by the user. */
 static bool romm_syncing_quietly = false;
+
+/* A sync of one system, from its page. */
+typedef struct
+{
+   char fs_slug[64];
+   enum romm_system_action action;
+} romm_system_job_t;
+
+/* The one the running sync is for (fs_slug empty for none), and the
+ * ones waiting for it (an RBUF, oldest first). */
+static romm_system_job_t romm_system_job;
+static romm_system_job_t *romm_system_jobs = NULL;
+
+static bool romm_can_sync(void);
+static void romm_start_system_job(const romm_system_job_t *job);
+static void romm_start_next_system_job(void);
 /* RomM was asked this run which user the token acts for. */
 static bool romm_username_asked = false;
 
@@ -895,8 +911,11 @@ static char romm_library_new[128];
 /* What the last sync left to fetch, per system (an RBUF). */
 static romm_library_waiting_t *romm_library_waiting_list = NULL;
 
-static void romm_note_library(const romm_library_t *lib)
+/* @only: the systems the sync was for, whose waiting it replaces; NULL
+ * for every system. */
+static void romm_note_library(const romm_library_t *lib, const char *only)
 {
+   romm_library_waiting_t *waiting = NULL;
    size_t _len = 0;
    size_t i;
 
@@ -905,15 +924,20 @@ static void romm_note_library(const romm_library_t *lib)
    romm_library_games     = 0;
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
       romm_library_games += (unsigned)RBUF_LEN(lib->platforms[i].roms);
-   RBUF_CLEAR(romm_library_waiting_list);
+   for (i = 0; only && i < RBUF_LEN(romm_library_waiting_list); i++)
+      if (!romm_library_listed(only,
+            romm_library_waiting_list[i].platform.fs_slug))
+         RBUF_PUSH(waiting, romm_library_waiting_list[i]);
    for (i = 0; i < RBUF_LEN(lib->waiting); i++)
-      RBUF_PUSH(romm_library_waiting_list, lib->waiting[i]);
+      RBUF_PUSH(waiting, lib->waiting[i]);
+   RBUF_FREE(romm_library_waiting_list);
+   romm_library_waiting_list = waiting;
    *romm_library_waiting = '\0';
-   for (i = 0; i < RBUF_LEN(lib->waiting)
+   for (i = 0; i < RBUF_LEN(waiting)
          && _len < sizeof(romm_library_waiting); i++)
       _len += snprintf(romm_library_waiting + _len,
             sizeof(romm_library_waiting) - _len, "%s%s",
-            i ? ", " : "", lib->waiting[i].platform.name);
+            i ? ", " : "", waiting[i].platform.name);
    *romm_library_new = '\0';
    for (i = 0; i < RBUF_LEN(lib->unsynced); i++)
       if (romm_library_listed(config_get_ptr()->arrays.romm_sync_new,
@@ -973,7 +997,7 @@ static void romm_manifest_load(void)
          settings->paths.directory_playlist);
    if (romm_library_load(&lib, path))
    {
-      romm_note_library(&lib);
+      romm_note_library(&lib, NULL);
       romm_favorites_collection = lib.favorites_id;
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, &lib);
@@ -1195,6 +1219,16 @@ unsigned romm_menu_sidebar_list(file_list_t *list, const char *key)
  * values its rows show each frame. */
 static romm_system_row_t *romm_menu_rows = NULL;
 
+/* The system whose Stop Syncing waits for a second OK, and whether the
+ * page was just rebuilt to show that; the next rebuild disarms it. */
+static char romm_menu_armed[64];
+static bool romm_menu_arming = false;
+
+static void romm_menu_refresh(void)
+{
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+}
+
 /* Lists the library's systems in romm_menu_rows, from the manifest and
  * the systems switched off and new. */
 static void romm_menu_load_rows(void)
@@ -1226,6 +1260,7 @@ unsigned romm_menu_systems_list(file_list_t *list)
    unsigned count = 0;
    size_t i;
 
+   *romm_menu_armed = '\0';
    romm_menu_load_rows();
    if (!RBUF_LEN(romm_menu_rows))
       return romm_menu_status_line(list,
@@ -1307,6 +1342,17 @@ size_t romm_menu_system_title(const char *fs_slug, char *s, size_t len)
    return strlcpy(s, row ? row->platform.name : fs_slug, len);
 }
 
+/* An action of a system's page, labelled @text. */
+static bool romm_menu_action_row(file_list_t *list, const char *fs_slug,
+      enum msg_hash_enums label, const char *text)
+{
+   if (!menu_entries_append(list, fs_slug, "", label, MENU_ROMM_SYSTEM,
+         0, 0, NULL))
+      return false;
+   file_list_set_alt_at_offset(list, list->size - 1, text);
+   return true;
+}
+
 /* Covers on disk in @playlist's box art folder: how many and their
  * size. A folder two systems share counts both. */
 static void romm_menu_covers(const char *playlist, unsigned *count,
@@ -1347,6 +1393,9 @@ unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug)
    size_t i;
    char line[512];
 
+   if (!romm_menu_arming)
+      *romm_menu_armed = '\0';
+   romm_menu_arming = false;
    romm_menu_load_rows();
    if (!(row = romm_menu_find_row(fs_slug)))
       return romm_menu_status_line(list,
@@ -1371,7 +1420,10 @@ unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug)
          }
    }
 
-   switch (state)
+   if (romm_syncing && string_is_equal(romm_system_job.fs_slug, fs_slug))
+      strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_SYNCING),
+            sizeof(line));
+   else switch (state)
    {
       case ROMM_SYSTEM_SYNCED:
          strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_SYNCED),
@@ -1432,12 +1484,133 @@ unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug)
          row->platform.fs_slug);
    if (romm_menu_status_line(list, line))
       count++;
+
+   if (state == ROMM_SYSTEM_NO_EMULATOR)
+      return count;
+   if (state == ROMM_SYSTEM_OFF || state == ROMM_SYSTEM_NEW)
+   {
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_SYSTEM_DO_SYNC),
+            row->platform.name);
+      if (romm_menu_action_row(list, fs_slug,
+            MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC, line))
+         count++;
+      return count;
+   }
+   if (*row->playlist)
+   {
+      if (romm_menu_action_row(list, fs_slug,
+            MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH,
+            msg_hash_to_str(MSG_ROMM_SYSTEM_DO_REFRESH)))
+         count++;
+      if (romm_menu_action_row(list, fs_slug,
+            MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH,
+            msg_hash_to_str(MSG_ROMM_SYSTEM_DO_REFETCH)))
+         count++;
+      if (romm_menu_action_row(list, fs_slug,
+            MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD,
+            msg_hash_to_str(MSG_ROMM_SYSTEM_DO_REBUILD)))
+         count++;
+   }
+   else if (romm_menu_action_row(list, fs_slug,
+         MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH,
+         msg_hash_to_str(MSG_ROMM_SYSTEM_DO_SYNC_NOW)))
+      count++;
+   snprintf(line, sizeof(line), msg_hash_to_str(
+         string_is_equal(romm_menu_armed, fs_slug)
+         ? MSG_ROMM_SYSTEM_DO_STOP_CONFIRM : MSG_ROMM_SYSTEM_DO_STOP),
+         row->platform.name);
+   if (romm_menu_action_row(list, fs_slug,
+         MENU_ENUM_LABEL_ROMM_SYSTEM_STOP, line))
+      count++;
    return count;
+}
+
+void romm_menu_system_action(const char *fs_slug,
+      enum romm_system_action action)
+{
+   settings_t *settings = config_get_ptr();
+   bool armed           = string_is_equal(romm_menu_armed, fs_slug);
+   romm_system_job_t job;
+   char msg[256];
+   size_t i;
+
+   *romm_menu_armed = '\0';
+   if (action == ROMM_SYSTEM_ACTION_STOP && !armed)
+   {
+      strlcpy(romm_menu_armed, fs_slug, sizeof(romm_menu_armed));
+      romm_menu_arming = true;
+      romm_menu_refresh();
+      return;
+   }
+   if (!romm_can_sync())
+      return;
+
+   if (action == ROMM_SYSTEM_ACTION_STOP || action == ROMM_SYSTEM_ACTION_SYNC)
+   {
+      if (action == ROMM_SYSTEM_ACTION_STOP)
+         romm_library_list_add(settings->arrays.romm_sync_exclude,
+               sizeof(settings->arrays.romm_sync_exclude), fs_slug);
+      else
+         romm_library_list_remove(settings->arrays.romm_sync_exclude,
+               fs_slug);
+      romm_library_list_remove(settings->arrays.romm_sync_new, fs_slug);
+      if (!romm_overrides_active())
+         command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   }
+
+   strlcpy(job.fs_slug, fs_slug, sizeof(job.fs_slug));
+   job.action = action;
+   if (!romm_syncing)
+      romm_start_system_job(&job);
+   else
+   {
+      const romm_system_row_t *row = romm_menu_find_row(fs_slug);
+      for (i = 0; i < RBUF_LEN(romm_system_jobs); i++)
+         if (string_is_equal(romm_system_jobs[i].fs_slug, fs_slug))
+            break;
+      if (i < RBUF_LEN(romm_system_jobs))
+         romm_system_jobs[i].action = action;
+      else
+         RBUF_PUSH(romm_system_jobs, job);
+      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYSTEM_QUEUED),
+            row ? row->platform.name : fs_slug);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
+   }
+   romm_menu_refresh();
 }
 #endif
 
+/* The name of the system with RomM folder @fs_slug in @lib. */
+static const char *romm_library_system_name(const romm_library_t *lib,
+      const char *fs_slug, size_t *games)
+{
+   size_t i;
+   *games = 0;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (string_is_equal(lib->platforms[i].platform.fs_slug, fs_slug))
+      {
+         *games = RBUF_LEN(lib->platforms[i].roms);
+         return lib->platforms[i].platform.name;
+      }
+   for (i = 0; i < RBUF_LEN(lib->unsynced); i++)
+      if (string_is_equal(lib->unsynced[i].fs_slug, fs_slug))
+         return lib->unsynced[i].name;
+   return fs_slug;
+}
+
+static void romm_library_synced(enum romm_status status, int http_status,
+      const romm_library_t *old, const romm_library_t *lib);
+
 static void romm_on_library_synced(void *user_data, enum romm_status status,
       int http_status, const romm_library_t *old, const romm_library_t *lib)
+{
+   romm_library_synced(status, http_status, old, lib);
+   *romm_system_job.fs_slug = '\0';
+   romm_start_next_system_job();
+}
+
+static void romm_library_synced(enum romm_status status, int http_status,
+      const romm_library_t *old, const romm_library_t *lib)
 {
    bool quiet   = romm_syncing_quietly;
    size_t games = 0;
@@ -1466,7 +1639,8 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
       RBUF_FREE(index);
       if (favorites_kept)
          romm_favorites_collection = lib->favorites_id;
-      romm_note_library(lib);
+      romm_note_library(lib, *romm_system_job.fs_slug
+            ? romm_system_job.fs_slug : NULL);
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
 #endif
@@ -1494,6 +1668,20 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    }
    if (quiet)
       return;
+   if (*romm_system_job.fs_slug)
+   {
+      const char *name = romm_library_system_name(lib,
+            romm_system_job.fs_slug, &games);
+      if (romm_system_job.action == ROMM_SYSTEM_ACTION_STOP)
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_ROMM_SYSTEM_STOPPED), name);
+      else
+         snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYSTEM_SYNCED),
+               name, (unsigned)games);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+      romm_sync_owed_saves();
+      return;
+   }
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
       games += RBUF_LEN(lib->platforms[i].roms);
    snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNCED),
@@ -1514,8 +1702,9 @@ static bool romm_core_runs(const char *core_path, const char *libretro_slug)
    return string_list_find_elem(info->databases_list, libretro_slug) != 0;
 }
 
+/* @job: the one system to sync, and how; NULL for every system. */
 static bool romm_start_library_sync(bool quiet, const char *refetch,
-      unsigned limit)
+      unsigned limit, const romm_system_job_t *job)
 {
    settings_t *settings = config_get_ptr();
    romm_library_sync_params_t params;
@@ -1535,6 +1724,12 @@ static bool romm_start_library_sync(bool quiet, const char *refetch,
    params.limit          = limit;
    params.exclude        = settings->arrays.romm_sync_exclude;
    params.new_off        = true;
+   if (job)
+   {
+      params.only        = job->fs_slug;
+      params.full        = job->action == ROMM_SYSTEM_ACTION_REFETCH;
+      params.rebuild     = job->action == ROMM_SYSTEM_ACTION_REBUILD;
+   }
    romm_favorites_changes_at_sync = romm_favorites_changes;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
@@ -1552,34 +1747,67 @@ void romm_refresh_library_at_start(void)
          && !string_is_empty(settings->arrays.romm_token))
       romm_start_library_sync(true, NULL,
             settings->uints.romm_sync_on_start == ROMM_SYNC_START_PARTIAL
-            ? settings->uints.romm_sync_start_limit : 0);
+            ? settings->uints.romm_sync_start_limit : 0, NULL);
+}
+
+/* Says why there can't be a sync, if there can't. */
+static bool romm_can_sync(void)
+{
+   settings_t *settings = config_get_ptr();
+
+   if (string_is_empty(settings->arrays.romm_server_url))
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return false;
+   }
+   if (string_is_empty(settings->arrays.romm_token))
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_NOT_PAIRED),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return false;
+   }
+   return true;
 }
 
 static void romm_refresh(const char *refetch)
 {
-   settings_t *settings = config_get_ptr();
-
    if (romm_syncing)
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_SYNC_IN_PROGRESS),
             MESSAGE_QUEUE_CATEGORY_INFO);
       return;
    }
-   if (string_is_empty(settings->arrays.romm_server_url))
-   {
-      romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
+   if (!romm_can_sync())
       return;
-   }
-   if (string_is_empty(settings->arrays.romm_token))
-   {
-      romm_notify(msg_hash_to_str(MSG_ROMM_NOT_PAIRED),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
-      return;
-   }
 
-   if (!romm_start_library_sync(false, refetch, 0))
+   if (!romm_start_library_sync(false, refetch, 0, NULL))
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+}
+
+static void romm_start_system_job(const romm_system_job_t *job)
+{
+   romm_system_job = *job;
+   if (!romm_start_library_sync(false, NULL, 0, job))
+   {
+      *romm_system_job.fs_slug = '\0';
+      romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+   }
+}
+
+/* The next system waiting for a sync, once none runs. */
+static void romm_start_next_system_job(void)
+{
+   romm_system_job_t job;
+   size_t i;
+
+   if (romm_syncing || !RBUF_LEN(romm_system_jobs))
+      return;
+   job = romm_system_jobs[0];
+   for (i = 1; i < RBUF_LEN(romm_system_jobs); i++)
+      romm_system_jobs[i - 1] = romm_system_jobs[i];
+   RBUF_RESIZE(romm_system_jobs, RBUF_LEN(romm_system_jobs) - 1);
+   romm_start_system_job(&job);
 }
 
 void romm_refresh_library(void)

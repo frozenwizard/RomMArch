@@ -7207,6 +7207,41 @@ DEFAULT_ACTION_OK_FUNC(action_ok_push_achievements_submenu, ACTION_OK_DL_ACHIEVE
 DEFAULT_ACTION_OK_FUNC(action_ok_push_core_information_list, ACTION_OK_DL_CORE_INFORMATION_LIST)
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
 STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_romm_system, ACTION_OK_DL_ROMM_SYSTEM)
+
+static int action_ok_romm_system_refresh(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_system_action(path, ROMM_SYSTEM_ACTION_REFRESH);
+   return 0;
+}
+
+static int action_ok_romm_system_refetch(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_system_action(path, ROMM_SYSTEM_ACTION_REFETCH);
+   return 0;
+}
+
+static int action_ok_romm_system_rebuild(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_system_action(path, ROMM_SYSTEM_ACTION_REBUILD);
+   return 0;
+}
+
+static int action_ok_romm_system_stop(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_system_action(path, ROMM_SYSTEM_ACTION_STOP);
+   return 0;
+}
+
+static int action_ok_romm_system_sync(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_system_action(path, ROMM_SYSTEM_ACTION_SYNC);
+   return 0;
+}
 #endif
 #ifdef HAVE_MIST
 DEFAULT_ACTION_OK_FUNC(action_ok_push_core_information_steam_list, ACTION_OK_DL_CORE_INFORMATION_STEAM_LIST)
@@ -9910,6 +9945,11 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_CORE_MANAGER_ENTRY,                  action_ok_push_core_information_list},
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
          {MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY,                   action_ok_push_romm_system},
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH, action_ok_romm_system_refresh},
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH, action_ok_romm_system_refetch},
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD, action_ok_romm_system_rebuild},
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_STOP,    action_ok_romm_system_stop},
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC,    action_ok_romm_system_sync},
 #endif
 #ifdef HAVE_MIST
          {MENU_ENUM_LABEL_CORE_MANAGER_STEAM_ENTRY,            action_ok_push_core_information_steam_list},
