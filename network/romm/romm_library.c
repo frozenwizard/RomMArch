@@ -142,6 +142,8 @@ typedef struct
    bool smart_listed;
    /* The playlist to fetch in full and write anew, or empty */
    char refetch[256];
+   /* Platforms switched off, as params.exclude; NULL for none */
+   char *exclude;
    romm_library_core_runs_t core_runs;
    char *token;
    char *covers_title;
@@ -549,6 +551,28 @@ bool romm_library_write_playlist(const char *path, const char *db_name,
 {
    return romm_lib_write_playlist(path, db_name, NULL, default_core_path,
          default_core_name, roms, count, NULL);
+}
+
+bool romm_library_listed(const char *list, const char *name)
+{
+   size_t len;
+
+   if (!list || string_is_empty(name))
+      return false;
+   len = strlen(name);
+   while (*list)
+   {
+      const char *end;
+      const char *last;
+      while (*list == ',' || *list == ' ')
+         list++;
+      for (end = list; *end && *end != ','; end++) { }
+      for (last = end; last > list && last[-1] == ' '; last--) { }
+      if ((size_t)(last - list) == len && !strncmp(list, name, len))
+         return true;
+      list = end;
+   }
+   return false;
 }
 
 size_t romm_library_manifest_path(char *s, size_t len,
@@ -962,7 +986,7 @@ static void romm_lib_sync_remove(romm_lib_sync_t *sync, const char *name)
    fill_pathname_join(path, sync->playlist_dir, name, sizeof(path));
    if (path_is_valid(path) && !filestream_delete(path))
    {
-      RARCH_LOG(ROMM_LIB_PFX "Removed %s, gone from RomM.\n", name);
+      RARCH_LOG(ROMM_LIB_PFX "Removed %s, no longer synced.\n", name);
       if (sync->playlist_changed)
          sync->playlist_changed(path);
    }
@@ -2164,6 +2188,15 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
    return ok;
 }
 
+/* Is @p left out of this sync? No emulator runs a platform without a
+ * libretro name. */
+static bool romm_lib_sync_off(const romm_lib_sync_t *sync,
+      const romm_platform_t *p)
+{
+   return !*p->libretro_slug || romm_library_listed(sync->exclude,
+         p->fs_slug);
+}
+
 /* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the
  * request callbacks, so they share @sync without locking. */
 static void romm_lib_sync_handler(retro_task_t *task)
@@ -2198,10 +2231,9 @@ static void romm_lib_sync_handler(retro_task_t *task)
             romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
          break;
       case ROMM_LIB_SYNC_NEXT:
-         /* No emulator runs a platform without a libretro name. */
          while (     sync->platform < count
                && (   !sync->remote[sync->platform].rom_count
-                   || !*sync->remote[sync->platform].libretro_slug))
+                   || romm_lib_sync_off(sync, &sync->remote[sync->platform])))
          {
             if (sync->remote[sync->platform].rom_count)
                RBUF_PUSH(sync->lib.unsynced, sync->remote[sync->platform]);
@@ -2394,6 +2426,7 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
       RBUF_FREE(sync->ids);
       RBUF_FREE(sync->written);
       free(sync->covers_title);
+      free(sync->exclude);
       if (sync->token)
       {
          memset(sync->token, 0, strlen(sync->token));
@@ -2436,6 +2469,8 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->collections = params->collections;
    if (params->refetch)
       strlcpy(sync->refetch, params->refetch, sizeof(sync->refetch));
+   if (!string_is_empty(params->exclude))
+      sync->exclude = strdup(params->exclude);
    sync->core_runs   = params->core_runs;
    sync->limit       = params->limit;
    sync->started   = cpu_features_get_time_usec();
@@ -2468,6 +2503,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
       free(task->title);
       free(task);
       free(sync->covers_title);
+      free(sync->exclude);
       free(sync->token);
       free(sync);
       return false;

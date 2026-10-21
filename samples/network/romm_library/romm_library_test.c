@@ -456,6 +456,7 @@ static bool sync_collections;
 static const char *sync_refetch;
 static romm_library_core_runs_t test_core_runs;
 static size_t sync_limit;
+static const char *sync_exclude;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -485,6 +486,7 @@ static bool sync_start(const char *server, const char *token,
    params.refetch        = sync_refetch;
    params.core_runs      = test_core_runs;
    params.limit          = sync_limit;
+   params.exclude        = sync_exclude;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1872,6 +1874,36 @@ static void test_sync_shared_playlist(void)
          " %u rewrites, %u entries", r.status, written_count,
          count_entries(pl));
 
+   /* Genesis is back; then Mega Drive is switched off while Genesis is
+    * unchanged: the playlist keeps Genesis's games alone. */
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, platforms);
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 1, "Genesis game", "2026-10-02T04:00:00+00:00");
+   game_json(page, sizeof(page), 3, "Genesis game 2", "2026-10-09T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   sync_answer(200, "{\"rom_id_index\": [2]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && count_entries(pl) == 3, "Genesis back: %u entries",
+         count_entries(pl));
+   written_count = 0;
+   sync_exclude  = "megadrive";
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_exclude  = NULL;
+   sync_answer(200, "[{\"id\": 8, \"fs_slug\": \"genesis\", \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+         " {\"id\": 30, \"fs_slug\": \"megadrive\", \"rom_count\": 1,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [1, 3]}");
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && written_count == 1
+         && count_entries(pl) == 2 && path_is(written_path, pl),
+         "Mega Drive off: status %d, %u rewrites, %u entries", r.status,
+         written_count, count_entries(pl));
+
    filestream_delete(pl);
    filestream_delete(manifest);
    filestream_delete(TEST_DIR "/romm");
@@ -2482,6 +2514,131 @@ static void test_sync_limit(void)
    filestream_delete(pl);
 }
 
+static void test_listed(void)
+{
+   CHECK(romm_library_listed("psx,segacd", "segacd")
+         && romm_library_listed("segacd", "segacd")
+         && romm_library_listed(" psx , segacd ", "psx")
+         && romm_library_listed(" psx , segacd ", "segacd"), "listed");
+   CHECK(!romm_library_listed("psx,segacd2", "segacd")
+         && !romm_library_listed("psx,segacd", "sega")
+         && !romm_library_listed("", "psx")
+         && !romm_library_listed(NULL, "psx")
+         && !romm_library_listed("psx,,", "")
+         && !romm_library_listed("psx", NULL), "not listed");
+}
+
+static const char *exclude_platforms =
+   "[{\"id\": 15, \"fs_slug\": \"segacd\", \"rom_count\": 2,"
+   " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
+   " {\"id\": 8, \"fs_slug\": \"genesis\", \"rom_count\": 2,"
+   " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]";
+
+#define GENESIS_COVERS TEST_DIR "/thumbs/Sega - Mega Drive - Genesis/Named_Boxarts/"
+
+static void test_sync_exclude(void)
+{
+   const char *segacd  = TEST_DIR "/Sega - Mega-CD - Sega CD.lpl";
+   const char *genesis = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   const char *cover1  = "/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20";
+   const char *genesis_ids = "{\"rom_id_index\": [100, 101]}";
+   sync_result_t r;
+   romm_library_t lib;
+   char manifest[256];
+   char *page;
+   unsigned fetched;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   filestream_delete(manifest);
+   stub_reset();
+
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   page = covers_page(cover1, NULL, NULL);
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(8, 100, 2);
+   sync_answer(200, page);
+   free(page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 2,
+         "first sync: status %d platforms %u", r.status,
+         (unsigned)r.platforms);
+   fetched = covers_run();
+   CHECK(fetched == 3 && file_is(COVER_DIR "Game 1 _ Co (USA).png", PNG_DATA)
+         && path_is_valid(GENESIS_COVERS "Game 100 (USA).png"),
+         "first covers: %u", fetched);
+
+   /* Sega CD switched off: not asked for; its playlist and cover go, and
+    * it's listed as not synced. Genesis is left as it was. */
+   sync_exclude  = "psx, segacd";
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   sync_answer(200, genesis_ids);
+   CHECK(strstr(stub_req.url, "platform_ids=8&") != NULL,
+         "first request after the platforms: %s", stub_req.url);
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 1
+         && r.games == 2 && !stub_task,
+         "switched off: status %d platforms %u games %u covers task %p",
+         r.status, (unsigned)r.platforms, (unsigned)r.games,
+         (void*)stub_task);
+   CHECK(!path_is_valid(segacd) && count_entries(genesis) == 2,
+         "playlists after switching off");
+   CHECK(written_count == 1 && path_is(written_path, segacd),
+         "%u playlists changed, last %s", written_count, written_path);
+   CHECK(!path_is_valid(COVER_DIR "Game 1 _ Co (USA).png")
+         && path_is_valid(GENESIS_COVERS "Game 100 (USA).png"),
+         "covers after switching off");
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 1
+         && lib.platforms[0].platform.id == 8 && RBUF_LEN(lib.unsynced) == 1
+         && lib.unsynced[0].id == 15
+         && !strcmp(lib.unsynced[0].fs_slug, "segacd"),
+         "manifest after switching off: %u platforms, %u unsynced",
+         (unsigned)RBUF_LEN(lib.platforms), (unsigned)RBUF_LEN(lib.unsynced));
+   romm_library_free(&lib);
+
+   /* On again: fetched in full, with its cover. */
+   sync_exclude = NULL;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   page = covers_page(cover1, NULL, NULL);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=15&")
+         && !strstr(stub_req.url, "updated_after"),
+         "Sega CD not fetched in full: %s", stub_req.url);
+   sync_answer(200, genesis_ids);
+   sync_answer(200, "{\"items\": []}");
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 2,
+         "on again: status %d platforms %u", r.status, (unsigned)r.platforms);
+   fetched = covers_run();
+   CHECK(fetched == 1 && count_entries(segacd) == 2
+         && file_is(COVER_DIR "Game 1 _ Co (USA).png", PNG_DATA),
+         "on again: %u covers", fetched);
+
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).png");
+   filestream_delete(GENESIS_COVERS "Game 100 (USA).png");
+   filestream_delete(GENESIS_COVERS "Game 101 (USA).png");
+   filestream_delete(COVER_DIR);
+   filestream_delete(GENESIS_COVERS);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega Drive - Genesis");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(segacd);
+   filestream_delete(genesis);
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -2512,6 +2669,8 @@ int main(void)
    test_sidebar_open();
    test_sidebar_group();
    test_path_id();
+   test_listed();
+   test_sync_exclude();
 
    if (failures)
    {

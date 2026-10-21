@@ -1207,6 +1207,7 @@ static bool romm_start_library_sync(bool quiet, const char *refetch,
    settings_t *settings = config_get_ptr();
    romm_library_sync_params_t params;
 
+   memset(&params, 0, sizeof(params));
    params.server         = settings->arrays.romm_server_url;
    params.token          = settings->arrays.romm_token;
    params.playlist_dir   = settings->paths.directory_playlist;

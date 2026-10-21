@@ -79,8 +79,8 @@ typedef struct
    /* Platforms this sync left as they were (an RBUF); not in the
     * manifest. */
    romm_library_waiting_t *waiting;
-   /* RomM's other platforms with games, which the sync didn't write: no
-    * emulator runs them, or they were left waiting (an RBUF). */
+   /* RomM's other platforms with games, which the sync didn't write:
+    * switched off, run by no emulator, or left waiting (an RBUF). */
    romm_platform_t *unsynced;
 } romm_library_t;
 
@@ -149,6 +149,10 @@ typedef struct
     * to fetch leaves them for a later sync. Either is listed in the
     * library's waiting. 0 fetches everything. */
    size_t limit;
+   /* Platforms switched off, by fs_slug, separated by commas; NULL for
+    * none. Their playlists and covers go, as for platforms gone from
+    * RomM, and they're listed in the library's unsynced. */
+   const char *exclude;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,
@@ -203,6 +207,9 @@ const char *romm_library_rom_playlist(const romm_library_t *lib,
 bool romm_library_follow_game(const romm_rom_t *const *old,
       const romm_rom_t *const *lib, const char *path, const char *label,
       char *new_path, size_t path_len, char *new_label, size_t label_len);
+
+/* Is @name one of the names in @list, which commas separate? */
+bool romm_library_listed(const char *list, const char *name);
 
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,
