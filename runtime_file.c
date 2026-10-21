@@ -360,8 +360,8 @@ runtime_log_t *runtime_log_init(
    }
 
    if (     (!core_path || !*core_path)
-         || !memcmp(core_path, "builtin", 8)
-         || !memcmp(core_path, "DETECT", 7))
+         || string_is_equal(core_path, "builtin")
+         || string_is_equal(core_path, "DETECT"))
       return NULL;
 
    /* Get core info:
