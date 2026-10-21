@@ -340,6 +340,7 @@ static void test_manifest(void)
          "Sega - Mega-CD - Sega CD.lpl");
    p.playlist_size  = 77551;
    p.playlist_mtime = 1791500001LL;
+   p.synced_at      = 1791500002LL;
    r = rom(3335, true, "Final Fight CD (USA).zip", "Final Fight CD",
          "0beca6fd");
    r.platform_id = 15;
@@ -384,7 +385,8 @@ static void test_manifest(void)
                && !strcmp(a->platform.family_name, b->platform.family_name)
                && !strcmp(a->playlist, b->playlist)
                && a->playlist_size == b->playlist_size
-               && a->playlist_mtime == b->playlist_mtime,
+               && a->playlist_mtime == b->playlist_mtime
+               && a->synced_at == b->synced_at,
                "platform %u: %u %s %s [%s] [%s] [%s] %s %lld %lld", (unsigned)i,
                b->platform.id, b->platform.slug, b->platform.fs_slug,
                b->platform.name,
@@ -2509,6 +2511,7 @@ static void test_sync_limit(void)
 {
    const char *pl = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
    const char *ids = "{\"rom_id_index\": [1, 2, 3]}";
+   romm_library_t lib;
    sync_result_t r;
    char manifest[256];
    char page[1024];
@@ -2554,7 +2557,19 @@ static void test_sync_limit(void)
          (unsigned)r.waiting);
 
    /* Two changed and one new are over it: the platform stays as it was,
-    * without fetching more. */
+    * without fetching more, and keeps the time it was last fetched. */
+   if (romm_library_load(&lib, manifest))
+   {
+      CHECK(RBUF_LEN(lib.platforms) == 1
+            && lib.platforms[0].synced_at >= lib.synced_at - 5
+            && lib.platforms[0].synced_at > 0, "Genesis synced at %lld",
+            RBUF_LEN(lib.platforms) ? (long long)lib.platforms[0].synced_at
+            : 0LL);
+      if (RBUF_LEN(lib.platforms))
+         lib.platforms[0].synced_at = 1000;
+      romm_library_save(&lib, manifest);
+      romm_library_free(&lib);
+   }
    strlcpy(page, "{\"items\": [", sizeof(page));
    game_json(page, sizeof(page), 1, "A2", "2026-10-04T09:00:00+00:00");
    game_json(page, sizeof(page), 3, "C2", "2026-10-04T09:00:00+00:00");
@@ -2566,6 +2581,11 @@ static void test_sync_limit(void)
          && !file_has(pl, "\"A2\""),
          "over the limit: %u waiting (%u games), %u games",
          (unsigned)r.waiting, (unsigned)r.waiting_games, (unsigned)r.games);
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 1
+         && lib.platforms[0].synced_at == 1000, "held: synced at %lld",
+         RBUF_LEN(lib.platforms) ? (long long)lib.platforms[0].synced_at
+         : 0LL);
+   romm_library_free(&lib);
 
    /* So the next sync without one still asks for those changes. */
    sync_limit = 0;
@@ -2575,6 +2595,11 @@ static void test_sync_limit(void)
    CHECK(sync_run_out() && r.status == ROMM_OK && !r.waiting
          && r.games == 4 && file_has(pl, "\"A2\""),
          "after the limit: %u games", (unsigned)r.games);
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 1
+         && lib.platforms[0].synced_at > 1000, "fetched: synced at %lld",
+         RBUF_LEN(lib.platforms) ? (long long)lib.platforms[0].synced_at
+         : 0LL);
+   romm_library_free(&lib);
 
    filestream_delete(manifest);
    filestream_delete(pl);
@@ -2592,6 +2617,92 @@ static void test_listed(void)
          && !romm_library_listed(NULL, "psx")
          && !romm_library_listed("psx,,", "")
          && !romm_library_listed("psx", NULL), "not listed");
+}
+
+static romm_platform_t rows_platform(unsigned id, const char *fs_slug,
+      const char *name, const char *libretro_slug, const char *family)
+{
+   romm_platform_t p;
+   memset(&p, 0, sizeof(p));
+   p.id        = id;
+   p.rom_count = id;
+   strlcpy(p.fs_slug, fs_slug, sizeof(p.fs_slug));
+   strlcpy(p.name, name, sizeof(p.name));
+   strlcpy(p.libretro_slug, libretro_slug, sizeof(p.libretro_slug));
+   strlcpy(p.family_name, family, sizeof(p.family_name));
+   return p;
+}
+
+static void test_system_rows(void)
+{
+   static const char *const names[] = { "Game Boy", "NES", "SNES",
+      "Genesis", "Saturn", "3DO", "PlayStation 3" };
+   static const enum romm_system_state states[] = { ROMM_SYSTEM_SYNCED,
+      ROMM_SYSTEM_WAITING, ROMM_SYSTEM_NOT_SYNCED, ROMM_SYSTEM_SYNCED,
+      ROMM_SYSTEM_NEW, ROMM_SYSTEM_OFF, ROMM_SYSTEM_NO_EMULATOR };
+   static const unsigned games[] = { 2, 1, 12, 3, 22, 30, 40 };
+   romm_library_t lib;
+   romm_library_platform_t p;
+   romm_library_waiting_t w;
+   romm_system_row_t *rows = NULL;
+   romm_rom_t r;
+   size_t i;
+
+   memset(&lib, 0, sizeof(lib));
+   memset(&p, 0, sizeof(p));
+   r = rom(1, true, "a.gb", "A", "");
+   p.platform  = rows_platform(6, "gb", "Game Boy", "Nintendo - Game Boy",
+         "Nintendo");
+   p.synced_at = 1791500000LL;
+   strlcpy(p.playlist, "Nintendo - Game Boy.lpl", sizeof(p.playlist));
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+   memset(&p, 0, sizeof(p));
+   p.platform = rows_platform(8, "genesis", "Genesis",
+         "Sega - Mega Drive - Genesis", "");
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+   memset(&p, 0, sizeof(p));
+   p.platform = rows_platform(11, "nes", "NES",
+         "Nintendo - Nintendo Entertainment System", "Nintendo");
+   RBUF_PUSH(p.roms, r);
+   RBUF_PUSH(lib.platforms, p);
+   RBUF_PUSH(lib.unsynced, rows_platform(40, "ps3", "PlayStation 3", "",
+         "Sony"));
+   RBUF_PUSH(lib.unsynced, rows_platform(22, "saturn", "Saturn",
+         "Sega - Saturn", "Sega"));
+   RBUF_PUSH(lib.unsynced, rows_platform(30, "3do", "3DO", "3DO", ""));
+   RBUF_PUSH(lib.unsynced, rows_platform(12, "snes", "SNES",
+         "Nintendo - Super Nintendo Entertainment System", ""));
+   memset(&w, 0, sizeof(w));
+   w.platform = lib.platforms[2].platform;
+   w.games    = 60;
+
+   romm_sidebar_system_rows(&rows, &lib, "3do,saturn", "saturn", &w, 1);
+   CHECK(RBUF_LEN(rows) == 7, "%u rows", (unsigned)RBUF_LEN(rows));
+   for (i = 0; i < RBUF_LEN(rows) && i < 7; i++)
+      CHECK(!strcmp(rows[i].platform.name, names[i])
+            && rows[i].state == states[i] && rows[i].games == games[i],
+            "row %u: %s, state %d, %u games", (unsigned)i,
+            rows[i].platform.name, rows[i].state, rows[i].games);
+   if (RBUF_LEN(rows) == 7)
+   {
+      CHECK(!strcmp(rows[0].maker, "Nintendo")
+            && !strcmp(rows[0].playlist, "Nintendo - Game Boy.lpl")
+            && rows[0].synced_at == 1791500000LL,
+            "Game Boy: [%s] %s", rows[0].maker, rows[0].playlist);
+      CHECK(rows[1].games_waiting == 60 && !rows[1].covers_waiting,
+            "NES waiting: %u", rows[1].games_waiting);
+      CHECK(!strcmp(rows[2].maker, "Nintendo") && !*rows[2].playlist,
+            "SNES maker from its libretro name: [%s]", rows[2].maker);
+      CHECK(!*rows[5].maker, "3DO maker: [%s]", rows[5].maker);
+   }
+
+   RBUF_FREE(rows);
+   romm_library_free(&lib);
 }
 
 static void test_list_edit(void)
@@ -3075,6 +3186,7 @@ int main(void)
    test_path_id();
    test_listed();
    test_list_edit();
+   test_system_rows();
    test_sync_exclude();
    test_sync_new_off();
    test_sync_only();

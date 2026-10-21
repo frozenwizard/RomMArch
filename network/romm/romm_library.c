@@ -112,6 +112,8 @@ typedef struct
     * changes fetched are new or changed since */
    const romm_rom_t **known;
    size_t changed;
+   /* That platform was left as the last sync wrote it */
+   bool held;
    /* Per entry of @lib: was its playlist written by this sync? */
    bool *written;
    unsigned rewritten;
@@ -658,6 +660,8 @@ static void romm_lib_load_platform_member(void *ctx, const char *key,
       p->playlist_size = (int64_t)strtoll(value, NULL, 10);
    else if (string_is_equal(key, "playlist_mtime"))
       p->playlist_mtime = (int64_t)strtoll(value, NULL, 10);
+   else if (string_is_equal(key, "synced_at"))
+      p->synced_at = (int64_t)strtoll(value, NULL, 10);
    else if (string_is_equal(key, "slug"))
       strlcpy(p->platform.slug, value, sizeof(p->platform.slug));
    else if (string_is_equal(key, "fs_slug"))
@@ -810,15 +814,17 @@ bool romm_library_load(romm_library_t *lib, const char *path)
  * playlist. */
 static void romm_lib_save_platform(rjsonwriter_t *writer, bool first,
       const romm_platform_t *platform, const char *playlist,
-      int64_t playlist_size, int64_t playlist_mtime)
+      int64_t playlist_size, int64_t playlist_mtime, int64_t synced_at)
 {
    if (!first)
       rjsonwriter_raw(writer, ",\n", 2);
    rjsonwriter_add_spaces(writer, 4);
    rjsonwriter_rawf(writer, "{\"id\": %u, \"rom_count\": %u, "
-         "\"playlist_size\": %lld, \"playlist_mtime\": %lld, ",
+         "\"playlist_size\": %lld, \"playlist_mtime\": %lld, "
+         "\"synced_at\": %lld, ",
          platform->id, platform->rom_count,
-         (long long)playlist_size, (long long)playlist_mtime);
+         (long long)playlist_size, (long long)playlist_mtime,
+         (long long)synced_at);
    rjsonwriter_add_string(writer, "slug");
    rjsonwriter_raw(writer, ": ", 2);
    rjsonwriter_add_string(writer, platform->slug);
@@ -875,10 +881,10 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
       romm_lib_save_platform(writer, !i, &lib->platforms[i].platform,
             lib->platforms[i].playlist, lib->platforms[i].playlist_size,
-            lib->platforms[i].playlist_mtime);
+            lib->platforms[i].playlist_mtime, lib->platforms[i].synced_at);
    for (i = 0; i < RBUF_LEN(lib->unsynced); i++)
       romm_lib_save_platform(writer, !i && !RBUF_LEN(lib->platforms),
-            &lib->unsynced[i], "", 0, 0);
+            &lib->unsynced[i], "", 0, 0, 0);
    rjsonwriter_raw(writer, "\n  ],\n", 6);
 
    rjsonwriter_add_spaces(writer, 2);
@@ -2037,6 +2043,10 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
       return true;
    memset(&entry, 0, sizeof(entry));
    entry.platform = sync->remote[sync->platform];
+   if (!sync->held)
+      entry.synced_at = (int64_t)time(NULL);
+   else if (old)
+      entry.synced_at = old->synced_at;
    if (!romm_library_playlist_name(entry.playlist, sizeof(entry.playlist),
          &entry.platform))
    {
@@ -2429,6 +2439,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
          RBUF_CLEAR(sync->known);
          RBUF_FREE(sync->roms);
          sync->changed      = 0;
+         sync->held         = false;
          sync->offset       = 0;
          sync->state        = ROMM_LIB_SYNC_ROMS;
          sync->old_platform = romm_lib_find_platform(&sync->old,
@@ -2498,6 +2509,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
             romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
          break;
       case ROMM_LIB_SYNC_HOLD:
+         sync->held = true;
          romm_lib_sync_wait(sync, sync->changed);
          RBUF_FREE(sync->roms);
          for (i = 0; i < RBUF_LEN(sync->old_platform->roms); i++)

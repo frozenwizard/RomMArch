@@ -79,6 +79,50 @@ void romm_sidebar_toggle(char *open, size_t len, const char *key);
 void romm_sidebar_members(const char ***playlists,
       const romm_sidebar_system_t *systems, const char *key);
 
+/* The maker @p is grouped under: RomM's family_name, else the vendor in
+ * its libretro name; empty when neither tells. */
+void romm_sidebar_maker(char *s, size_t len, const romm_platform_t *p);
+
+/* Where a system stands, as the Systems page shows it. */
+enum romm_system_state
+{
+   ROMM_SYSTEM_SYNCED = 0,
+   /* Synced, with more to fetch that the last sync left */
+   ROMM_SYSTEM_WAITING,
+   /* On, never synced: a sync at start left it for a manual one */
+   ROMM_SYSTEM_NOT_SYNCED,
+   ROMM_SYSTEM_OFF,
+   /* Off, being new in RomM, and not shown on the page yet */
+   ROMM_SYSTEM_NEW,
+   ROMM_SYSTEM_NO_EMULATOR
+};
+
+/* A row of the Systems page. */
+typedef struct
+{
+   romm_platform_t platform;
+   char maker[64];
+   /* Its playlist; empty when not synced. */
+   char playlist[256];
+   /* When a sync last fetched it; 0 when never or not known. */
+   int64_t synced_at;
+   enum romm_system_state state;
+   /* Its games here when synced, else RomM's count. */
+   unsigned games;
+   /* What the last sync left to fetch. */
+   unsigned games_waiting;
+   unsigned covers_waiting;
+} romm_system_row_t;
+
+/* Fills @rows, an RBUF it empties first, with every system in @lib,
+ * synced or not, in the state @exclude and @new_list give them (lists
+ * as romm_library_listed() reads) and the @waiting_count systems a
+ * sync left waiting, @waiting. By maker, as the sidebar has them, then
+ * by name; the ones no emulator runs last. */
+void romm_sidebar_system_rows(romm_system_row_t **rows,
+      const romm_library_t *lib, const char *exclude, const char *new_list,
+      const romm_library_waiting_t *waiting, size_t waiting_count);
+
 RETRO_END_DECLS
 
 #endif

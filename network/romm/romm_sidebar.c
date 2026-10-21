@@ -97,6 +97,83 @@ static void romm_sidebar_push_row(romm_sidebar_row_t **order,
    RBUF_PUSH(*order, row);
 }
 
+void romm_sidebar_maker(char *s, size_t len, const romm_platform_t *p)
+{
+   /* "Nintendo" in "Nintendo - Game Boy". */
+   const char *sep = strstr(p->libretro_slug, " - ");
+
+   *s = '\0';
+   if (*p->family_name)
+      strlcpy(s, p->family_name, len);
+   else if (sep && (size_t)(sep - p->libretro_slug) < len)
+      strlcpy(s, p->libretro_slug, (size_t)(sep - p->libretro_slug) + 1);
+}
+
+/* By maker, then name; those no emulator runs last, by name. */
+static int romm_sidebar_system_row_cmp(const void *a, const void *b)
+{
+   const romm_system_row_t *x = (const romm_system_row_t*)a;
+   const romm_system_row_t *y = (const romm_system_row_t*)b;
+   int c = (int)(x->state == ROMM_SYSTEM_NO_EMULATOR)
+      - (int)(y->state == ROMM_SYSTEM_NO_EMULATOR);
+   if (!c && x->state != ROMM_SYSTEM_NO_EMULATOR)
+      c = romm_sidebar_maker_cmp(x->maker, y->maker);
+   if (!c)
+      c = strcasecmp(x->platform.name, y->platform.name);
+   return c;
+}
+
+void romm_sidebar_system_rows(romm_system_row_t **rows,
+      const romm_library_t *lib, const char *exclude, const char *new_list,
+      const romm_library_waiting_t *waiting, size_t waiting_count)
+{
+   size_t i, j;
+   size_t count = RBUF_LEN(lib->platforms) + RBUF_LEN(lib->unsynced);
+
+   RBUF_CLEAR(*rows);
+   for (i = 0; i < count; i++)
+   {
+      bool synced = i < RBUF_LEN(lib->platforms);
+      const romm_library_platform_t *p = synced ? &lib->platforms[i] : NULL;
+      romm_system_row_t row;
+
+      memset(&row, 0, sizeof(row));
+      row.platform = synced ? p->platform
+            : lib->unsynced[i - RBUF_LEN(lib->platforms)];
+      romm_sidebar_maker(row.maker, sizeof(row.maker), &row.platform);
+      if (synced)
+      {
+         strlcpy(row.playlist, p->playlist, sizeof(row.playlist));
+         row.synced_at = p->synced_at;
+         row.games     = (unsigned)RBUF_LEN(p->roms);
+      }
+      else
+         row.games     = row.platform.rom_count;
+      for (j = 0; j < waiting_count; j++)
+         if (waiting[j].platform.id == row.platform.id)
+         {
+            row.games_waiting  = (unsigned)waiting[j].games;
+            row.covers_waiting = (unsigned)waiting[j].covers;
+         }
+
+      if (!*row.platform.libretro_slug)
+         row.state = ROMM_SYSTEM_NO_EMULATOR;
+      else if (romm_library_listed(exclude, row.platform.fs_slug))
+         row.state = romm_library_listed(new_list, row.platform.fs_slug)
+            ? ROMM_SYSTEM_NEW : ROMM_SYSTEM_OFF;
+      else if (!synced)
+         row.state = ROMM_SYSTEM_NOT_SYNCED;
+      else if (row.games_waiting || row.covers_waiting)
+         row.state = ROMM_SYSTEM_WAITING;
+      else
+         row.state = ROMM_SYSTEM_SYNCED;
+      RBUF_PUSH(*rows, row);
+   }
+   if (*rows)
+      qsort(*rows, RBUF_LEN(*rows), sizeof(**rows),
+            romm_sidebar_system_row_cmp);
+}
+
 void romm_sidebar_systems(romm_sidebar_system_t **systems,
       const romm_library_t *lib)
 {
@@ -113,18 +190,8 @@ void romm_sidebar_systems(romm_sidebar_system_t **systems,
          continue;
 
       strlcpy(sys.playlist, p->playlist, sizeof(sys.playlist));
-      sys.maker[0]   = '\0';
       sys.collection = false;
-      if (*p->platform.family_name)
-         strlcpy(sys.maker, p->platform.family_name, sizeof(sys.maker));
-      else
-      {
-         /* "Nintendo" in "Nintendo - Game Boy". */
-         const char *sep = strstr(p->platform.libretro_slug, " - ");
-         if (sep && (size_t)(sep - p->platform.libretro_slug) < sizeof(sys.maker))
-            strlcpy(sys.maker, p->platform.libretro_slug,
-                  (size_t)(sep - p->platform.libretro_slug) + 1);
-      }
+      romm_sidebar_maker(sys.maker, sizeof(sys.maker), &p->platform);
       /* '|' separates the keys of open groups. */
       while ((bar = strchr(sys.maker, '|')))
          *bar = ' ';

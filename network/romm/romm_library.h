@@ -36,6 +36,9 @@ typedef struct
     * file that differs was written by something else since. */
    int64_t playlist_size;
    int64_t playlist_mtime;
+   /* When a sync last fetched it, in seconds since the epoch; 0 when
+    * the manifest is from before this was kept. */
+   int64_t synced_at;
    /* Its games in RomM's order (an RBUF). */
    romm_rom_t *roms;
 } romm_library_platform_t;
