@@ -9015,6 +9015,7 @@ static bool ozone_is_current_entry_settings(size_t current_selection)
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
    /* Its value is the system's state */
    case MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY:
+   case MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS:
       return false;
 #endif
 

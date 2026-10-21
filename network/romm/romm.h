@@ -137,6 +137,12 @@ size_t romm_menu_system_title(const char *fs_slug, char *s, size_t len);
  * takes it off the systems marked new. Returns how many rows. */
 unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug);
 
+/* Lists in @list, for the Manage page of playlist @playlist_file, a row
+ * opening the page of each system it holds. Returns how many: 0 for a
+ * collection's. */
+unsigned romm_menu_playlist_systems(file_list_t *list,
+      const char *playlist_file);
+
 /* What a system's page can do. */
 enum romm_system_action
 {

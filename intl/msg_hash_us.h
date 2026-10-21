@@ -34017,6 +34017,14 @@ MSG_HASH(
    "%s is no longer synced on this device."
    )
 MSG_HASH(
+   MSG_ROMM_SYSTEM_OPTIONS,
+   "RomM System: %s"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_SYSTEM_OPTIONS,
+   "Sync, refresh, refetch or rebuild this system, or stop syncing it, as Settings > RomM > Systems does."
+   )
+MSG_HASH(
    MENU_ENUM_SUBLABEL_ROMM_SYSTEM_REFRESH,
    "Fetch what changed in RomM for this system now, however much that is."
    )

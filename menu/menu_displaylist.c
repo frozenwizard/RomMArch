@@ -6238,10 +6238,13 @@ static bool menu_displaylist_parse_playlist_manager_settings(
    }
 
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* A system's playlist leads to its system's page; a collection's
+    * is refreshed here. */
    if (romm_playlist)
    {
-      MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
-            MENU_ENUM_LABEL_ROMM_REFRESH_PLAYLIST, PARSE_ACTION, false);
+      if (!romm_menu_playlist_systems(list, playlist_file))
+         MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+               MENU_ENUM_LABEL_ROMM_REFRESH_PLAYLIST, PARSE_ACTION, false);
       return true;
    }
 #endif

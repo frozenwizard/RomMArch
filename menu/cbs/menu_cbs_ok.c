@@ -9945,6 +9945,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_CORE_MANAGER_ENTRY,                  action_ok_push_core_information_list},
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
          {MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY,                   action_ok_push_romm_system},
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS,                 action_ok_push_romm_system},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH, action_ok_romm_system_refresh},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH, action_ok_romm_system_refetch},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD, action_ok_romm_system_rebuild},

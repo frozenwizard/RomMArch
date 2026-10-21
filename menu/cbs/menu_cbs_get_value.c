@@ -2226,6 +2226,7 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
             break;
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
          case MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY:
+         case MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS:
             BIND_ACTION_GET_VALUE(cbs,
                   menu_action_setting_disp_set_label_romm_system);
             break;

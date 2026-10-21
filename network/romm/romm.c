@@ -1301,6 +1301,32 @@ unsigned romm_menu_systems_list(file_list_t *list)
    return count;
 }
 
+unsigned romm_menu_playlist_systems(file_list_t *list,
+      const char *playlist_file)
+{
+   unsigned count = 0;
+   size_t i;
+   char text[256];
+
+   romm_menu_load_rows();
+   for (i = 0; i < RBUF_LEN(romm_menu_rows); i++)
+   {
+      const romm_system_row_t *row = &romm_menu_rows[i];
+      if (!string_is_equal(row->playlist, playlist_file))
+         continue;
+      snprintf(text, sizeof(text),
+            msg_hash_to_str(MSG_ROMM_SYSTEM_OPTIONS), row->platform.name);
+      if (menu_entries_append(list, row->platform.fs_slug, "",
+            MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS, MENU_ROMM_SYSTEM,
+            0, 0, NULL))
+      {
+         file_list_set_alt_at_offset(list, list->size - 1, text);
+         count++;
+      }
+   }
+   return count;
+}
+
 size_t romm_menu_system_value(const char *fs_slug, char *s, size_t len)
 {
    const romm_system_row_t *row = romm_menu_find_row(fs_slug);
