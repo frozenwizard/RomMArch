@@ -13247,6 +13247,7 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_ROMM_PAIR,         PARSE_ACTION},
                {MENU_ENUM_LABEL_ROMM_CHECK_CONNECTION, PARSE_ACTION},
                {MENU_ENUM_LABEL_ROMM_REFRESH_LIBRARY, PARSE_ACTION},
+               {MENU_ENUM_LABEL_ROMM_SYSTEMS,      PARSE_ACTION},
                {MENU_ENUM_LABEL_ROMM_SYNC_ON_START, PARSE_ONLY_UINT},
                {MENU_ENUM_LABEL_ROMM_SYNC_START_LIMIT, PARSE_ONLY_UINT},
             };
@@ -16123,6 +16124,28 @@ static bool menu_displaylist_ctl_internal(
                }
             }
             break;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         case DISPLAYLIST_ROMM_SYSTEMS_LIST:
+            menu_entries_clear(info->list);
+            count        = romm_menu_systems_list(info->list);
+            info->flags |= MD_FLAG_NEED_REFRESH
+                         | MD_FLAG_NEED_PUSH;
+            break;
+         case DISPLAYLIST_ROMM_SYSTEM:
+            {
+               /* Its actions change with its state. */
+               size_t selection = menu_st->selection_ptr;
+
+               menu_entries_clear(info->list);
+               count = romm_menu_system_page(info->list, info->path);
+
+               if (selection >= count)
+                  info->flags  |= MD_FLAG_NEED_REFRESH
+                                | MD_FLAG_NEED_NAVIGATION_CLEAR;
+               info->flags     |= MD_FLAG_NEED_PUSH;
+            }
+            break;
+#endif
          case DISPLAYLIST_CORE_INFO:
             {
                /* The number of items in the core info menu:

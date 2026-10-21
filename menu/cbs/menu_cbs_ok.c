@@ -405,6 +405,10 @@ static enum msg_hash_enums action_ok_dl_to_enum(unsigned lbl)
          return MENU_ENUM_LABEL_DEFERRED_CLOUD_SYNC_SETTINGS_LIST;
       case ACTION_OK_DL_ROMM_SETTINGS_LIST:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_SETTINGS_LIST;
+      case ACTION_OK_DL_ROMM_SYSTEMS_LIST:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEMS_LIST;
+      case ACTION_OK_DL_ROMM_SYSTEM:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM;
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
          return MENU_ENUM_LABEL_DEFERRED_LOGGING_SETTINGS_LIST;
       case ACTION_OK_DL_FRAME_THROTTLE_SETTINGS_LIST:
@@ -1827,6 +1831,8 @@ int generic_action_ok_displaylist_push(
       case ACTION_OK_DL_SAVING_SETTINGS_LIST:
       case ACTION_OK_DL_CLOUD_SYNC_SETTINGS_LIST:
       case ACTION_OK_DL_ROMM_SETTINGS_LIST:
+      case ACTION_OK_DL_ROMM_SYSTEMS_LIST:
+      case ACTION_OK_DL_ROMM_SYSTEM:
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
       case ACTION_OK_DL_FRAME_THROTTLE_SETTINGS_LIST:
       case ACTION_OK_DL_FRAME_TIME_COUNTER_SETTINGS_LIST:
@@ -2042,6 +2048,7 @@ static const ok_dl_map_t ok_dl_map[] = {
    { MENU_ENUM_LABEL_CLOUD_SYNC_SETTINGS, ACTION_OK_DL_CLOUD_SYNC_SETTINGS_LIST },
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
    { MENU_ENUM_LABEL_ROMM_SETTINGS, ACTION_OK_DL_ROMM_SETTINGS_LIST },
+   { MENU_ENUM_LABEL_ROMM_SYSTEMS, ACTION_OK_DL_ROMM_SYSTEMS_LIST },
 #endif
    { MENU_ENUM_LABEL_LOGGING_SETTINGS, ACTION_OK_DL_LOGGING_SETTINGS_LIST },
    { MENU_ENUM_LABEL_FRAME_THROTTLE_SETTINGS, ACTION_OK_DL_FRAME_THROTTLE_SETTINGS_LIST },
@@ -7198,6 +7205,9 @@ STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_core_manager_steam_list, ACTION_OK_
 DEFAULT_ACTION_OK_FUNC(action_ok_push_achievements_submenu, ACTION_OK_DL_ACHIEVEMENTS_SUBMENU_LIST)
 #endif
 DEFAULT_ACTION_OK_FUNC(action_ok_push_core_information_list, ACTION_OK_DL_CORE_INFORMATION_LIST)
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_romm_system, ACTION_OK_DL_ROMM_SYSTEM)
+#endif
 #ifdef HAVE_MIST
 DEFAULT_ACTION_OK_FUNC(action_ok_push_core_information_steam_list, ACTION_OK_DL_CORE_INFORMATION_STEAM_LIST)
 #endif
@@ -9898,6 +9908,9 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
 #endif
          {MENU_ENUM_LABEL_CORE_INFORMATION,                    action_ok_push_core_information_list},
          {MENU_ENUM_LABEL_CORE_MANAGER_ENTRY,                  action_ok_push_core_information_list},
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         {MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY,                   action_ok_push_romm_system},
+#endif
 #ifdef HAVE_MIST
          {MENU_ENUM_LABEL_CORE_MANAGER_STEAM_ENTRY,            action_ok_push_core_information_steam_list},
 #endif

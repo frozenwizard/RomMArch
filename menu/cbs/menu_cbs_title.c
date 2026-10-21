@@ -34,6 +34,9 @@
 #endif
 
 #include "../../audio/audio_driver.h"
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../../network/romm/romm.h"
+#endif
 #ifdef __MACH__
 #include <TargetConditionals.h>
 #endif
@@ -180,6 +183,7 @@ static const title_enum_map_t title_enum_map[] = {
    { MENU_ENUM_LABEL_DEFERRED_SAVING_SETTINGS_LIST, MENU_ENUM_LABEL_VALUE_SAVING_SETTINGS, TITLE_VARIANT_PLAIN },
    { MENU_ENUM_LABEL_DEFERRED_CLOUD_SYNC_SETTINGS_LIST, MENU_ENUM_LABEL_VALUE_CLOUD_SYNC_SETTINGS, TITLE_VARIANT_PLAIN },
    { MENU_ENUM_LABEL_DEFERRED_ROMM_SETTINGS_LIST, MENU_ENUM_LABEL_VALUE_ROMM_SETTINGS, TITLE_VARIANT_PLAIN },
+   { MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEMS_LIST, MENU_ENUM_LABEL_VALUE_ROMM_SYSTEMS, TITLE_VARIANT_PLAIN },
    { MENU_ENUM_LABEL_DEFERRED_LOGGING_SETTINGS_LIST, MENU_ENUM_LABEL_VALUE_LOGGING_SETTINGS, TITLE_VARIANT_PLAIN },
    { MENU_ENUM_LABEL_DEFERRED_FRAME_TIME_COUNTER_SETTINGS_LIST, MENU_ENUM_LABEL_VALUE_FRAME_TIME_COUNTER_SETTINGS, TITLE_VARIANT_PLAIN },
    { MENU_ENUM_LABEL_DEFERRED_FRAME_THROTTLE_SETTINGS_LIST, MENU_ENUM_LABEL_VALUE_FRAME_THROTTLE_SETTINGS, TITLE_VARIANT_PLAIN },
@@ -663,6 +667,14 @@ static int action_get_title_mixer_stream_actions(const char *path, const char *l
 }
 #endif
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+static int action_get_title_romm_system(const char *path, const char *label, unsigned menu_type, char *s, size_t len)
+{
+   romm_menu_system_title(path, s, len);
+   return 0;
+}
+#endif
+
 static int action_get_title_deferred_playlist_list(const char *path, const char *label, unsigned menu_type, char *s, size_t len)
 {
    if (path && *path)
@@ -1113,6 +1125,10 @@ static int menu_cbs_init_bind_title_compare_label(menu_file_list_cbs_t *cbs,
 #endif
       {MENU_ENUM_LABEL_CORE_OPTIONS,
          action_get_title_core_options_list},
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM,
+         action_get_title_romm_system},
+#endif
       {MENU_ENUM_LABEL_DEFERRED_USER_BINDS_LIST,
          action_get_title_input_binds_list},
 #ifdef HAVE_CHEEVOS

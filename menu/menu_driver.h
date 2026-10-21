@@ -329,6 +329,10 @@ enum menu_settings_type
 #ifdef HAVE_ROMM
    /* A sidebar row grouping RomM playlists. */
    MENU_ROMM_GROUP,
+   /* A row of Settings > RomM > Systems, its path the RomM folder name;
+    * one no emulator runs is drawn dimmed. */
+   MENU_ROMM_SYSTEM,
+   MENU_ROMM_SYSTEM_NO_EMULATOR,
 #endif
 
    MENU_SETTINGS_LAST

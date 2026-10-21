@@ -57,6 +57,9 @@
 #ifdef HAVE_CHEEVOS
 #include "../../cheevos/cheevos_menu.h"
 #endif
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../../network/romm/romm.h"
+#endif
 
 #ifdef HAVE_MIST
 #include "../../steam/steam.h"
@@ -478,6 +481,24 @@ static size_t menu_action_setting_disp_set_label_core_manager_entry(
    *w   = 0;
    return 0;
 }
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+static size_t menu_action_setting_disp_set_label_romm_system(
+      file_list_t* list,
+      unsigned *w, unsigned type, unsigned i,
+      const char *label,
+      char *s, size_t len,
+      const char *path,
+      char *s2, size_t len2)
+{
+   size_t _len;
+   if (list->list[i].alt)
+      strlcpy(s2, list->list[i].alt, len2);
+   _len = romm_menu_system_value(path, s, len);
+   *w   = (unsigned)_len;
+   return _len;
+}
+#endif
 
 #ifdef HAVE_MIST
 static size_t menu_action_setting_disp_set_label_core_manager_steam_entry(
@@ -2187,6 +2208,12 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
             BIND_ACTION_GET_VALUE(cbs,
                   menu_action_setting_disp_set_label_core_manager_entry);
             break;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         case MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY:
+            BIND_ACTION_GET_VALUE(cbs,
+                  menu_action_setting_disp_set_label_romm_system);
+            break;
+#endif
 #ifdef HAVE_MIST
          case MENU_ENUM_LABEL_CORE_MANAGER_STEAM_ENTRY:
             BIND_ACTION_GET_VALUE(cbs,

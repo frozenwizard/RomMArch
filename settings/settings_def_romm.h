@@ -33,6 +33,10 @@ S_ACTION_EX(ROMM_REFRESH_LIBRARY,
       "romm_refresh_library", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_LIBRARY,
       "Refresh Library",
       "Update the game lists from RomM, adding and removing platforms and games to match it.")
+S_ACTION(ROMM_SYSTEMS,
+      "romm_systems",
+      "Systems",
+      "Which of RomM's systems this device syncs. Open one to sync it, refresh, refetch or rebuild it, or stop syncing it.")
 S_ACTION_EX(ROMM_REFRESH_PLAYLIST,
       "romm_refresh_playlist", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_PLAYLIST,
       "Refresh Playlist",

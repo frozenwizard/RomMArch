@@ -121,6 +121,22 @@ unsigned romm_menu_sidebar_list(file_list_t *list, const char *key);
  * it. Read from what's stored, without asking RomM. Returns how many. */
 unsigned romm_menu_status_list(file_list_t *list);
 
+/* Lists in @list the Systems page: every system in the library, under
+ * its maker, each row's path its RomM folder name. Returns how many
+ * rows. */
+unsigned romm_menu_systems_list(file_list_t *list);
+
+/* What the Systems page shows beside the system with RomM folder
+ * @fs_slug: "60 games", "Off", "New" and so on. */
+size_t romm_menu_system_value(const char *fs_slug, char *s, size_t len);
+
+/* The name of the system with RomM folder @fs_slug. */
+size_t romm_menu_system_title(const char *fs_slug, char *s, size_t len);
+
+/* Lists in @list the page of the system with RomM folder @fs_slug, and
+ * takes it off the systems marked new. Returns how many rows. */
+unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug);
+
 RETRO_END_DECLS
 
 #endif

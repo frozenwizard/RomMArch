@@ -6455,6 +6455,7 @@ border_iterate:
       bool entry_selected          = false;
       int text_offset              = -ozone->dimensions.entry_icon_padding - ozone->dimensions.entry_icon_size;
       float *icon_color            = NULL;
+      uint32_t label_rgba;
 
       /* Initial ticker configuration */
       if (use_smooth_ticker)
@@ -6795,7 +6796,15 @@ border_iterate:
          text_offset = 0;
       }
 
-      /* Draw text */
+      /* Draw text: RomM's systems under makers in the accent colour,
+       * one no emulator runs dimmed */
+      label_rgba = ozone->theme->text_rgba;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      if (entry->enum_idx == MENU_ENUM_LABEL_ROMM_SYSTEM_GROUP)
+         label_rgba = ozone->theme->text_selected_rgba;
+      else if (entry->type == MENU_ROMM_SYSTEM_NO_EMULATOR)
+         label_rgba = ozone->theme->text_sublabel_rgba;
+#endif
       gfx_display_draw_text(
             ozone->fonts.entries_label.font,
             rich_label,
@@ -6811,7 +6820,7 @@ border_iterate:
                   + ozone->fonts.entries_label.line_centre_offset
                   + scroll_y,
             video_dims,
-            COLOR_TEXT_ALPHA(ozone->theme->text_rgba, alpha_uint32),
+            COLOR_TEXT_ALPHA(label_rgba, alpha_uint32),
             TEXT_ALIGN_LEFT,
             1.0f,
             false,
@@ -9003,6 +9012,11 @@ static bool ozone_is_current_entry_settings(size_t current_selection)
    case MENU_ENUM_LABEL_CHEEVOS_MENU_SUBMENU:
       /* don't display Reset to Defaults for Locked/Unlocked achievement status messages */
       return false;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* Its value is the system's state */
+   case MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY:
+      return false;
+#endif
 
    default:
       entry_value = last_entry.value;

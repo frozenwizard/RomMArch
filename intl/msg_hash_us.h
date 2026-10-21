@@ -33893,6 +33893,86 @@ MSG_HASH(
    "New in RomM, not synced: %s"
    )
 MSG_HASH(
+   MSG_ROMM_SYSTEMS_EMPTY,
+   "No systems yet: Refresh Library lists RomM's."
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEMS_NO_EMULATOR,
+   "No Emulator"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_VALUE_GAMES,
+   "%u games"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_VALUE_WAITING,
+   "%u to fetch"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_VALUE_NOT_SYNCED,
+   "Not synced"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_VALUE_OFF,
+   "Off"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_VALUE_NEW,
+   "New"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_VALUE_NO_EMULATOR,
+   "No emulator"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_SYNCED,
+   "Status: Synced"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_WAITING,
+   "Status: Synced, with %u games and %u covers left to fetch"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_NOT_SYNCED,
+   "Status: Not synced yet"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_OFF,
+   "Status: Off"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_NEW,
+   "Status: Off, new in RomM"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_STATUS_NO_EMULATOR,
+   "Status: No emulator in RetroArch runs it"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_GAMES,
+   "Games: %u"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_GAMES_IN_ROMM,
+   "Games in RomM: %u"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_SYNCED_AT,
+   "Last synced: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_COVERS,
+   "Covers on disk: %u, %.1f MB"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_FOLDER,
+   "RomM folder: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_SYSTEM_GONE,
+   "This system is no longer in the library."
+   )
+MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,
    "Display Rate"
    )

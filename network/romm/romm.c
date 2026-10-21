@@ -24,6 +24,7 @@
 #include <file/config_file.h>
 #include <file/file_path.h>
 #include <libretro.h>
+#include <lists/dir_list.h>
 #include <lists/string_list.h>
 #include <queues/task_queue.h>
 #include <string/stdstring.h>
@@ -891,6 +892,8 @@ static char romm_library_waiting[128];
 /* The systems new in RomM, left off, that the Systems page hasn't
  * shown, as "Saturn, 3DO". */
 static char romm_library_new[128];
+/* What the last sync left to fetch, per system (an RBUF). */
+static romm_library_waiting_t *romm_library_waiting_list = NULL;
 
 static void romm_note_library(const romm_library_t *lib)
 {
@@ -902,6 +905,9 @@ static void romm_note_library(const romm_library_t *lib)
    romm_library_games     = 0;
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
       romm_library_games += (unsigned)RBUF_LEN(lib->platforms[i].roms);
+   RBUF_CLEAR(romm_library_waiting_list);
+   for (i = 0; i < RBUF_LEN(lib->waiting); i++)
+      RBUF_PUSH(romm_library_waiting_list, lib->waiting[i]);
    *romm_library_waiting = '\0';
    for (i = 0; i < RBUF_LEN(lib->waiting)
          && _len < sizeof(romm_library_waiting); i++)
@@ -1094,6 +1100,15 @@ unsigned romm_menu_sidebar_depth(const file_list_t *list, size_t i)
    return (unsigned)list->list[i].entry_idx;
 }
 
+/* @at, in seconds since the epoch, as local "2026-10-20 14:54". */
+static void romm_menu_time(char *s, size_t len, int64_t at)
+{
+   time_t t      = (time_t)at;
+   struct tm *tm = localtime(&t);
+   if (!tm || !strftime(s, len, "%Y-%m-%d %H:%M", tm))
+      *s = '\0';
+}
+
 static bool romm_menu_status_line(file_list_t *list, const char *line)
 {
    return menu_entries_append(list, line, "",
@@ -1123,11 +1138,8 @@ unsigned romm_menu_status_list(file_list_t *list)
       strlcpy(line, msg_hash_to_str(MSG_ROMM_STATUS_SYNCING), sizeof(line));
    else if (romm_library_synced_at > 0)
    {
-      time_t t      = (time_t)romm_library_synced_at;
-      struct tm *tm = localtime(&t);
       char when[32];
-      if (!tm || !strftime(when, sizeof(when), "%Y-%m-%d %H:%M", tm))
-         *when = '\0';
+      romm_menu_time(when, sizeof(when), romm_library_synced_at);
       snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_STATUS_LIBRARY),
             romm_library_games, romm_library_systems, when);
    }
@@ -1176,6 +1188,250 @@ unsigned romm_menu_sidebar_list(file_list_t *list, const char *key)
          count++;
    }
    RBUF_FREE(playlists);
+   return count;
+}
+
+/* The systems as the Systems page lists them (an RBUF), kept for the
+ * values its rows show each frame. */
+static romm_system_row_t *romm_menu_rows = NULL;
+
+/* Lists the library's systems in romm_menu_rows, from the manifest and
+ * the systems switched off and new. */
+static void romm_menu_load_rows(void)
+{
+   settings_t *settings = config_get_ptr();
+   romm_library_t lib;
+   char path[PATH_MAX_LENGTH];
+
+   romm_library_manifest_path(path, sizeof(path),
+         settings->paths.directory_playlist);
+   romm_library_load(&lib, path);
+   romm_sidebar_system_rows(&romm_menu_rows, &lib,
+         settings->arrays.romm_sync_exclude, settings->arrays.romm_sync_new,
+         romm_library_waiting_list, RBUF_LEN(romm_library_waiting_list));
+   romm_library_free(&lib);
+}
+
+static romm_system_row_t *romm_menu_find_row(const char *fs_slug)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(romm_menu_rows); i++)
+      if (string_is_equal(romm_menu_rows[i].platform.fs_slug, fs_slug))
+         return &romm_menu_rows[i];
+   return NULL;
+}
+
+unsigned romm_menu_systems_list(file_list_t *list)
+{
+   unsigned count = 0;
+   size_t i;
+
+   romm_menu_load_rows();
+   if (!RBUF_LEN(romm_menu_rows))
+      return romm_menu_status_line(list,
+            msg_hash_to_str(MSG_ROMM_SYSTEMS_EMPTY)) ? 1 : 0;
+
+   for (i = 0; i < RBUF_LEN(romm_menu_rows); i++)
+   {
+      const romm_system_row_t *row = &romm_menu_rows[i];
+      const romm_system_row_t *prev = i ? &romm_menu_rows[i - 1] : NULL;
+      bool no_emulator = row->state == ROMM_SYSTEM_NO_EMULATOR;
+      const char *group = NULL;
+
+      /* A heading for each maker, then one for the systems no emulator
+       * runs. */
+      if (no_emulator)
+      {
+         if (!prev || prev->state != ROMM_SYSTEM_NO_EMULATOR)
+            group = msg_hash_to_str(MSG_ROMM_SYSTEMS_NO_EMULATOR);
+      }
+      else if (!prev || !string_is_equal_noncase(prev->maker, row->maker))
+         group = *row->maker ? row->maker
+               : msg_hash_to_str(MSG_ROMM_SIDEBAR_OTHER);
+      if (group && menu_entries_append(list, group, "",
+            MENU_ENUM_LABEL_ROMM_SYSTEM_GROUP, MENU_SETTINGS_CORE_INFO_NONE,
+            0, 0, NULL))
+         count++;
+
+      if (menu_entries_append(list, row->platform.fs_slug, "",
+            MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY,
+            no_emulator ? MENU_ROMM_SYSTEM_NO_EMULATOR : MENU_ROMM_SYSTEM,
+            0, 0, NULL))
+      {
+         file_list_set_alt_at_offset(list, list->size - 1,
+               row->platform.name);
+         count++;
+      }
+   }
+   return count;
+}
+
+size_t romm_menu_system_value(const char *fs_slug, char *s, size_t len)
+{
+   const romm_system_row_t *row = romm_menu_find_row(fs_slug);
+
+   *s = '\0';
+   if (!row)
+      return 0;
+   switch (row->state)
+   {
+      case ROMM_SYSTEM_SYNCED:
+         return snprintf(s, len,
+               msg_hash_to_str(MSG_ROMM_SYSTEM_VALUE_GAMES), row->games);
+      case ROMM_SYSTEM_WAITING:
+         return snprintf(s, len,
+               msg_hash_to_str(MSG_ROMM_SYSTEM_VALUE_WAITING),
+               row->games_waiting ? row->games_waiting : row->covers_waiting);
+      case ROMM_SYSTEM_NOT_SYNCED:
+         return strlcpy(s,
+               msg_hash_to_str(MSG_ROMM_SYSTEM_VALUE_NOT_SYNCED), len);
+      case ROMM_SYSTEM_OFF:
+         return strlcpy(s, msg_hash_to_str(MSG_ROMM_SYSTEM_VALUE_OFF), len);
+      case ROMM_SYSTEM_NEW:
+         return strlcpy(s, msg_hash_to_str(MSG_ROMM_SYSTEM_VALUE_NEW), len);
+      case ROMM_SYSTEM_NO_EMULATOR:
+         return strlcpy(s,
+               msg_hash_to_str(MSG_ROMM_SYSTEM_VALUE_NO_EMULATOR), len);
+   }
+   return 0;
+}
+
+size_t romm_menu_system_title(const char *fs_slug, char *s, size_t len)
+{
+   const romm_system_row_t *row = romm_menu_find_row(fs_slug);
+   if (!row)
+   {
+      romm_menu_load_rows();
+      row = romm_menu_find_row(fs_slug);
+   }
+   return strlcpy(s, row ? row->platform.name : fs_slug, len);
+}
+
+/* Covers on disk in @playlist's box art folder: how many and their
+ * size. A folder two systems share counts both. */
+static void romm_menu_covers(const char *playlist, unsigned *count,
+      uint64_t *bytes)
+{
+   settings_t *settings = config_get_ptr();
+   struct string_list *files;
+   char name[NAME_MAX_LENGTH];
+   char dir[PATH_MAX_LENGTH];
+   char boxarts[PATH_MAX_LENGTH];
+   size_t i;
+
+   *count = 0;
+   *bytes = 0;
+   fill_pathname(name, playlist, "", sizeof(name));
+   fill_pathname_join(dir, settings->paths.directory_thumbnails, name,
+         sizeof(dir));
+   fill_pathname_join(boxarts, dir, "Named_Boxarts", sizeof(boxarts));
+   if (!(files = dir_list_new(boxarts, "png|jpg", false, false, false,
+         false)))
+      return;
+   for (i = 0; i < files->size; i++)
+   {
+      int32_t size = path_get_size(files->elems[i].data);
+      if (size > 0)
+         *bytes += (uint64_t)size;
+      (*count)++;
+   }
+   string_list_free(files);
+}
+
+unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug)
+{
+   settings_t *settings = config_get_ptr();
+   romm_system_row_t *row;
+   enum romm_system_state state;
+   unsigned count = 0;
+   size_t i;
+   char line[512];
+
+   romm_menu_load_rows();
+   if (!(row = romm_menu_find_row(fs_slug)))
+      return romm_menu_status_line(list,
+            msg_hash_to_str(MSG_ROMM_SYSTEM_GONE)) ? 1 : 0;
+
+   /* Shown now, so no longer marked new: this page still says it is. */
+   state = row->state;
+   if (state == ROMM_SYSTEM_NEW)
+   {
+      romm_library_list_remove(settings->arrays.romm_sync_new, fs_slug);
+      if (!romm_overrides_active())
+         command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+      row->state        = ROMM_SYSTEM_OFF;
+      *romm_library_new = '\0';
+      for (i = 0; i < RBUF_LEN(romm_menu_rows); i++)
+         if (romm_menu_rows[i].state == ROMM_SYSTEM_NEW)
+         {
+            if (*romm_library_new)
+               strlcat(romm_library_new, ", ", sizeof(romm_library_new));
+            strlcat(romm_library_new, romm_menu_rows[i].platform.name,
+                  sizeof(romm_library_new));
+         }
+   }
+
+   switch (state)
+   {
+      case ROMM_SYSTEM_SYNCED:
+         strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_SYNCED),
+               sizeof(line));
+         break;
+      case ROMM_SYSTEM_WAITING:
+         snprintf(line, sizeof(line),
+               msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_WAITING),
+               row->games_waiting, row->covers_waiting);
+         break;
+      case ROMM_SYSTEM_NOT_SYNCED:
+         strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_NOT_SYNCED),
+               sizeof(line));
+         break;
+      case ROMM_SYSTEM_OFF:
+         strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_OFF),
+               sizeof(line));
+         break;
+      case ROMM_SYSTEM_NEW:
+         strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_NEW),
+               sizeof(line));
+         break;
+      case ROMM_SYSTEM_NO_EMULATOR:
+         strlcpy(line, msg_hash_to_str(MSG_ROMM_SYSTEM_STATUS_NO_EMULATOR),
+               sizeof(line));
+         break;
+   }
+   if (romm_menu_status_line(list, line))
+      count++;
+
+   snprintf(line, sizeof(line), msg_hash_to_str(*row->playlist
+         ? MSG_ROMM_SYSTEM_GAMES : MSG_ROMM_SYSTEM_GAMES_IN_ROMM),
+         row->games);
+   if (romm_menu_status_line(list, line))
+      count++;
+
+   if (*row->playlist)
+   {
+      unsigned covers;
+      uint64_t bytes;
+      char when[32];
+      if (row->synced_at > 0)
+      {
+         romm_menu_time(when, sizeof(when), row->synced_at);
+         snprintf(line, sizeof(line),
+               msg_hash_to_str(MSG_ROMM_SYSTEM_SYNCED_AT), when);
+         if (romm_menu_status_line(list, line))
+            count++;
+      }
+      romm_menu_covers(row->playlist, &covers, &bytes);
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_SYSTEM_COVERS),
+            covers, (double)bytes / (1024.0 * 1024.0));
+      if (romm_menu_status_line(list, line))
+         count++;
+   }
+
+   snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_SYSTEM_FOLDER),
+         row->platform.fs_slug);
+   if (romm_menu_status_line(list, line))
+      count++;
    return count;
 }
 #endif
