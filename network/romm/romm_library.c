@@ -604,6 +604,8 @@ static void romm_lib_load_platform_end(void *ctx)
 
    if (load->cur.platform.id && *load->cur.playlist)
       RBUF_PUSH(load->lib->platforms, load->cur);
+   else if (load->cur.platform.id)
+      RBUF_PUSH(load->lib->unsynced, load->cur.platform);
    memset(&load->cur, 0, sizeof(load->cur));
 }
 
@@ -728,6 +730,45 @@ bool romm_library_load(romm_library_t *lib, const char *path)
    return ok;
 }
 
+/* One entry of the manifest's platforms; a platform not synced has no
+ * playlist. */
+static void romm_lib_save_platform(rjsonwriter_t *writer, bool first,
+      const romm_platform_t *platform, const char *playlist,
+      int64_t playlist_size, int64_t playlist_mtime)
+{
+   if (!first)
+      rjsonwriter_raw(writer, ",\n", 2);
+   rjsonwriter_add_spaces(writer, 4);
+   rjsonwriter_rawf(writer, "{\"id\": %u, \"rom_count\": %u, "
+         "\"playlist_size\": %lld, \"playlist_mtime\": %lld, ",
+         platform->id, platform->rom_count,
+         (long long)playlist_size, (long long)playlist_mtime);
+   rjsonwriter_add_string(writer, "slug");
+   rjsonwriter_raw(writer, ": ", 2);
+   rjsonwriter_add_string(writer, platform->slug);
+   rjsonwriter_raw(writer, ", ", 2);
+   rjsonwriter_add_string(writer, "fs_slug");
+   rjsonwriter_raw(writer, ": ", 2);
+   rjsonwriter_add_string(writer, platform->fs_slug);
+   rjsonwriter_raw(writer, ", ", 2);
+   rjsonwriter_add_string(writer, "name");
+   rjsonwriter_raw(writer, ": ", 2);
+   rjsonwriter_add_string(writer, platform->name);
+   rjsonwriter_raw(writer, ", ", 2);
+   rjsonwriter_add_string(writer, "libretro_slug");
+   rjsonwriter_raw(writer, ": ", 2);
+   rjsonwriter_add_string(writer, platform->libretro_slug);
+   rjsonwriter_raw(writer, ", ", 2);
+   rjsonwriter_add_string(writer, "family_name");
+   rjsonwriter_raw(writer, ": ", 2);
+   rjsonwriter_add_string(writer, platform->family_name);
+   rjsonwriter_raw(writer, ", ", 2);
+   rjsonwriter_add_string(writer, "playlist");
+   rjsonwriter_raw(writer, ": ", 2);
+   rjsonwriter_add_string(writer, playlist);
+   rjsonwriter_raw(writer, "}", 1);
+}
+
 bool romm_library_save(const romm_library_t *lib, const char *path)
 {
    rjsonwriter_t *writer;
@@ -756,40 +797,12 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
    rjsonwriter_add_string(writer, "platforms");
    rjsonwriter_raw(writer, ": [\n", 4);
    for (i = 0; i < RBUF_LEN(lib->platforms); i++)
-   {
-      const romm_library_platform_t *p = &lib->platforms[i];
-      if (i)
-         rjsonwriter_raw(writer, ",\n", 2);
-      rjsonwriter_add_spaces(writer, 4);
-      rjsonwriter_rawf(writer, "{\"id\": %u, \"rom_count\": %u, "
-            "\"playlist_size\": %lld, \"playlist_mtime\": %lld, ",
-            p->platform.id, p->platform.rom_count,
-            (long long)p->playlist_size, (long long)p->playlist_mtime);
-      rjsonwriter_add_string(writer, "slug");
-      rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, p->platform.slug);
-      rjsonwriter_raw(writer, ", ", 2);
-      rjsonwriter_add_string(writer, "fs_slug");
-      rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, p->platform.fs_slug);
-      rjsonwriter_raw(writer, ", ", 2);
-      rjsonwriter_add_string(writer, "name");
-      rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, p->platform.name);
-      rjsonwriter_raw(writer, ", ", 2);
-      rjsonwriter_add_string(writer, "libretro_slug");
-      rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, p->platform.libretro_slug);
-      rjsonwriter_raw(writer, ", ", 2);
-      rjsonwriter_add_string(writer, "family_name");
-      rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, p->platform.family_name);
-      rjsonwriter_raw(writer, ", ", 2);
-      rjsonwriter_add_string(writer, "playlist");
-      rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, p->playlist);
-      rjsonwriter_raw(writer, "}", 1);
-   }
+      romm_lib_save_platform(writer, !i, &lib->platforms[i].platform,
+            lib->platforms[i].playlist, lib->platforms[i].playlist_size,
+            lib->platforms[i].playlist_mtime);
+   for (i = 0; i < RBUF_LEN(lib->unsynced); i++)
+      romm_lib_save_platform(writer, !i && !RBUF_LEN(lib->platforms),
+            &lib->unsynced[i], "", 0, 0);
    rjsonwriter_raw(writer, "\n  ],\n", 6);
 
    rjsonwriter_add_spaces(writer, 2);
@@ -873,6 +886,7 @@ void romm_library_free(romm_library_t *lib)
    RBUF_FREE(lib->collections);
    RBUF_FREE(lib->favorite_ids);
    RBUF_FREE(lib->waiting);
+   RBUF_FREE(lib->unsynced);
    memset(lib, 0, sizeof(*lib));
 }
 
@@ -968,6 +982,28 @@ static void romm_lib_sync_remove_stale(romm_lib_sync_t *sync)
          romm_lib_sync_remove(sync, sync->old.collections[i].playlist);
 }
 
+/* @lib's entry for platform @id, if it wrote one. */
+static const romm_library_platform_t *romm_lib_find_platform(
+      const romm_library_t *lib, unsigned id)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+      if (lib->platforms[i].platform.id == id)
+         return &lib->platforms[i];
+   return NULL;
+}
+
+/* Platform @id, if @lib lists it as not synced. */
+static const romm_platform_t *romm_lib_find_unsynced(
+      const romm_library_t *lib, unsigned id)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->unsynced); i++)
+      if (lib->unsynced[i].id == id)
+         return &lib->unsynced[i];
+   return NULL;
+}
+
 /* A sync that stopped part way has rewritten some playlists; the
  * manifest records those and keeps the rest from the last sync, so
  * the playlists stay accounted for. */
@@ -988,6 +1024,11 @@ static void romm_lib_sync_save_partial(romm_lib_sync_t *sync)
       if (!romm_lib_playlist_taken(&sync->lib,
             sync->old.collections[i].playlist))
          RBUF_PUSH(sync->lib.collections, sync->old.collections[i]);
+   for (i = 0; i < RBUF_LEN(sync->old.unsynced); i++)
+      if (     !romm_lib_find_platform(&sync->lib, sync->old.unsynced[i].id)
+            && !romm_lib_find_unsynced(&sync->lib,
+                  sync->old.unsynced[i].id))
+         RBUF_PUSH(sync->lib.unsynced, sync->old.unsynced[i]);
    if (!sync->lib.favorites_listed)
       sync->lib.favorites_id = sync->old.favorites_id;
    strlcpy(sync->lib.server, sync->server, sizeof(sync->lib.server));
@@ -2123,17 +2164,6 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
    return ok;
 }
 
-/* The last sync's entry for platform @id, if it wrote one. */
-static const romm_library_platform_t *romm_lib_find_platform(
-      const romm_library_t *lib, unsigned id)
-{
-   size_t i;
-   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
-      if (lib->platforms[i].platform.id == id)
-         return &lib->platforms[i];
-   return NULL;
-}
-
 /* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the
  * request callbacks, so they share @sync without locking. */
 static void romm_lib_sync_handler(retro_task_t *task)
@@ -2168,9 +2198,15 @@ static void romm_lib_sync_handler(retro_task_t *task)
             romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
          break;
       case ROMM_LIB_SYNC_NEXT:
+         /* No emulator runs a platform without a libretro name. */
          while (     sync->platform < count
-               && !sync->remote[sync->platform].rom_count)
+               && (   !sync->remote[sync->platform].rom_count
+                   || !*sync->remote[sync->platform].libretro_slug))
+         {
+            if (sync->remote[sync->platform].rom_count)
+               RBUF_PUSH(sync->lib.unsynced, sync->remote[sync->platform]);
             sync->platform++;
+         }
          if (sync->platform >= count)
          {
             sync->state = sync->collections
@@ -2210,6 +2246,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
          {
             romm_lib_sync_wait(sync,
                   sync->remote[sync->platform].rom_count);
+            RBUF_PUSH(sync->lib.unsynced, sync->remote[sync->platform]);
             sync->platform++;
             sync->state = ROMM_LIB_SYNC_NEXT;
          }

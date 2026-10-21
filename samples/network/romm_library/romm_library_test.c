@@ -359,6 +359,8 @@ static void test_manifest(void)
          "\xe8\xb1\xaa\xe8\xa1\x80 \\ tab\there", "1234abcd");
    RBUF_PUSH(p.roms, r);
    RBUF_PUSH(lib.platforms, p);
+   p = lib_platform(40, "ps3", "", "");
+   RBUF_PUSH(lib.unsynced, p.platform);
 
    CHECK(romm_library_save(&lib, path), "manifest not saved");
    CHECK(romm_library_load(&back, path), "manifest not loaded");
@@ -408,8 +410,14 @@ static void test_manifest(void)
          }
       }
    }
+   CHECK(RBUF_LEN(back.unsynced) == 1 && back.unsynced[0].id == 40
+         && !strcmp(back.unsynced[0].fs_slug, "ps3-dir")
+         && !strcmp(back.unsynced[0].name, lib.unsynced[0].name)
+         && back.unsynced[0].rom_count == 2,
+         "unsynced: %u", (unsigned)RBUF_LEN(back.unsynced));
    romm_library_free(&back);
-   CHECK(!back.platforms && !*back.server, "freed library not empty");
+   CHECK(!back.platforms && !back.unsynced && !*back.server,
+         "freed library not empty");
 
    /* A newer format, or a damaged file, reads as no library. */
    {
@@ -617,7 +625,9 @@ static const char *sync_platforms_reply =
    " \"rom_count\": 1,"
    " \"name\": \"Mega Drive\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
    " {\"id\": 40, \"slug\": \"ps3\", \"rom_count\": 5,"
-   " \"name\": \"PlayStation 3\", \"libretro_slug\": null}]";
+   " \"name\": \"PlayStation 3\", \"libretro_slug\": null},"
+   " {\"id\": 41, \"slug\": \"saturn\", \"rom_count\": 5,"
+   " \"name\": \"Saturn\", \"libretro_slug\": \"Sega - Saturn\"}]";
 
 static void test_sync(void)
 {
@@ -655,7 +665,7 @@ static void test_sync(void)
    CHECK(strstr(stub_req.url, "platform_ids=8&")
          && strstr(stub_req.url, "&offset=0"), "Genesis page 1 %s",
          stub_req.url);
-   CHECK(stub_task && stub_task->progress == 40, "progress %d",
+   CHECK(stub_task && stub_task->progress == 33, "progress %d",
          stub_task ? (int)stub_task->progress : -1);
    page = roms_page(8, 350, 50);
    sync_answer(200, page);
@@ -670,9 +680,11 @@ static void test_sync(void)
    CHECK(strstr(stub_req.url, "platform_ids=30&"), "Mega Drive %s",
          stub_req.url);
 
-   /* Everything hidden from this user: no playlist. */
+   /* PS3, which no emulator runs, isn't asked for. Saturn has
+    * everything hidden from this user: no playlist. */
    sync_answer(200, "{\"items\": []}");
-   CHECK(strstr(stub_req.url, "platform_ids=40&"), "PS3 %s", stub_req.url);
+   CHECK(strstr(stub_req.url, "platform_ids=41&"), "Saturn %s",
+         stub_req.url);
 
    CHECK(sync_run_out(), "sync didn't finish without more requests");
    CHECK(r.calls == 1 && r.status == ROMM_OK && r.platforms == 3
@@ -686,8 +698,9 @@ static void test_sync(void)
          "Genesis and Mega Drive share one playlist: %u entries",
          count_entries(TEST_DIR "/Sega - Mega Drive - Genesis.lpl"));
    CHECK(!path_is_valid(TEST_DIR "/RomM - PlayStation 3.lpl")
+         && !path_is_valid(TEST_DIR "/Sega - Saturn.lpl")
          && !path_is_valid(TEST_DIR "/RomM - Nintendo Switch.lpl"),
-         "playlist for a platform without games");
+         "playlist for a platform without games or emulator");
 
    CHECK(romm_library_load(&lib, manifest), "manifest not written");
    CHECK(!strcmp(lib.server, "http://romm.local:8090") && lib.synced_at > 0
@@ -705,6 +718,12 @@ static void test_sync(void)
                "Sega - Mega Drive - Genesis.lpl"),
             "manifest Genesis: %u games, maker [%s]", (unsigned)RBUF_LEN(
                lib.platforms[1].roms), lib.platforms[1].platform.family_name);
+   /* Listed, not synced: PS3 alone, not Switch with no games. */
+   CHECK(RBUF_LEN(lib.unsynced) == 1 && lib.unsynced[0].id == 40
+         && !strcmp(lib.unsynced[0].name, "PlayStation 3")
+         && lib.unsynced[0].rom_count == 5,
+         "manifest unsynced: %u, first %u", (unsigned)RBUF_LEN(lib.unsynced),
+         RBUF_LEN(lib.unsynced) ? lib.unsynced[0].id : 0);
    romm_library_free(&lib);
 
    /* No response part way: reported, the manifest left as it was. */
@@ -718,7 +737,8 @@ static void test_sync(void)
    CHECK(sync_run_out() && r.calls == 1 && r.status == ROMM_ERR_UNREACHABLE
          && !r.had_old, "unreachable: calls %u status %d", r.calls,
          r.status);
-   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 3,
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 3
+         && RBUF_LEN(lib.unsynced) == 1,
          "manifest changed by a failed sync");
    romm_library_free(&lib);
 
@@ -839,10 +859,12 @@ static void test_sync_reconcile(void)
    written_count = 0;
    CHECK(sync_start("http://romm.local:8090", "t", TEST_DIR, NULL,
          NULL, NULL, on_sync, &r), "sync not started");
-   sync_answer(200, "[{\"id\": 15, \"rom_count\": 2,"
+   sync_answer(200, "[{\"id\": 18, \"rom_count\": 2, \"name\": \"PS3\"},"
+         " {\"id\": 15, \"rom_count\": 2,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
          " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
-         " \"libretro_slug\": \"Nintendo - SNES\"}]");
+         " \"libretro_slug\": \"Nintendo - SNES\"},"
+         " {\"id\": 19, \"rom_count\": 1, \"name\": \"Xbox\"}]");
    page = roms_page(15, 1, 2);
    sync_answer(200, page);
    free(page);
@@ -862,7 +884,8 @@ static void test_sync_reconcile(void)
          && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
          "playlists not written");
    CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 2
-         && lib.platforms[1].platform.id == 16, "manifest after removal");
+         && lib.platforms[1].platform.id == 16
+         && RBUF_LEN(lib.unsynced) == 2, "manifest after removal");
    synced_at = lib.synced_at;
    romm_library_free(&lib);
 
@@ -871,11 +894,13 @@ static void test_sync_reconcile(void)
    memset(&r, 0, sizeof(r));
    CHECK(sync_start("http://romm.local:8090", "t", TEST_DIR, NULL,
          NULL, NULL, on_sync, &r), "second sync not started");
-   sync_answer(200, "[{\"id\": 15, \"rom_count\": 3,"
+   sync_answer(200, "[{\"id\": 18, \"rom_count\": 2, \"name\": \"PS3\"},"
+         " {\"id\": 15, \"rom_count\": 3,"
          " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
          " {\"id\": 16, \"rom_count\": 1, \"name\": \"SNES\","
          " \"libretro_slug\": \"Nintendo - SNES\"},"
-         " {\"id\": 17, \"rom_count\": 1, \"name\": \"New\"}]");
+         " {\"id\": 17, \"rom_count\": 1, \"name\": \"New\"},"
+         " {\"id\": 19, \"rom_count\": 1, \"name\": \"Xbox\"}]");
    /* Sega CD: its ids, then the one game new since the last sync. */
    sync_answer(200, "{\"rom_id_index\": [1, 2, 3]}");
    page = roms_page(15, 3, 1);
@@ -900,6 +925,10 @@ static void test_sync_reconcile(void)
             "partial manifest games: %u %u",
             (unsigned)RBUF_LEN(lib.platforms[0].roms),
             (unsigned)RBUF_LEN(lib.platforms[1].roms));
+   /* PS3 listed again, Xbox kept from the last sync. */
+   CHECK(RBUF_LEN(lib.unsynced) == 2 && lib.unsynced[0].id == 18
+         && lib.unsynced[1].id == 19, "partial manifest unsynced: %u",
+         (unsigned)RBUF_LEN(lib.unsynced));
    romm_library_free(&lib);
 
    filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");

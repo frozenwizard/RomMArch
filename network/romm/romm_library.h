@@ -79,6 +79,9 @@ typedef struct
    /* Platforms this sync left as they were (an RBUF); not in the
     * manifest. */
    romm_library_waiting_t *waiting;
+   /* RomM's other platforms with games, which the sync didn't write: no
+    * emulator runs them, or they were left waiting (an RBUF). */
+   romm_platform_t *unsynced;
 } romm_library_t;
 
 /* The playlist path of @rom: romm://<id>/<RomM file name>. A folder
@@ -215,8 +218,8 @@ bool romm_library_save(const romm_library_t *lib, const char *path);
 void romm_library_free(romm_library_t *lib);
 
 /* Brings the playlists in the playlist folder in line with the server:
- * one per RomM platform with games the token's user can see, and the
- * manifest recording them. Runs as a task showing its progress; @cb
+ * one per RomM platform with games the token's user can see that an
+ * emulator runs, and the manifest recording them. Runs as a task showing its progress; @cb
  * runs on the main thread when it ends. Then, given a thumbnails
  * folder, a second task fetches the box art that is new or changed;
  * covers of games gone are deleted. */
