@@ -457,6 +457,7 @@ static const char *sync_refetch;
 static romm_library_core_runs_t test_core_runs;
 static size_t sync_limit;
 static const char *sync_exclude;
+static bool sync_new_off;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -487,6 +488,7 @@ static bool sync_start(const char *server, const char *token,
    params.core_runs      = test_core_runs;
    params.limit          = sync_limit;
    params.exclude        = sync_exclude;
+   params.new_off        = sync_new_off;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -504,6 +506,9 @@ typedef struct
    size_t waiting;
    size_t waiting_games;
    size_t waiting_covers;
+   size_t unsynced;
+   size_t added;
+   unsigned added_id;
 } sync_result_t;
 
 static void on_sync(void *user_data, enum romm_status status,
@@ -521,6 +526,9 @@ static void on_sync(void *user_data, enum romm_status status,
    r->waiting          = RBUF_LEN(lib->waiting);
    r->waiting_games    = r->waiting ? lib->waiting[0].games : 0;
    r->waiting_covers   = r->waiting ? lib->waiting[0].covers : 0;
+   r->unsynced         = RBUF_LEN(lib->unsynced);
+   r->added            = RBUF_LEN(lib->added);
+   r->added_id         = r->added ? lib->added[0].id : 0;
    r->platforms = RBUF_LEN(lib->platforms);
    r->games     = 0;
    for (i = 0; i < r->platforms; i++)
@@ -2639,6 +2647,101 @@ static void test_sync_exclude(void)
    filestream_delete(TEST_DIR);
 }
 
+/* Syncs @platforms, answering each platform it asks for with @pages
+ * in turn: one game each, as a full fetch or, for a platform it knows,
+ * its ids and no changes. */
+static void new_off_sync(sync_result_t *r, const char *platforms,
+      const char *const *pages, size_t count)
+{
+   size_t i;
+   memset(r, 0, sizeof(*r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, r);
+   sync_answer(200, platforms);
+   for (i = 0; i < count; i++)
+      sync_answer(200, pages[i]);
+   CHECK(sync_run_out() && r->status == ROMM_OK, "new off sync: status %d",
+         r->status);
+}
+
+static void test_sync_new_off(void)
+{
+   const char *one = "[{\"id\": 15, \"fs_slug\": \"segacd\", \"rom_count\": 1,"
+      " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"}]";
+   const char *more = "[{\"id\": 15, \"fs_slug\": \"segacd\", \"rom_count\": 1,"
+      " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
+      " {\"id\": 16, \"fs_slug\": \"snes\", \"rom_count\": 1, \"name\": \"SNES\","
+      " \"libretro_slug\": \"Nintendo - SNES\"},"
+      " {\"id\": 17, \"fs_slug\": \"ps3\", \"rom_count\": 1}]";
+   /* RomM's database rebuilt: new ids, the same folders. */
+   const char *rebuilt = "[{\"id\": 115, \"fs_slug\": \"segacd\", \"rom_count\": 1,"
+      " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
+      " {\"id\": 116, \"fs_slug\": \"snes\", \"rom_count\": 1, \"name\": \"SNES\","
+      " \"libretro_slug\": \"Nintendo - SNES\"}]";
+   const char *game = "{\"items\": [{\"id\": 1, \"fs_name\": \"a.bin\","
+      " \"has_simple_single_file\": true,"
+      " \"updated_at\": \"2026-10-02T04:00:00+00:00\"}]}";
+   const char *known[2];
+   char manifest[256];
+   sync_result_t r;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   filestream_delete(manifest);
+   stub_reset();
+   sync_new_off = true;
+   known[0] = "{\"rom_id_index\": [1]}";
+   known[1] = "{\"items\": []}";
+
+   /* A first sync takes every platform. */
+   new_off_sync(&r, one, &game, 1);
+   CHECK(r.platforms == 1 && !r.added, "first sync: %u platforms, %u added",
+         (unsigned)r.platforms, (unsigned)r.added);
+
+   /* SNES is new: not asked for, listed as not synced and added. PS3,
+    * which nothing runs, isn't added. */
+   new_off_sync(&r, more, known, 2);
+   CHECK(r.platforms == 1 && r.unsynced == 2 && r.added == 1
+         && r.added_id == 16 && !path_is_valid(TEST_DIR "/Nintendo - SNES.lpl"),
+         "new: %u platforms, %u unsynced, %u added (%u)",
+         (unsigned)r.platforms, (unsigned)r.unsynced, (unsigned)r.added,
+         r.added_id);
+
+   /* Known now: synced unless switched off, which the caller does. */
+   sync_exclude = "snes";
+   new_off_sync(&r, more, known, 2);
+   CHECK(r.platforms == 1 && !r.added, "excluded: %u platforms, %u added",
+         (unsigned)r.platforms, (unsigned)r.added);
+   sync_exclude = NULL;
+   {
+      const char *pages[3];
+      pages[0] = known[0];
+      pages[1] = known[1];
+      pages[2] = game;
+      new_off_sync(&r, more, pages, 3);
+   }
+   CHECK(r.platforms == 2 && !r.added
+         && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
+         "switched on: %u platforms, %u added", (unsigned)r.platforms,
+         (unsigned)r.added);
+
+   /* New ids for the same folders aren't new platforms. */
+   {
+      const char *pages[2];
+      pages[0] = game;
+      pages[1] = game;
+      new_off_sync(&r, rebuilt, pages, 2);
+   }
+   CHECK(r.platforms == 2 && !r.added, "rebuilt: %u platforms, %u added",
+         (unsigned)r.platforms, (unsigned)r.added);
+
+   sync_new_off = false;
+   filestream_delete(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl");
+   filestream_delete(TEST_DIR "/Nintendo - SNES.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -2671,6 +2774,7 @@ int main(void)
    test_path_id();
    test_listed();
    test_sync_exclude();
+   test_sync_new_off();
 
    if (failures)
    {

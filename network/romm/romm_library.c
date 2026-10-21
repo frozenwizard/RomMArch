@@ -144,6 +144,9 @@ typedef struct
    char refetch[256];
    /* Platforms switched off, as params.exclude; NULL for none */
    char *exclude;
+   bool new_off;
+   /* There was a manifest from a last sync */
+   bool had_old;
    romm_library_core_runs_t core_runs;
    char *token;
    char *covers_title;
@@ -911,6 +914,7 @@ void romm_library_free(romm_library_t *lib)
    RBUF_FREE(lib->favorite_ids);
    RBUF_FREE(lib->waiting);
    RBUF_FREE(lib->unsynced);
+   RBUF_FREE(lib->added);
    memset(lib, 0, sizeof(*lib));
 }
 
@@ -2188,13 +2192,38 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
    return ok;
 }
 
+/* Is @p, which an emulator runs and isn't switched off, new since the
+ * last sync, to start off? A platform keeps its folder name when
+ * RomM's database is rebuilt and the ids change. */
+static bool romm_lib_sync_new(const romm_lib_sync_t *sync,
+      const romm_platform_t *p)
+{
+   size_t i;
+   if (     !sync->new_off || !sync->had_old
+         || romm_lib_find_platform(&sync->old, p->id)
+         || romm_lib_find_unsynced(&sync->old, p->id))
+      return false;
+   if (*p->fs_slug)
+   {
+      for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+         if (string_is_equal(sync->old.platforms[i].platform.fs_slug,
+               p->fs_slug))
+            return false;
+      for (i = 0; i < RBUF_LEN(sync->old.unsynced); i++)
+         if (string_is_equal(sync->old.unsynced[i].fs_slug, p->fs_slug))
+            return false;
+   }
+   return true;
+}
+
 /* Is @p left out of this sync? No emulator runs a platform without a
  * libretro name. */
 static bool romm_lib_sync_off(const romm_lib_sync_t *sync,
       const romm_platform_t *p)
 {
-   return !*p->libretro_slug || romm_library_listed(sync->exclude,
-         p->fs_slug);
+   return !*p->libretro_slug
+      || romm_library_listed(sync->exclude, p->fs_slug)
+      || romm_lib_sync_new(sync, p);
 }
 
 /* Runs on the main thread (RETRO_TASK_FLG_MAIN_THREAD), like the
@@ -2223,7 +2252,7 @@ static void romm_lib_sync_handler(retro_task_t *task)
    switch (sync->state)
    {
       case ROMM_LIB_SYNC_PLATFORMS:
-         romm_library_load(&sync->old, sync->manifest);
+         sync->had_old = romm_library_load(&sync->old, sync->manifest);
          if (romm_client_platforms(sync->server, sync->token,
                romm_lib_sync_platforms_cb, sync))
             sync->pending = true;
@@ -2235,8 +2264,17 @@ static void romm_lib_sync_handler(retro_task_t *task)
                && (   !sync->remote[sync->platform].rom_count
                    || romm_lib_sync_off(sync, &sync->remote[sync->platform])))
          {
-            if (sync->remote[sync->platform].rom_count)
-               RBUF_PUSH(sync->lib.unsynced, sync->remote[sync->platform]);
+            const romm_platform_t *p = &sync->remote[sync->platform];
+            if (p->rom_count)
+               RBUF_PUSH(sync->lib.unsynced, *p);
+            if (     p->rom_count && *p->libretro_slug
+                  && !romm_library_listed(sync->exclude, p->fs_slug)
+                  && romm_lib_sync_new(sync, p))
+            {
+               RARCH_LOG(ROMM_LIB_PFX "%s is new in RomM; left off until "
+                     "switched on.\n", p->name);
+               RBUF_PUSH(sync->lib.added, *p);
+            }
             sync->platform++;
          }
          if (sync->platform >= count)
@@ -2471,6 +2509,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
       strlcpy(sync->refetch, params->refetch, sizeof(sync->refetch));
    if (!string_is_empty(params->exclude))
       sync->exclude = strdup(params->exclude);
+   sync->new_off     = params->new_off;
    sync->core_runs   = params->core_runs;
    sync->limit       = params->limit;
    sync->started   = cpu_features_get_time_usec();

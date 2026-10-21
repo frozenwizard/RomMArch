@@ -82,6 +82,9 @@ typedef struct
    /* RomM's other platforms with games, which the sync didn't write:
     * switched off, run by no emulator, or left waiting (an RBUF). */
    romm_platform_t *unsynced;
+   /* Of those, the ones new in RomM that the sync left off, with
+    * params.new_off (an RBUF); not in the manifest. */
+   romm_platform_t *added;
 } romm_library_t;
 
 /* The playlist path of @rom: romm://<id>/<RomM file name>. A folder
@@ -153,6 +156,10 @@ typedef struct
     * none. Their playlists and covers go, as for platforms gone from
     * RomM, and they're listed in the library's unsynced. */
    const char *exclude;
+   /* A platform the last sync didn't list starts off: it isn't synced,
+    * and is listed in the library's added for the caller to switch
+    * off. Not on a first sync, which takes every platform. */
+   bool new_off;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,
