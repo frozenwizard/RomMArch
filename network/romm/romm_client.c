@@ -891,6 +891,8 @@ static void romm_platforms_member(void *ctx, const char *key,
       p->rom_count = romm_json_uint(value);
    else if (string_is_equal(key, "slug"))
       strlcpy(p->slug, value, sizeof(p->slug));
+   else if (string_is_equal(key, "fs_slug"))
+      strlcpy(p->fs_slug, value, sizeof(p->fs_slug));
    else if (string_is_equal(key, "libretro_slug"))
       strlcpy(p->libretro_slug, value, sizeof(p->libretro_slug));
    else if (string_is_equal(key, "family_name"))

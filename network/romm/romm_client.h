@@ -76,6 +76,9 @@ typedef struct
    unsigned rom_count;
    /* RomM's short name, such as "snes". */
    char slug[64];
+   /* Its folder in RomM's library, such as "sfc": one per platform,
+    * where two platforms can share a short name. */
+   char fs_slug[64];
    /* What RomM shows, the user's custom name if they set one. */
    char name[128];
    /* The libretro database name, such as "Nintendo - Super Nintendo

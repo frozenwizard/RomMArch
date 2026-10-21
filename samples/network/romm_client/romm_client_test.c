@@ -569,6 +569,7 @@ static void test_platforms(void)
          (unsigned)r.count);
    CHECK(r.platforms[0].id == 28 && r.platforms[0].rom_count == 29
          && !strcmp(r.platforms[0].slug, "dc")
+         && !strcmp(r.platforms[0].fs_slug, "dc")
          && !strcmp(r.platforms[0].name, "Dreamcast")
          && !strcmp(r.platforms[0].libretro_slug, "Sega - Dreamcast")
          && !strcmp(r.platforms[0].family_name, "Sega"),
@@ -576,7 +577,7 @@ static void test_platforms(void)
          r.platforms[0].slug, r.platforms[0].name,
          r.platforms[0].libretro_slug, r.platforms[0].family_name);
    CHECK(r.platforms[1].id == 26 && !*r.platforms[1].libretro_slug
-         && !*r.platforms[1].family_name
+         && !*r.platforms[1].family_name && !*r.platforms[1].fs_slug
          && !strcmp(r.platforms[1].name, "Switch"),
          "custom name, no libretro name: %s [%s]", r.platforms[1].name,
          r.platforms[1].libretro_slug);

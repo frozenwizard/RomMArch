@@ -584,6 +584,8 @@ static void romm_lib_load_platform_member(void *ctx, const char *key,
       p->playlist_mtime = (int64_t)strtoll(value, NULL, 10);
    else if (string_is_equal(key, "slug"))
       strlcpy(p->platform.slug, value, sizeof(p->platform.slug));
+   else if (string_is_equal(key, "fs_slug"))
+      strlcpy(p->platform.fs_slug, value, sizeof(p->platform.fs_slug));
    else if (string_is_equal(key, "name"))
       strlcpy(p->platform.name, value, sizeof(p->platform.name));
    else if (string_is_equal(key, "libretro_slug"))
@@ -766,6 +768,10 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
       rjsonwriter_add_string(writer, "slug");
       rjsonwriter_raw(writer, ": ", 2);
       rjsonwriter_add_string(writer, p->platform.slug);
+      rjsonwriter_raw(writer, ", ", 2);
+      rjsonwriter_add_string(writer, "fs_slug");
+      rjsonwriter_raw(writer, ": ", 2);
+      rjsonwriter_add_string(writer, p->platform.fs_slug);
       rjsonwriter_raw(writer, ", ", 2);
       rjsonwriter_add_string(writer, "name");
       rjsonwriter_raw(writer, ": ", 2);

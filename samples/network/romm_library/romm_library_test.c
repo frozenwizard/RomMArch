@@ -309,6 +309,7 @@ static romm_library_platform_t lib_platform(unsigned id, const char *slug,
    p.platform.id        = id;
    p.platform.rom_count = 2;
    strlcpy(p.platform.slug, slug, sizeof(p.platform.slug));
+   snprintf(p.platform.fs_slug, sizeof(p.platform.fs_slug), "%s-dir", slug);
    strlcpy(p.platform.name, "Name of \"it\"", sizeof(p.platform.name));
    strlcpy(p.platform.libretro_slug, libretro_slug,
          sizeof(p.platform.libretro_slug));
@@ -375,14 +376,16 @@ static void test_manifest(void)
          CHECK(a->platform.id == b->platform.id
                && a->platform.rom_count == b->platform.rom_count
                && !strcmp(a->platform.slug, b->platform.slug)
+               && !strcmp(a->platform.fs_slug, b->platform.fs_slug)
                && !strcmp(a->platform.name, b->platform.name)
                && !strcmp(a->platform.libretro_slug, b->platform.libretro_slug)
                && !strcmp(a->platform.family_name, b->platform.family_name)
                && !strcmp(a->playlist, b->playlist)
                && a->playlist_size == b->playlist_size
                && a->playlist_mtime == b->playlist_mtime,
-               "platform %u: %u %s [%s] [%s] [%s] %s %lld %lld", (unsigned)i,
-               b->platform.id, b->platform.slug, b->platform.name,
+               "platform %u: %u %s %s [%s] [%s] [%s] %s %lld %lld", (unsigned)i,
+               b->platform.id, b->platform.slug, b->platform.fs_slug,
+               b->platform.name,
                b->platform.libretro_slug, b->platform.family_name, b->playlist,
                (long long)b->playlist_size, (long long)b->playlist_mtime);
          CHECK(RBUF_LEN(a->roms) == RBUF_LEN(b->roms), "platform %u: %u games",
@@ -606,10 +609,12 @@ static const char *sync_platforms_reply =
    " \"name\": \"Sega CD\", \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
    " {\"id\": 26, \"slug\": \"switch\", \"rom_count\": 0,"
    " \"name\": \"Nintendo Switch\", \"libretro_slug\": null},"
-   " {\"id\": 8, \"slug\": \"genesis\", \"rom_count\": 300,"
+   " {\"id\": 8, \"slug\": \"genesis\", \"fs_slug\": \"genesis\","
+   " \"rom_count\": 300,"
    " \"name\": \"Genesis\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\","
    " \"family_name\": \"Sega\"},"
-   " {\"id\": 30, \"slug\": \"megadrive\", \"rom_count\": 1,"
+   " {\"id\": 30, \"slug\": \"genesis\", \"fs_slug\": \"megadrive\","
+   " \"rom_count\": 1,"
    " \"name\": \"Mega Drive\", \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
    " {\"id\": 40, \"slug\": \"ps3\", \"rom_count\": 5,"
    " \"name\": \"PlayStation 3\", \"libretro_slug\": null}]";
@@ -694,6 +699,7 @@ static void test_sync(void)
             && RBUF_LEN(lib.platforms[1].roms) == 300
             && lib.platforms[1].roms[299].id == 399
             && !strcmp(lib.platforms[1].platform.family_name, "Sega")
+            && !strcmp(lib.platforms[2].platform.fs_slug, "megadrive")
             && !*lib.platforms[0].platform.family_name
             && !strcmp(lib.platforms[2].playlist,
                "Sega - Mega Drive - Genesis.lpl"),
