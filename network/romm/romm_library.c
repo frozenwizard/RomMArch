@@ -147,6 +147,10 @@ typedef struct
    bool new_off;
    /* There was a manifest from a last sync */
    bool had_old;
+   /* The platforms to sync, as params.only and as RomM's ids now; NULL
+    * for every one */
+   char *only;
+   unsigned *only_ids;
    romm_library_core_runs_t core_runs;
    char *token;
    char *covers_title;
@@ -1200,6 +1204,18 @@ static const romm_rom_t *romm_lib_next_game(romm_lib_sync_t *sync,
    return NULL;
 }
 
+/* Is platform @id one this sync is for? */
+static bool romm_lib_sync_only(const romm_lib_sync_t *sync, unsigned id)
+{
+   size_t i;
+   if (!sync->only)
+      return true;
+   for (i = 0; i < RBUF_LEN(sync->only_ids); i++)
+      if (sync->only_ids[i] == id)
+         return true;
+   return false;
+}
+
 /* Lists @rom's cover, in @p's folder, and plans fetching it unless it
  * is on disk and unchanged in RomM. */
 static void romm_lib_plan_cover(romm_lib_sync_t *sync,
@@ -1217,6 +1233,8 @@ static void romm_lib_plan_cover(romm_lib_sync_t *sync,
          || !(dest_copy = strdup(dest)))
       return;
    RBUF_PUSH(sync->cover_dests, dest_copy);
+   if (!romm_lib_sync_only(sync, p->platform.id))
+      return;
 
    old = sync->cover_old ? (const romm_rom_t**)bsearch(&rom,
          sync->cover_old, RBUF_LEN(sync->cover_old),
@@ -1744,6 +1762,33 @@ static void romm_lib_sync_finish(romm_lib_sync_t *sync,
    sync->task->when = 0;
 }
 
+/* A sync for some platforms: notes their ids, and starts the library
+ * with the last sync's entries for the others, written first so a
+ * playlist one shares with them keeps their games. */
+static void romm_lib_sync_keep_others(romm_lib_sync_t *sync)
+{
+   size_t i;
+
+   for (i = 0; i < RBUF_LEN(sync->remote); i++)
+      if (romm_library_listed(sync->only, sync->remote[i].fs_slug))
+         RBUF_PUSH(sync->only_ids, sync->remote[i].id);
+   for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
+   {
+      romm_library_platform_t entry = sync->old.platforms[i];
+      size_t j;
+      if (romm_lib_sync_only(sync, entry.platform.id))
+         continue;
+      entry.roms = NULL;
+      for (j = 0; j < RBUF_LEN(sync->old.platforms[i].roms); j++)
+         RBUF_PUSH(entry.roms, sync->old.platforms[i].roms[j]);
+      RBUF_PUSH(sync->lib.platforms, entry);
+      RBUF_PUSH(sync->written, false);
+   }
+   for (i = 0; i < RBUF_LEN(sync->old.unsynced); i++)
+      if (!romm_lib_sync_only(sync, sync->old.unsynced[i].id))
+         RBUF_PUSH(sync->lib.unsynced, sync->old.unsynced[i]);
+}
+
 static void romm_lib_sync_platforms_cb(void *user_data,
       enum romm_status status, int http_status,
       const romm_platform_t *platforms, size_t count)
@@ -1761,6 +1806,8 @@ static void romm_lib_sync_platforms_cb(void *user_data,
    }
    for (i = 0; i < count; i++)
       RBUF_PUSH(sync->remote, platforms[i]);
+   if (sync->only)
+      romm_lib_sync_keep_others(sync);
    sync->state = ROMM_LIB_SYNC_NEXT;
 }
 
@@ -2199,7 +2246,7 @@ static bool romm_lib_sync_new(const romm_lib_sync_t *sync,
       const romm_platform_t *p)
 {
    size_t i;
-   if (     !sync->new_off || !sync->had_old
+   if (     !sync->new_off || !sync->had_old || sync->only
          || romm_lib_find_platform(&sync->old, p->id)
          || romm_lib_find_unsynced(&sync->old, p->id))
       return false;
@@ -2260,14 +2307,16 @@ static void romm_lib_sync_handler(retro_task_t *task)
             romm_lib_sync_finish(sync, ROMM_ERR_UNREACHABLE);
          break;
       case ROMM_LIB_SYNC_NEXT:
-         while (     sync->platform < count
-               && (   !sync->remote[sync->platform].rom_count
-                   || romm_lib_sync_off(sync, &sync->remote[sync->platform])))
+         for (; sync->platform < count; sync->platform++)
          {
             const romm_platform_t *p = &sync->remote[sync->platform];
-            if (p->rom_count)
-               RBUF_PUSH(sync->lib.unsynced, *p);
-            if (     p->rom_count && *p->libretro_slug
+            /* The others are in the library as the last sync left them. */
+            if (!p->rom_count || !romm_lib_sync_only(sync, p->id))
+               continue;
+            if (!romm_lib_sync_off(sync, p))
+               break;
+            RBUF_PUSH(sync->lib.unsynced, *p);
+            if (     *p->libretro_slug
                   && !romm_library_listed(sync->exclude, p->fs_slug)
                   && romm_lib_sync_new(sync, p))
             {
@@ -2275,7 +2324,6 @@ static void romm_lib_sync_handler(retro_task_t *task)
                      "switched on.\n", p->name);
                RBUF_PUSH(sync->lib.added, *p);
             }
-            sync->platform++;
          }
          if (sync->platform >= count)
          {
@@ -2465,6 +2513,8 @@ static void romm_lib_sync_cleanup(retro_task_t *task)
       RBUF_FREE(sync->written);
       free(sync->covers_title);
       free(sync->exclude);
+      free(sync->only);
+      RBUF_FREE(sync->only_ids);
       if (sync->token)
       {
          memset(sync->token, 0, strlen(sync->token));
@@ -2510,6 +2560,8 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    if (!string_is_empty(params->exclude))
       sync->exclude = strdup(params->exclude);
    sync->new_off     = params->new_off;
+   if (!string_is_empty(params->only))
+      sync->only = strdup(params->only);
    sync->core_runs   = params->core_runs;
    sync->limit       = params->limit;
    sync->started   = cpu_features_get_time_usec();
@@ -2543,6 +2595,7 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
       free(task);
       free(sync->covers_title);
       free(sync->exclude);
+      free(sync->only);
       free(sync->token);
       free(sync);
       return false;

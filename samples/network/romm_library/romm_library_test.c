@@ -458,6 +458,7 @@ static romm_library_core_runs_t test_core_runs;
 static size_t sync_limit;
 static const char *sync_exclude;
 static bool sync_new_off;
+static const char *sync_only;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -475,6 +476,7 @@ static bool sync_start(const char *server, const char *token,
       romm_library_sync_cb_t cb, void *user_data)
 {
    romm_library_sync_params_t params;
+   memset(&params, 0, sizeof(params));
    params.server         = server;
    params.token          = token;
    params.playlist_dir   = playlist_dir;
@@ -489,6 +491,7 @@ static bool sync_start(const char *server, const char *token,
    params.limit          = sync_limit;
    params.exclude        = sync_exclude;
    params.new_off        = sync_new_off;
+   params.only           = sync_only;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1912,6 +1915,26 @@ static void test_sync_shared_playlist(void)
          "Mega Drive off: status %d, %u rewrites, %u entries", r.status,
          written_count, count_entries(pl));
 
+   /* Mega Drive alone, back on: the playlist it shares keeps Genesis's
+    * games, which aren't asked for. */
+   sync_only = "megadrive";
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_only = NULL;
+   sync_answer(200, "[{\"id\": 8, \"fs_slug\": \"genesis\", \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+         " {\"id\": 30, \"fs_slug\": \"megadrive\", \"rom_count\": 1,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   strlcpy(page, "{\"items\": [", sizeof(page));
+   game_json(page, sizeof(page), 2, "Mega Drive game", "2026-10-02T04:00:00+00:00");
+   strlcat(page, "]}", sizeof(page));
+   sync_answer(200, page);
+   CHECK(strstr(stub_req.url, "platform_ids=30&") != NULL,
+         "Mega Drive request: %s", stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK && count_entries(pl) == 3,
+         "Mega Drive alone: status %d, %u entries", r.status,
+         count_entries(pl));
+
    filestream_delete(pl);
    filestream_delete(manifest);
    filestream_delete(TEST_DIR "/romm");
@@ -2742,6 +2765,122 @@ static void test_sync_new_off(void)
    filestream_delete(TEST_DIR);
 }
 
+static void test_sync_only(void)
+{
+   const char *segacd  = TEST_DIR "/Sega - Mega-CD - Sega CD.lpl";
+   const char *genesis = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   const char *cover1  = "/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20";
+   /* Sega CD gone from RomM; SNES and NES new to it. */
+   const char *later   = "[{\"id\": 8, \"fs_slug\": \"genesis\", \"rom_count\": 3,"
+      " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+      " {\"id\": 16, \"fs_slug\": \"snes\", \"rom_count\": 1,"
+      " \"libretro_slug\": \"Nintendo - SNES\"},"
+      " {\"id\": 17, \"fs_slug\": \"nes\", \"rom_count\": 1,"
+      " \"libretro_slug\": \"Nintendo - NES\"}]";
+   sync_result_t r;
+   romm_library_t lib;
+   char manifest[256];
+   char *page;
+   unsigned fetched;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   filestream_delete(manifest);
+   stub_reset();
+
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   page = covers_page(cover1, NULL, NULL);
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(8, 100, 2);
+   sync_answer(200, page);
+   free(page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 2,
+         "first sync: status %d platforms %u", r.status,
+         (unsigned)r.platforms);
+   fetched = covers_run();
+   CHECK(fetched == 3, "first covers: %u", fetched);
+
+   /* Genesis alone, with a game new: Sega CD isn't asked for, its
+    * playlist isn't written and its cover, deleted by hand, isn't
+    * fetched. */
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).png");
+   sync_only     = "genesis";
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   sync_answer(200, "{\"rom_id_index\": [100, 101, 102]}");
+   CHECK(strstr(stub_req.url, "platform_ids=8&") != NULL,
+         "first request after the platforms: %s", stub_req.url);
+   page = roms_page(8, 102, 1);
+   sync_answer(200, page);
+   free(page);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 2
+         && r.games == 5, "Genesis alone: status %d platforms %u games %u",
+         r.status, (unsigned)r.platforms, (unsigned)r.games);
+   CHECK(written_count == 1 && path_is(written_path, genesis)
+         && count_entries(genesis) == 3 && count_entries(segacd) == 2,
+         "Genesis alone: %u written, last %s", written_count, written_path);
+   fetched = covers_run();
+   CHECK(fetched == 1 && path_is_valid(GENESIS_COVERS "Game 102 (USA).png")
+         && !path_is_valid(COVER_DIR "Game 1 _ Co (USA).png"),
+         "Genesis alone: %u covers", fetched);
+
+   /* SNES alone, though new, while Sega CD is gone from RomM: Sega CD
+    * isn't counted as gone, and NES isn't noted, so the next full sync
+    * still finds it new. */
+   sync_only     = "snes";
+   sync_new_off  = true;
+   written_count = 0;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, later);
+   page = roms_page(16, 200, 1);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=16&") != NULL,
+         "SNES request: %s", stub_req.url);
+   CHECK(sync_run_out() && r.status == ROMM_OK && r.platforms == 3
+         && !r.added && !r.unsynced,
+         "SNES alone: status %d platforms %u added %u unsynced %u",
+         r.status, (unsigned)r.platforms, (unsigned)r.added,
+         (unsigned)r.unsynced);
+   CHECK(written_count == 1 && count_entries(segacd) == 2
+         && count_entries(TEST_DIR "/Nintendo - SNES.lpl") == 1,
+         "SNES alone: %u written", written_count);
+   covers_run();
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 3
+         && !RBUF_LEN(lib.unsynced), "manifest after SNES alone: %u, %u",
+         (unsigned)RBUF_LEN(lib.platforms), (unsigned)RBUF_LEN(lib.unsynced));
+   romm_library_free(&lib);
+   sync_only    = NULL;
+   sync_new_off = false;
+
+   filestream_delete(GENESIS_COVERS "Game 100 (USA).png");
+   filestream_delete(GENESIS_COVERS "Game 101 (USA).png");
+   filestream_delete(GENESIS_COVERS "Game 102 (USA).png");
+   filestream_delete(TEST_DIR "/thumbs/Nintendo - SNES/Named_Boxarts/Game 200 (USA).png");
+   filestream_delete(TEST_DIR "/thumbs/Nintendo - SNES/Named_Boxarts");
+   filestream_delete(TEST_DIR "/thumbs/Nintendo - SNES");
+   filestream_delete(COVER_DIR);
+   filestream_delete(GENESIS_COVERS);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega Drive - Genesis");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(segacd);
+   filestream_delete(genesis);
+   filestream_delete(TEST_DIR "/Nintendo - SNES.lpl");
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -2775,6 +2914,7 @@ int main(void)
    test_listed();
    test_sync_exclude();
    test_sync_new_off();
+   test_sync_only();
 
    if (failures)
    {

@@ -160,6 +160,10 @@ typedef struct
     * and is listed in the library's added for the caller to switch
     * off. Not on a first sync, which takes every platform. */
    bool new_off;
+   /* Syncs only these platforms, by fs_slug as for @exclude; the others
+    * keep their manifest entries, playlists and covers as the last sync
+    * left them, and aren't counted as gone. NULL syncs every one. */
+   const char *only;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,
