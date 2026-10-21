@@ -5588,6 +5588,9 @@ static void ozone_refresh_horizontal_list(ozone_handle_t *ozone,
 {
    struct menu_state *menu_st = menu_state_get_ptr();
 
+   /* The header icon may be a playlist icon freed here; drawn after,
+    * a freed texture crashes the Vulkan driver. Chosen again below. */
+   ozone->header_icon = 0;
    ozone_context_destroy_horizontal_list(ozone);
    /* Free the db_node_map BEFORE the nodes it borrows from.
     * The map's values are non-owning pointers into the
@@ -5605,6 +5608,7 @@ static void ozone_refresh_horizontal_list(ozone_handle_t *ozone,
    ozone_init_horizontal_list(ozone, settings);
 
    ozone_context_reset_horizontal_list(ozone);
+   ozone_set_header(ozone);
 }
 
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
