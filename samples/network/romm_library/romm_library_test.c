@@ -459,6 +459,8 @@ static size_t sync_limit;
 static const char *sync_exclude;
 static bool sync_new_off;
 static const char *sync_only;
+static bool sync_full;
+static bool sync_rebuild;
 
 /* The playlists a sync said it wrote or deleted, and the last one. */
 static unsigned written_count;
@@ -492,6 +494,8 @@ static bool sync_start(const char *server, const char *token,
    params.exclude        = sync_exclude;
    params.new_off        = sync_new_off;
    params.only           = sync_only;
+   params.full           = sync_full;
+   params.rebuild        = sync_rebuild;
    return romm_library_sync(&params, cb, user_data);
 }
 
@@ -1935,6 +1939,37 @@ static void test_sync_shared_playlist(void)
          "Mega Drive alone: status %d, %u entries", r.status,
          count_entries(pl));
 
+   /* Rebuilding Mega Drive fails part way, after its playlist went: it
+    * stays known, so a sync with new systems off still syncs it. */
+   sync_only    = "megadrive";
+   sync_rebuild = true;
+   sync_new_off = true;
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_only    = NULL;
+   sync_rebuild = false;
+   sync_answer(200, "[{\"id\": 8, \"fs_slug\": \"genesis\", \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+         " {\"id\": 30, \"fs_slug\": \"megadrive\", \"rom_count\": 1,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(500, "{}");
+   CHECK(sync_run_out() && r.status == ROMM_ERR_HTTP && !path_is_valid(pl),
+         "failed rebuild: status %d", r.status);
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, "[{\"id\": 8, \"fs_slug\": \"genesis\", \"rom_count\": 2,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"},"
+         " {\"id\": 30, \"fs_slug\": \"megadrive\", \"rom_count\": 1,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]");
+   sync_answer(200, "{\"rom_id_index\": [1, 3]}");
+   sync_answer(200, "{\"items\": []}");
+   sync_answer(200, page);
+   sync_new_off = false;
+   CHECK(sync_run_out() && r.status == ROMM_OK && !r.added
+         && count_entries(pl) == 3, "after the failed rebuild: status %d,"
+         " %u added, %u entries", r.status, (unsigned)r.added,
+         count_entries(pl));
+
    filestream_delete(pl);
    filestream_delete(manifest);
    filestream_delete(TEST_DIR "/romm");
@@ -2881,6 +2916,110 @@ static void test_sync_only(void)
    filestream_delete(TEST_DIR);
 }
 
+/* Syncs Sega CD alone, as the first sync of test_sync_rebuild() left
+ * it: fetched in full, two games, the first with a cover. */
+static void rebuild_sync(sync_result_t *r)
+{
+   const char *cover1 = "/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20";
+   char *page = covers_page(cover1, NULL, NULL);
+   sync_only     = "segacd";
+   written_count = 0;
+   memset(r, 0, sizeof(*r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, r);
+   sync_answer(200, exclude_platforms);
+   sync_answer(200, page);
+   free(page);
+   CHECK(strstr(stub_req.url, "platform_ids=15&")
+         && !strstr(stub_req.url, "updated_after"),
+         "Sega CD not fetched in full: %s", stub_req.url);
+   CHECK(sync_run_out() && r->status == ROMM_OK && r->platforms == 2,
+         "Sega CD alone: status %d platforms %u", r->status,
+         (unsigned)r->platforms);
+   sync_only = NULL;
+}
+
+static void test_sync_rebuild(void)
+{
+   const char *segacd  = TEST_DIR "/Sega - Mega-CD - Sega CD.lpl";
+   const char *genesis = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   const char *cover1  = "/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20";
+   sync_result_t r;
+   char manifest[256];
+   char *page;
+   unsigned fetched;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   filestream_delete(manifest);
+   stub_reset();
+
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   page = covers_page(cover1, NULL, NULL);
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(8, 100, 2);
+   sync_answer(200, page);
+   free(page);
+   CHECK(sync_run_out() && r.status == ROMM_OK, "first sync: status %d",
+         r.status);
+   fetched = covers_run();
+   CHECK(fetched == 3, "first covers: %u", fetched);
+
+   /* What the user sets: a core for the first game, and labels. */
+   file_replace(segacd, "\"core_path\": \"DETECT\"",
+         "\"core_path\": \"/cores/x.dylib\"");
+   file_replace(segacd, "\"label_display_mode\": 0",
+         "\"label_display_mode\": 2");
+
+   /* Refetch: every game and cover again, the playlist written anew,
+    * what the user set kept; Genesis left alone. */
+   sync_full = true;
+   rebuild_sync(&r);
+   sync_full = false;
+   CHECK(written_count == 1 && path_is(written_path, segacd),
+         "refetch: %u written, last %s", written_count, written_path);
+   CHECK(file_has(segacd, "/cores/x.dylib")
+         && file_has(segacd, "\"label_display_mode\": 2"),
+         "refetch lost what the user set");
+   fetched = covers_run();
+   CHECK(fetched == 1 && file_is(COVER_DIR "Game 1 _ Co (USA).png", PNG_DATA),
+         "refetch: %u covers", fetched);
+
+   /* Purge and Rebuild: playlist and covers deleted, then written as
+    * new, without what the user set. */
+   sync_rebuild = true;
+   rebuild_sync(&r);
+   sync_rebuild = false;
+   CHECK(!path_is_valid(COVER_DIR "Game 1 _ Co (USA).png"),
+         "rebuild kept the cover");
+   CHECK(count_entries(segacd) == 2 && !file_has(segacd, "/cores/x.dylib")
+         && file_has(segacd, "\"label_display_mode\": 0"),
+         "rebuild kept what the user set");
+   fetched = covers_run();
+   CHECK(fetched == 1 && file_is(COVER_DIR "Game 1 _ Co (USA).png", PNG_DATA)
+         && path_is_valid(GENESIS_COVERS "Game 100 (USA).png")
+         && count_entries(genesis) == 2,
+         "rebuild: %u covers", fetched);
+
+   filestream_delete(COVER_DIR "Game 1 _ Co (USA).png");
+   filestream_delete(GENESIS_COVERS "Game 100 (USA).png");
+   filestream_delete(GENESIS_COVERS "Game 101 (USA).png");
+   filestream_delete(COVER_DIR);
+   filestream_delete(GENESIS_COVERS);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega Drive - Genesis");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(segacd);
+   filestream_delete(genesis);
+   filestream_delete(manifest);
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -2915,6 +3054,7 @@ int main(void)
    test_sync_exclude();
    test_sync_new_off();
    test_sync_only();
+   test_sync_rebuild();
 
    if (failures)
    {

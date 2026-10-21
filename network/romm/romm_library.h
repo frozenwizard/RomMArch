@@ -164,6 +164,14 @@ typedef struct
     * keep their manifest entries, playlists and covers as the last sync
     * left them, and aren't counted as gone. NULL syncs every one. */
    const char *only;
+   /* For the platforms in @only: every game fetched, without the
+    * incremental shortcut, every cover again, and the playlist written
+    * anew, as @refetch does for one playlist. */
+   bool full;
+   /* For the platforms in @only: the playlist and the covers are
+    * deleted first, with what the user set in the playlist (cores,
+    * sorting, labels), and the platform is synced as if new. */
+   bool rebuild;
 } romm_library_sync_params_t;
 
 /* @lib is the library as the sync left it and @old as it was before,

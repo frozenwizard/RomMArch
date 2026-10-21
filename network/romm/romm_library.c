@@ -151,6 +151,9 @@ typedef struct
     * for every one */
    char *only;
    unsigned *only_ids;
+   /* For those: fetched in full, or deleted first and synced as new */
+   bool full;
+   bool rebuild;
    romm_library_core_runs_t core_runs;
    char *token;
    char *covers_title;
@@ -1047,8 +1050,16 @@ static void romm_lib_sync_save_partial(romm_lib_sync_t *sync)
       return;
    for (i = 0; i < RBUF_LEN(sync->old.platforms); i++)
    {
+      const romm_platform_t *p = &sync->old.platforms[i].platform;
+      /* One whose playlist was rewritten without it stays known, so it
+       * isn't taken for new. */
       if (romm_lib_has_playlist(&sync->lib, sync->old.platforms[i].playlist))
+      {
+         if (     !romm_lib_find_platform(&sync->lib, p->id)
+               && !romm_lib_find_unsynced(&sync->lib, p->id))
+            RBUF_PUSH(sync->lib.unsynced, *p);
          continue;
+      }
       RBUF_PUSH(sync->lib.platforms, sync->old.platforms[i]);
       sync->old.platforms[i].roms = NULL;
    }
@@ -1216,6 +1227,16 @@ static bool romm_lib_sync_only(const romm_lib_sync_t *sync, unsigned id)
    return false;
 }
 
+/* Does this sync fetch platform @id, in @playlist, in full, covers too,
+ * and write its playlist anew? */
+static bool romm_lib_sync_refetches(const romm_lib_sync_t *sync,
+      unsigned id, const char *playlist)
+{
+   return string_is_equal(playlist, sync->refetch)
+      || (   sync->only && (sync->full || sync->rebuild)
+          && romm_lib_sync_only(sync, id));
+}
+
 /* Lists @rom's cover, in @p's folder, and plans fetching it unless it
  * is on disk and unchanged in RomM. */
 static void romm_lib_plan_cover(romm_lib_sync_t *sync,
@@ -1241,7 +1262,7 @@ static void romm_lib_plan_cover(romm_lib_sync_t *sync,
          sizeof(*sync->cover_old), romm_lib_cmp_rom_id) : NULL;
    if (     romm_lib_cover_exists(dest)
          && old && string_is_equal((*old)->cover, rom->cover)
-         && !string_is_equal(p->playlist, sync->refetch))
+         && !romm_lib_sync_refetches(sync, p->platform.id, p->playlist))
       return;
 
    /* Only a cache buster, with a space in it. */
@@ -1989,7 +2010,7 @@ static bool romm_lib_sync_write(romm_lib_sync_t *sync)
     * copy, may not list what the manifest does. */
    romm_lib_file_stamp(path, &size, &mtime);
    write = !old
-      || string_is_equal(entry.playlist, sync->refetch)
+      || romm_lib_sync_refetches(sync, entry.platform.id, entry.playlist)
       || core_changed
       || !string_is_equal(old->playlist, entry.playlist)
       || !romm_lib_same_roms(old->roms, sync->roms)
@@ -2239,6 +2260,36 @@ static bool romm_lib_sync_write_collections(romm_lib_sync_t *sync)
    return ok;
 }
 
+/* Purge and Rebuild: deletes the playlist the last sync wrote for the
+ * platform being synced, with what the user set in it, and its games'
+ * covers. */
+static void romm_lib_sync_purge(romm_lib_sync_t *sync)
+{
+   const romm_library_platform_t *old = sync->old_platform;
+   char path[PATH_MAX_LENGTH];
+   size_t i;
+
+   if (!old)
+      return;
+   RARCH_LOG(ROMM_LIB_PFX "Rebuilding %s: deleting its playlist and "
+         "covers.\n", old->platform.name);
+   fill_pathname_join(path, sync->playlist_dir, old->playlist,
+         sizeof(path));
+   if (path_is_valid(path) && !filestream_delete(path)
+         && sync->playlist_changed)
+      sync->playlist_changed(path);
+   if (!*sync->thumbnails_dir)
+      return;
+   for (i = 0; i < RBUF_LEN(old->roms); i++)
+   {
+      char dest[PATH_MAX_LENGTH];
+      if (     *old->roms[i].cover
+            && romm_library_cover_path(dest, sizeof(dest),
+                  sync->thumbnails_dir, old->playlist, &old->roms[i]))
+         romm_lib_cover_delete(dest, NULL);
+   }
+}
+
 /* Is @p, which an emulator runs and isn't switched off, new since the
  * last sync, to start off? A platform keeps its folder name when
  * RomM's database is rebuilt and the ids change. */
@@ -2340,13 +2391,21 @@ static void romm_lib_sync_handler(retro_task_t *task)
          sync->state        = ROMM_LIB_SYNC_ROMS;
          sync->old_platform = romm_lib_find_platform(&sync->old,
                sync->remote[sync->platform].id);
-         if (*sync->refetch)
          {
             char playlist[256];
-            if (     romm_library_playlist_name(playlist, sizeof(playlist),
-                        &sync->remote[sync->platform])
-                  && string_is_equal(playlist, sync->refetch))
+            if (!romm_library_playlist_name(playlist, sizeof(playlist),
+                  &sync->remote[sync->platform]))
+               *playlist = '\0';
+            if (romm_lib_sync_refetches(sync,
+                  sync->remote[sync->platform].id, playlist))
+            {
+               if (sync->rebuild)
+               {
+                  romm_lib_sync_purge(sync);
+                  sync->old_platform = NULL;
+               }
                break;
+            }
          }
          if (sync->old_platform)
          {
@@ -2562,6 +2621,8 @@ bool romm_library_sync(const romm_library_sync_params_t *params,
    sync->new_off     = params->new_off;
    if (!string_is_empty(params->only))
       sync->only = strdup(params->only);
+   sync->full        = params->full;
+   sync->rebuild     = params->rebuild;
    sync->core_runs   = params->core_runs;
    sync->limit       = params->limit;
    sync->started   = cpu_features_get_time_usec();
