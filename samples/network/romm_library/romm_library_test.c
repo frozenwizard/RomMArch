@@ -2203,10 +2203,6 @@ static void test_sidebar_systems(void)
             "maker from the libretro name: [%s]", systems[1].maker);
       CHECK(!strcmp(systems[2].maker, "nintendo"),
             "RomM's maker as RomM spells it: [%s]", systems[2].maker);
-      CHECK(!systems[0].unsupported && !systems[1].unsupported
-            && systems[2].unsupported && systems[4].unsupported
-            && !systems[3].unsupported,
-            "no libretro name: unsupported");
       CHECK(!*systems[4].maker, "no maker: [%s]", systems[4].maker);
       CHECK(!strcmp(systems[5].maker, "A B"), "no '|': [%s]",
             systems[5].maker);
@@ -2301,24 +2297,22 @@ static void test_sidebar_group(void)
    names.collections = "Collections";
    names.systems    = "Systems";
    names.other      = "Other";
-   names.unsupported = "Unsupported";
    names.group_type = SIDEBAR_GROUP_TYPE;
 
    list = sidebar_rows();
    romm_sidebar_group(list, systems, "collections|systems|systems/nintendo"
-         "|systems/Nintendo|systems/|unsupported", &names);
+         "|systems/Nintendo|systems/", &names);
    CHECK(list->size == 11, "open: %u rows", (unsigned)list->size);
    sidebar_check_row(list, 0, NULL, "collections", "Collections", 0);
    sidebar_check_row(list, 1, "Collection - Co-op.lpl", NULL, NULL, 1);
    sidebar_check_row(list, 2, NULL, "systems", "Systems", 0);
    sidebar_check_row(list, 3, NULL, "systems/Nintendo", "Nintendo", 1);
    sidebar_check_row(list, 4, "Nintendo - Game Boy.lpl", NULL, NULL, 2);
-   sidebar_check_row(list, 5,
+   sidebar_check_row(list, 5, "RomM - Nintendo Switch.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 6,
          "Nintendo - Super Nintendo Entertainment System.lpl", NULL, NULL, 2);
-   sidebar_check_row(list, 6, NULL, "systems/Sega", "Sega", 1);
-   /* Systems without a libretro name, whatever their maker, last. */
-   sidebar_check_row(list, 7, NULL, "unsupported", "Unsupported", 1);
-   sidebar_check_row(list, 8, "RomM - Nintendo Switch.lpl", NULL, NULL, 2);
+   sidebar_check_row(list, 7, NULL, "systems/Sega", "Sega", 1);
+   sidebar_check_row(list, 8, NULL, "systems/", "Other", 1);
    sidebar_check_row(list, 9, "RomM - PlayStation 3.lpl", NULL, NULL, 2);
    /* A row RomM didn't write follows, ungrouped. */
    sidebar_check_row(list, 10, "My Own.lpl", NULL, NULL, 0);
@@ -2339,7 +2333,7 @@ static void test_sidebar_group(void)
    sidebar_check_row(list, 0, NULL, "collections", "Collections", 0);
    sidebar_check_row(list, 2, NULL, "systems/Nintendo", "Nintendo", 1);
    sidebar_check_row(list, 3, NULL, "systems/Sega", "Sega", 1);
-   sidebar_check_row(list, 4, NULL, "unsupported", "Unsupported", 1);
+   sidebar_check_row(list, 4, NULL, "systems/", "Other", 1);
    sidebar_check_row(list, 5, "My Own.lpl", NULL, NULL, 0);
    file_list_free(list);
 
@@ -2353,23 +2347,19 @@ static void test_sidebar_group(void)
 
    romm_sidebar_members(&members, systems, "systems");
    CHECK(RBUF_LEN(members) == 6
-         && !strcmp(members[0], "Nintendo - Game Boy.lpl")
-         && !strcmp(members[2], "Sega - Mega Drive - Genesis.lpl")
+         && !strcmp(members[0], "RomM - Pipes.lpl")
+         && !strcmp(members[1], "Nintendo - Game Boy.lpl")
          && !strcmp(members[3], "RomM - Nintendo Switch.lpl")
          && !strcmp(members[5], "RomM - PlayStation 3.lpl"),
-         "all systems, unsupported last: %u", (unsigned)RBUF_LEN(members));
+         "all systems: %u", (unsigned)RBUF_LEN(members));
    romm_sidebar_members(&members, systems, "systems/Sega");
    CHECK(RBUF_LEN(members) == 1
          && !strcmp(members[0], "Sega - Mega Drive - Genesis.lpl"),
          "Sega: %u", (unsigned)RBUF_LEN(members));
    romm_sidebar_members(&members, systems, "systems/");
-   CHECK(RBUF_LEN(members) == 0, "Other: %u", (unsigned)RBUF_LEN(members));
-   romm_sidebar_members(&members, systems, "unsupported");
-   CHECK(RBUF_LEN(members) == 3
-         && !strcmp(members[0], "RomM - Nintendo Switch.lpl")
-         && !strcmp(members[1], "RomM - Pipes.lpl")
-         && !strcmp(members[2], "RomM - PlayStation 3.lpl"),
-         "unsupported: %u", (unsigned)RBUF_LEN(members));
+   CHECK(RBUF_LEN(members) == 1
+         && !strcmp(members[0], "RomM - PlayStation 3.lpl"),
+         "Other: %u", (unsigned)RBUF_LEN(members));
    romm_sidebar_members(&members, systems, "collections");
    CHECK(RBUF_LEN(members) == 2
          && !strcmp(members[0], "Collection - Absent.lpl")

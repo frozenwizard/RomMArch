@@ -1002,7 +1002,6 @@ void romm_menu_sidebar_group(file_list_t *list)
    names.collections = msg_hash_to_str(MSG_ROMM_SIDEBAR_COLLECTIONS);
    names.systems    = msg_hash_to_str(MSG_ROMM_SIDEBAR_SYSTEMS);
    names.other      = msg_hash_to_str(MSG_ROMM_SIDEBAR_OTHER);
-   names.unsupported = msg_hash_to_str(MSG_ROMM_SIDEBAR_UNSUPPORTED);
    names.group_type = MENU_ROMM_GROUP;
    romm_sidebar_group(list, romm_sidebar_cache,
          config_get_ptr()->arrays.romm_sidebar_open, &names);

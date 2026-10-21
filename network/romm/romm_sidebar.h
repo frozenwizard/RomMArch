@@ -29,7 +29,6 @@ RETRO_BEGIN_DECLS
  * ROMM_SIDEBAR_SYSTEMS "/" and its name. */
 #define ROMM_SIDEBAR_COLLECTIONS "collections"
 #define ROMM_SIDEBAR_SYSTEMS     "systems"
-#define ROMM_SIDEBAR_UNSUPPORTED "unsupported"
 
 /* A playlist the RomM library writes: a system's, with the maker it is
  * grouped under, or a collection's. */
@@ -39,8 +38,6 @@ typedef struct
    /* Empty when neither RomM nor the libretro name tells. */
    char maker[64];
    bool collection;
-   /* RetroArch has no system for it: RomM gave it no libretro name. */
-   bool unsupported;
 } romm_sidebar_system_t;
 
 typedef struct
@@ -50,8 +47,6 @@ typedef struct
    const char *systems;
    /* The group of systems without a maker. */
    const char *other;
-   /* The group of unsupported systems, last in Systems. */
-   const char *unsupported;
    /* The item type group rows get. */
    unsigned group_type;
 } romm_sidebar_names_t;
@@ -63,8 +58,8 @@ void romm_sidebar_systems(romm_sidebar_system_t **systems,
 
 /* Rewrites @list, one row per playlist file (path the file name, alt
  * the name shown), into groups: Collections, then Systems with a group
- * per maker inside it, each system under its maker, and an Unsupported
- * group last, and after them any playlist that isn't RomM's. A group's rows are left out unless @open
+ * per maker inside it, each system under its maker, and after them any
+ * playlist that isn't RomM's. A group's rows are left out unless @open
  * names its key; keys are separated by '|'. Group rows have no path,
  * their key as label and their name as alt. Each row's entry_idx is its
  * depth. */
@@ -79,8 +74,8 @@ bool romm_sidebar_is_open(const char *open, const char *key);
 void romm_sidebar_toggle(char *open, size_t len, const char *key);
 
 /* Fills @playlists, an RBUF it empties first, with the playlist files
- * in group @key: collections and unsupported systems by file name,
- * other systems by maker, then by file name. */
+ * in group @key: collections by file name, systems by maker, then by
+ * file name. */
 void romm_sidebar_members(const char ***playlists,
       const romm_sidebar_system_t *systems, const char *key);
 
