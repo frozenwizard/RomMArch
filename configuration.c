@@ -2028,6 +2028,8 @@ static struct config_array_setting *populate_settings_array(
    SETTING_ARRAY("romm_username",                         settings->arrays.romm_username, false, NULL, true);
    SETTING_ARRAY_SENSITIVE("romm_token",                  settings->arrays.romm_token, false, NULL, true);
    SETTING_ARRAY("romm_sidebar_open",                     settings->arrays.romm_sidebar_open, true, DEFAULT_ROMM_SIDEBAR_OPEN, true);
+   SETTING_ARRAY("romm_sync_exclude",                     settings->arrays.romm_sync_exclude, false, NULL, true);
+   SETTING_ARRAY("romm_sync_new",                         settings->arrays.romm_sync_new, false, NULL, true);
 #endif
    SETTING_ARRAY_SENSITIVE("youtube_stream_key",          settings->arrays.youtube_stream_key, true, NULL, true);
    SETTING_ARRAY_SENSITIVE("twitch_stream_key",           settings->arrays.twitch_stream_key, true, NULL, true);
@@ -5926,6 +5928,8 @@ void config_set_defaults(settings_t *target)
    *settings->arrays.romm_missing_scopes    = '\0';
    *settings->arrays.romm_username          = '\0';
    *settings->arrays.romm_token             = '\0';
+   *settings->arrays.romm_sync_exclude      = '\0';
+   *settings->arrays.romm_sync_new          = '\0';
    configuration_set_string(settings, settings->arrays.romm_sidebar_open,
          DEFAULT_ROMM_SIDEBAR_OPEN);
 #endif

@@ -585,6 +585,48 @@ bool romm_library_listed(const char *list, const char *name)
    return false;
 }
 
+bool romm_library_list_add(char *list, size_t len, const char *name)
+{
+   size_t _len;
+
+   if (string_is_empty(name) || romm_library_listed(list, name))
+      return true;
+   _len = strlen(list);
+   if (_len + (_len ? 1 : 0) + strlen(name) >= len)
+      return false;
+   snprintf(list + _len, len - _len, "%s%s", _len ? "," : "", name);
+   return true;
+}
+
+void romm_library_list_remove(char *list, const char *name)
+{
+   char *out = list;
+   const char *in = list;
+   size_t len;
+
+   if (string_is_empty(name))
+      return;
+   len = strlen(name);
+   while (*in)
+   {
+      const char *start, *end, *last;
+      while (*in == ',' || *in == ' ')
+         in++;
+      if (!*in)
+         break;
+      for (start = in, end = in; *end && *end != ','; end++) { }
+      for (last = end; last > start && last[-1] == ' '; last--) { }
+      in = end;
+      if ((size_t)(last - start) == len && !strncmp(start, name, len))
+         continue;
+      if (out != list)
+         *out++ = ',';
+      memmove(out, start, (size_t)(last - start));
+      out += last - start;
+   }
+   *out = '\0';
+}
+
 size_t romm_library_manifest_path(char *s, size_t len,
       const char *playlist_dir)
 {

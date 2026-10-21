@@ -1336,6 +1336,10 @@ typedef struct settings
       char romm_token[128];
       /* The sidebar groups left open, as "systems|systems/Sega". */
       char romm_sidebar_open[PATH_MAX_LENGTH];
+      /* The systems not synced, by RomM folder name, as "psx,saturn". */
+      char romm_sync_exclude[PATH_MAX_LENGTH];
+      /* Those of them new in RomM that the Systems page hasn't shown. */
+      char romm_sync_new[PATH_MAX_LENGTH];
 #endif
 #endif
 

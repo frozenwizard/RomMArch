@@ -230,6 +230,13 @@ bool romm_library_follow_game(const romm_rom_t *const *old,
 /* Is @name one of the names in @list, which commas separate? */
 bool romm_library_listed(const char *list, const char *name);
 
+/* Adds @name to @list, a buffer of @len, unless it's there; false when
+ * it doesn't fit. */
+bool romm_library_list_add(char *list, size_t len, const char *name);
+
+/* Takes @name out of @list wherever it is. */
+void romm_library_list_remove(char *list, const char *name);
+
 /* <@playlist_dir>/romm/library.json */
 size_t romm_library_manifest_path(char *s, size_t len,
       const char *playlist_dir);

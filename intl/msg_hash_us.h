@@ -33737,6 +33737,18 @@ MSG_HASH(
    "Not synced at start, with more than %u games or covers to fetch: %s. Settings > RomM > Refresh Library syncs them."
    )
 MSG_HASH(
+   MSG_ROMM_SYNC_NEW_ONE,
+   "New in RomM: %s. Settings > RomM > Systems syncs it."
+   )
+MSG_HASH(
+   MSG_ROMM_SYNC_NEW,
+   "New in RomM: %s. Settings > RomM > Systems syncs them."
+   )
+MSG_HASH(
+   MSG_ROMM_SYNC_NEW_SYSTEM,
+   "%s (%u games)"
+   )
+MSG_HASH(
    MSG_ROMM_WRITE_FAILED,
    "Couldn't save the RomM library in the playlist folder."
    )
@@ -33875,6 +33887,10 @@ MSG_HASH(
 MSG_HASH(
    MSG_ROMM_STATUS_WAITING,
    "Not synced at start: %s. Refresh Library syncs them."
+   )
+MSG_HASH(
+   MSG_ROMM_STATUS_NEW,
+   "New in RomM, not synced: %s"
    )
 MSG_HASH(
    MSG_MENU_FRAME_RATE_DISPLAY,

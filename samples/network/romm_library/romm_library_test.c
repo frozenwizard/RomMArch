@@ -2594,6 +2594,29 @@ static void test_listed(void)
          && !romm_library_listed("psx", NULL), "not listed");
 }
 
+static void test_list_edit(void)
+{
+   char list[12] = "";
+
+   CHECK(romm_library_list_add(list, sizeof(list), "psx")
+         && romm_library_list_add(list, sizeof(list), "nes")
+         && romm_library_list_add(list, sizeof(list), "psx")
+         && !strcmp(list, "psx,nes"), "added: %s", list);
+   CHECK(!romm_library_list_add(list, sizeof(list), "saturn")
+         && romm_library_list_add(list, sizeof(list), "gba")
+         && !strcmp(list, "psx,nes,gba"), "full: %s", list);
+   romm_library_list_remove(list, "nes");
+   CHECK(!strcmp(list, "psx,gba"), "removed: %s", list);
+   romm_library_list_remove(list, "ps");
+   CHECK(!strcmp(list, "psx,gba"), "removed a part: %s", list);
+   romm_library_list_remove(list, "psx");
+   romm_library_list_remove(list, "gba");
+   CHECK(!*list, "emptied: %s", list);
+   strlcpy(list, " a , b,,a ", sizeof(list));
+   romm_library_list_remove(list, "a");
+   CHECK(!strcmp(list, "b"), "hand-edited: [%s]", list);
+}
+
 static const char *exclude_platforms =
    "[{\"id\": 15, \"fs_slug\": \"segacd\", \"rom_count\": 2,"
    " \"libretro_slug\": \"Sega - Mega-CD - Sega CD\"},"
@@ -3051,6 +3074,7 @@ int main(void)
    test_sidebar_group();
    test_path_id();
    test_listed();
+   test_list_edit();
    test_sync_exclude();
    test_sync_new_off();
    test_sync_only();

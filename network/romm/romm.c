@@ -888,6 +888,9 @@ static int64_t romm_library_synced_at = 0;
 static unsigned romm_library_games    = 0;
 static unsigned romm_library_systems  = 0;
 static char romm_library_waiting[128];
+/* The systems new in RomM, left off, that the Systems page hasn't
+ * shown, as "Saturn, 3DO". */
+static char romm_library_new[128];
 
 static void romm_note_library(const romm_library_t *lib)
 {
@@ -905,6 +908,50 @@ static void romm_note_library(const romm_library_t *lib)
       _len += snprintf(romm_library_waiting + _len,
             sizeof(romm_library_waiting) - _len, "%s%s",
             i ? ", " : "", lib->waiting[i].platform.name);
+   *romm_library_new = '\0';
+   for (i = 0; i < RBUF_LEN(lib->unsynced); i++)
+      if (romm_library_listed(config_get_ptr()->arrays.romm_sync_new,
+            lib->unsynced[i].fs_slug))
+      {
+         if (*romm_library_new)
+            strlcat(romm_library_new, ", ", sizeof(romm_library_new));
+         strlcat(romm_library_new, lib->unsynced[i].name,
+               sizeof(romm_library_new));
+      }
+}
+
+/* Systems new in RomM start off: switched off, marked new for the
+ * Systems page, and named in a message. */
+static void romm_note_added(const romm_library_t *lib)
+{
+   settings_t *settings = config_get_ptr();
+   size_t count         = RBUF_LEN(lib->added);
+   size_t i;
+   char names[256];
+   char msg[384];
+
+   *names = '\0';
+   for (i = 0; i < count; i++)
+   {
+      const romm_platform_t *p = &lib->added[i];
+      char one[192];
+      if (!romm_library_list_add(settings->arrays.romm_sync_exclude,
+               sizeof(settings->arrays.romm_sync_exclude), p->fs_slug)
+            || !romm_library_list_add(settings->arrays.romm_sync_new,
+               sizeof(settings->arrays.romm_sync_new), p->fs_slug))
+         RARCH_WARN("[RomM] No room to switch %s off; it syncs next "
+               "time.\n", p->name);
+      snprintf(one, sizeof(one), msg_hash_to_str(MSG_ROMM_SYNC_NEW_SYSTEM),
+            p->name, p->rom_count);
+      if (i)
+         strlcat(names, ", ", sizeof(names));
+      strlcat(names, one, sizeof(names));
+   }
+   if (!romm_overrides_active())
+      command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   snprintf(msg, sizeof(msg), msg_hash_to_str(count == 1
+         ? MSG_ROMM_SYNC_NEW_ONE : MSG_ROMM_SYNC_NEW), names);
+   romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
 }
 
 static void romm_manifest_load(void)
@@ -1097,6 +1144,13 @@ unsigned romm_menu_status_list(file_list_t *list)
       if (romm_menu_status_line(list, line))
          count++;
    }
+   if (*romm_library_new)
+   {
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_STATUS_NEW),
+            romm_library_new);
+      if (romm_menu_status_line(list, line))
+         count++;
+   }
    return count;
 }
 
@@ -1135,6 +1189,9 @@ static void romm_on_library_synced(void *user_data, enum romm_status status,
    char msg[256];
 
    romm_syncing = false;
+   /* Even a sync that failed part way may have noted them. */
+   if (RBUF_LEN(lib->added))
+      romm_note_added(lib);
    if (status == ROMM_OK)
    {
       const romm_rom_t **old_index = romm_library_index(old);
@@ -1220,6 +1277,8 @@ static bool romm_start_library_sync(bool quiet, const char *refetch,
    params.refetch        = refetch;
    params.core_runs      = romm_core_runs;
    params.limit          = limit;
+   params.exclude        = settings->arrays.romm_sync_exclude;
+   params.new_off        = true;
    romm_favorites_changes_at_sync = romm_favorites_changes;
    if (!romm_library_sync(&params, romm_on_library_synced, NULL))
       return false;
