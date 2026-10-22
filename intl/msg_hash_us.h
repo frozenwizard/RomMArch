@@ -33781,6 +33781,14 @@ MSG_HASH(
    "Couldn't download %s."
    )
 MSG_HASH(
+   MSG_ROMM_CORE_DOWNLOADING_FOR,
+   "Downloading %s for %s."
+   )
+MSG_HASH(
+   MSG_ROMM_CORE_INSTALLED,
+   "%s is installed."
+   )
+MSG_HASH(
    MSG_ROMM_LAUNCH_IN_PROGRESS,
    "A game is already downloading."
    )

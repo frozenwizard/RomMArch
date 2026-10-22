@@ -86,6 +86,10 @@ static romm_system_job_t *romm_system_jobs = NULL;
 static bool romm_can_sync(void);
 static void romm_start_system_job(const romm_system_job_t *job);
 static void romm_start_next_system_job(void);
+#if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
+static void romm_want_missing_cores(const romm_library_t *lib,
+      const char *only);
+#endif
 /* RomM was asked this run which user the token acts for. */
 static bool romm_username_asked = false;
 
@@ -1667,6 +1671,10 @@ static void romm_library_synced(enum romm_status status, int http_status,
          romm_favorites_collection = lib->favorites_id;
       romm_note_library(lib, *romm_system_job.fs_slug
             ? romm_system_job.fs_slug : NULL);
+#if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
+      romm_want_missing_cores(lib, *romm_system_job.fs_slug
+            ? romm_system_job.fs_slug : NULL);
+#endif
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
 #endif
@@ -2585,7 +2593,22 @@ typedef struct
    char label[NAME_MAX_LENGTH];
 } romm_core_install_t;
 
-static bool romm_installing_core = false;
+/* A core to install, and the game to run once it's in ("" for none). */
+typedef struct
+{
+   char core[64];
+   char name[NAME_MAX_LENGTH];
+   char system[NAME_MAX_LENGTH];
+   char content[PATH_MAX_LENGTH];
+   char label[NAME_MAX_LENGTH];
+} romm_core_wanted_t;
+
+/* The install running, if any, and the cores waiting for it (an RBUF,
+ * oldest first). */
+static romm_core_install_t *romm_core_installing = NULL;
+static romm_core_wanted_t *romm_cores_wanted     = NULL;
+
+static void romm_install_next_core(void);
 
 /* The core's own name in its info file, such as "Genesis Plus GX";
  * the info files cover cores not yet installed. */
@@ -2676,12 +2699,13 @@ static void romm_core_install_cb(retro_task_t *task, void *task_data,
    core_info_t *info        = NULL;
    char msg[NAME_MAX_LENGTH];
 
-   romm_installing_core = false;
+   romm_core_installing = NULL;
    if (!ins->installed)
    {
       snprintf(msg, sizeof(msg),
             msg_hash_to_str(MSG_ROMM_CORE_INSTALL_FAILED), ins->name);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      romm_install_next_core();
       return;
    }
    /* The downloader rescans the info files once its task is retired,
@@ -2691,8 +2715,16 @@ static void romm_core_install_cb(retro_task_t *task, void *task_data,
       bool refresh = true;
       command_event(CMD_EVENT_CORE_INFO_INIT, &refresh);
    }
-   romm_launch_from_menu(ins->core_path, ins->content,
-         *ins->label ? ins->label : NULL);
+   if (*ins->content)
+      romm_launch_from_menu(ins->core_path, ins->content,
+            *ins->label ? ins->label : NULL);
+   else
+   {
+      snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_CORE_INSTALLED),
+            ins->name);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   }
+   romm_install_next_core();
 }
 
 static void romm_core_install_cleanup(retro_task_t *task)
@@ -2701,6 +2733,7 @@ static void romm_core_install_cleanup(retro_task_t *task)
    task->state = NULL;
 }
 
+/* Installs @core, called @name, then runs @content_path, if any. */
 static bool romm_install_core(const char *core, const char *name,
       const char *content_path, const char *label)
 {
@@ -2718,7 +2751,8 @@ static bool romm_install_core(const char *core, const char *name,
    }
    strlcpy(ins->core, core, sizeof(ins->core));
    strlcpy(ins->name, name, sizeof(ins->name));
-   strlcpy(ins->content, content_path, sizeof(ins->content));
+   strlcpy(ins->content, content_path ? content_path : "",
+         sizeof(ins->content));
    strlcpy(ins->label, label ? label : "", sizeof(ins->label));
    task->handler  = romm_core_install_handler;
    task->callback = romm_core_install_cb;
@@ -2731,9 +2765,126 @@ static bool romm_install_core(const char *core, const char *name,
       free(task);
       return false;
    }
-   romm_installing_core = true;
-   RARCH_LOG("[RomM] Installing %s for %s.\n", core, content_path);
+   romm_core_installing = ins;
+   RARCH_LOG("[RomM] Installing %s%s%s.\n", core,
+         *ins->content ? " for " : "", ins->content);
    return true;
+}
+
+static void romm_install_next_core(void)
+{
+   char msg[NAME_MAX_LENGTH];
+   size_t i;
+
+   while (!romm_core_installing && RBUF_LEN(romm_cores_wanted))
+   {
+      romm_core_wanted_t want = romm_cores_wanted[0];
+      for (i = 1; i < RBUF_LEN(romm_cores_wanted); i++)
+         romm_cores_wanted[i - 1] = romm_cores_wanted[i];
+      RBUF_RESIZE(romm_cores_wanted, RBUF_LEN(romm_cores_wanted) - 1);
+      if (romm_install_core(want.core, want.name, want.content,
+            want.label))
+      {
+         if (*want.system)
+         {
+            snprintf(msg, sizeof(msg),
+                  msg_hash_to_str(MSG_ROMM_CORE_DOWNLOADING_FOR),
+                  want.name, want.system);
+            romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
+         }
+      }
+      else
+      {
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_ROMM_CORE_INSTALL_FAILED), want.name);
+         romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      }
+   }
+}
+
+/* Asks for @core, called @name, for @system or to run @content_path:
+ * installed next if nothing is, or after what's queued; a game waiting
+ * goes first. Returns whether it is installing already. */
+static bool romm_want_core(const char *core, const char *name,
+      const char *system, const char *content_path, const char *label)
+{
+   romm_core_wanted_t want;
+   size_t i;
+
+   if (romm_core_installing && string_is_equal(romm_core_installing->core,
+         core))
+   {
+      if (content_path && !*romm_core_installing->content)
+      {
+         strlcpy(romm_core_installing->content, content_path,
+               sizeof(romm_core_installing->content));
+         strlcpy(romm_core_installing->label, label ? label : "",
+               sizeof(romm_core_installing->label));
+      }
+      return true;
+   }
+   for (i = 0; i < RBUF_LEN(romm_cores_wanted); i++)
+      if (string_is_equal(romm_cores_wanted[i].core, core))
+         break;
+   if (i < RBUF_LEN(romm_cores_wanted))
+   {
+      if (!content_path)
+         return false;
+      want = romm_cores_wanted[i];
+      for (; i > 0; i--)
+         romm_cores_wanted[i] = romm_cores_wanted[i - 1];
+   }
+   else
+   {
+      memset(&want, 0, sizeof(want));
+      strlcpy(want.core, core, sizeof(want.core));
+      strlcpy(want.name, name, sizeof(want.name));
+      RBUF_PUSH(romm_cores_wanted, want);
+      if (content_path)
+         for (i = RBUF_LEN(romm_cores_wanted) - 1; i > 0; i--)
+            romm_cores_wanted[i] = romm_cores_wanted[i - 1];
+      else
+         i = RBUF_LEN(romm_cores_wanted) - 1;
+   }
+   if (system)
+      strlcpy(want.system, system, sizeof(want.system));
+   if (content_path)
+   {
+      strlcpy(want.content, content_path, sizeof(want.content));
+      strlcpy(want.label, label ? label : "", sizeof(want.label));
+   }
+   romm_cores_wanted[i] = want;
+   romm_install_next_core();
+   return false;
+}
+
+static void romm_want_missing_cores(const romm_library_t *lib,
+      const char *only)
+{
+   settings_t *settings = config_get_ptr();
+   size_t i;
+
+   if (     !settings->bools.menu_show_core_updater
+         || settings->bools.kiosk_mode_enable)
+      return;
+   /* Each system it wrote with none of its emulators installed gets
+    * its first (decided 2026-10-21). */
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+   {
+      const romm_platform_t *p = &lib->platforms[i].platform;
+      const char *const *cores =
+            romm_library_preferred_cores(p->libretro_slug);
+      char path[PATH_MAX_LENGTH];
+      char name[NAME_MAX_LENGTH];
+
+      if (     !cores
+            || (only && !romm_library_listed(only, p->fs_slug))
+            || romm_find_core(cores, path, sizeof(path), name,
+                  sizeof(name)))
+         continue;
+      romm_core_name(cores[0], name, sizeof(name));
+      romm_want_core(cores[0], name, p->name, NULL, NULL);
+   }
 }
 #endif
 
@@ -2768,15 +2919,9 @@ bool romm_launch_without_core(const char *content_path, const char *label,
       romm_core_name(cores[0], name, sizeof(name));
       /* The platform's first emulator is fetched, and the game runs
        * once it's in. */
-      if (romm_installing_core)
-         snprintf(msg, sizeof(msg),
-               msg_hash_to_str(MSG_ROMM_CORE_INSTALLING), name);
-      else if (romm_install_core(cores[0], name, content_path, label))
-         snprintf(msg, sizeof(msg),
-               msg_hash_to_str(MSG_ROMM_CORE_DOWNLOADING), name);
-      else
-         snprintf(msg, sizeof(msg),
-               msg_hash_to_str(MSG_ROMM_CORE_INSTALL_FAILED), name);
+      snprintf(msg, sizeof(msg), msg_hash_to_str(
+            romm_want_core(cores[0], name, NULL, content_path, label)
+            ? MSG_ROMM_CORE_INSTALLING : MSG_ROMM_CORE_DOWNLOADING), name);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
       return true;
    }
