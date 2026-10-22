@@ -1685,11 +1685,20 @@ static void romm_library_synced(enum romm_status status, int http_status,
          romm_notify_failure(status, http_status);
       return;
    }
-   if (*romm_library_waiting)
+   /* Said by the sync that left them, the one at start: the status
+    * lines keep them listed after a sync of other systems. */
+   if (RBUF_LEN(lib->waiting))
    {
+      char names[128];
+      *names = '\0';
+      for (i = 0; i < RBUF_LEN(lib->waiting); i++)
+      {
+         if (i)
+            strlcat(names, ", ", sizeof(names));
+         strlcat(names, lib->waiting[i].platform.name, sizeof(names));
+      }
       snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_ROMM_SYNC_WAITING),
-            config_get_ptr()->uints.romm_sync_start_limit,
-            romm_library_waiting);
+            config_get_ptr()->uints.romm_sync_start_limit, names);
       romm_notify(msg, MESSAGE_QUEUE_CATEGORY_INFO);
    }
    if (quiet)
