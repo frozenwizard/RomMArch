@@ -88,7 +88,7 @@ static void romm_start_system_job(const romm_system_job_t *job);
 static void romm_start_next_system_job(void);
 #if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
 static void romm_want_missing_cores(const romm_library_t *lib,
-      const char *only);
+      const char *only, bool all);
 #endif
 /* RomM was asked this run which user the token acts for. */
 static bool romm_username_asked = false;
@@ -1835,7 +1835,9 @@ static void romm_library_synced(enum romm_status status, int http_status,
             ? romm_system_job.fs_slug : NULL);
 #if defined(HAVE_MENU) && defined(HAVE_UPDATE_CORES)
       romm_want_missing_cores(lib, *romm_system_job.fs_slug
-            ? romm_system_job.fs_slug : NULL);
+            ? romm_system_job.fs_slug : NULL,
+            *romm_system_job.fs_slug
+            && romm_system_job.action == ROMM_SYSTEM_ACTION_REFETCH);
 #endif
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
@@ -3020,8 +3022,10 @@ static bool romm_want_core(const char *core, const char *name,
    return false;
 }
 
+/* @all: every emulator of each system that isn't installed, as Refetch
+ * asks (2026-10-22), rather than the first when none is. */
 static void romm_want_missing_cores(const romm_library_t *lib,
-      const char *only)
+      const char *only, bool all)
 {
    settings_t *settings = config_get_ptr();
    size_t i;
@@ -3038,14 +3042,27 @@ static void romm_want_missing_cores(const romm_library_t *lib,
             romm_library_preferred_cores(p->libretro_slug);
       char path[PATH_MAX_LENGTH];
       char name[NAME_MAX_LENGTH];
+      size_t k;
 
-      if (     !cores
-            || (only && !romm_library_listed(only, p->fs_slug))
-            || romm_find_core(cores, path, sizeof(path), name,
-                  sizeof(name)))
+      if (!cores || (only && !romm_library_listed(only, p->fs_slug)))
          continue;
-      romm_core_name(cores[0], name, sizeof(name));
-      romm_want_core(cores[0], name, p->name, NULL, NULL);
+      for (k = 0; cores[k]; k++)
+      {
+         const char *one[2];
+         one[0] = cores[k];
+         one[1] = NULL;
+         if (romm_find_core(all ? one : cores, path, sizeof(path), name,
+               sizeof(name)))
+         {
+            if (all)
+               continue;
+            break;
+         }
+         romm_core_name(cores[k], name, sizeof(name));
+         romm_want_core(cores[k], name, p->name, NULL, NULL);
+         if (!all)
+            break;
+      }
    }
 }
 #endif
