@@ -1416,6 +1416,82 @@ static void romm_rom_files_cb(retro_task_t *task, void *task_data,
    free(ctx);
 }
 
+typedef struct
+{
+   romm_rom_details_cb_t cb;
+   void *user_data;
+} romm_rom_details_ctx_t;
+
+static void romm_rom_details_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_rom_details_ctx_t *ctx = (romm_rom_details_ctx_t*)user_data;
+   http_transfer_data_t *data  = (http_transfer_data_t*)task_data;
+   enum romm_status status     = romm_response_status(data, 200);
+   int http_status             = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+   romm_rom_details_t *d       = NULL;
+   char value[32];
+
+   if (status == ROMM_OK && !(d = (romm_rom_details_t*)calloc(1, sizeof(*d))))
+      status = ROMM_ERR_RESPONSE;
+   if (status == ROMM_OK)
+   {
+      const char *doc = data->data;
+      size_t len      = data->len;
+      if (romm_json_get(doc, len, "id", value, sizeof(value)))
+         d->id = romm_json_uint(value);
+      if (!d->id)
+         status = ROMM_ERR_RESPONSE;
+      romm_json_get(doc, len, "name", d->name, sizeof(d->name));
+      romm_json_get(doc, len, "summary", d->summary, sizeof(d->summary));
+      romm_json_get_list(doc, len, "metadatum.genres", d->genres,
+            sizeof(d->genres), ", ");
+      romm_json_get_list(doc, len, "metadatum.companies", d->companies,
+            sizeof(d->companies), ", ");
+      romm_json_get_list(doc, len, "regions", d->regions,
+            sizeof(d->regions), ", ");
+      romm_json_get_list(doc, len, "languages", d->languages,
+            sizeof(d->languages), ", ");
+      if (romm_json_get(doc, len, "metadatum.first_release_date",
+            value, sizeof(value)))
+         d->release_date = (int64_t)strtoll(value, NULL, 10);
+      romm_json_get(doc, len, "metadatum.average_rating", d->rating,
+            sizeof(d->rating));
+      if (romm_json_get(doc, len, "fs_size_bytes", value, sizeof(value)))
+         d->size = (uint64_t)strtoull(value, NULL, 10);
+   }
+   if (status != ROMM_OK)
+      RARCH_WARN(ROMM_PFX "Couldn't get the game's details (status %d, "
+            "HTTP %d).\n", status, http_status);
+
+   ctx->cb(ctx->user_data, status, http_status,
+         status == ROMM_OK ? d : NULL);
+   free(d);
+   free(ctx);
+}
+
+bool romm_client_rom_details(const char *server, const char *token,
+      unsigned rom_id, romm_rom_details_cb_t cb, void *user_data)
+{
+   char path[64];
+   romm_rom_details_ctx_t *ctx;
+
+   if (!rom_id)
+      return false;
+   snprintf(path, sizeof(path), "/api/roms/%u", rom_id);
+   if (!(ctx = (romm_rom_details_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   if (!romm_get(server, token, path, romm_rom_details_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
 bool romm_client_rom_files(const char *server, const char *token,
       unsigned rom_id, romm_rom_files_cb_t cb, void *user_data)
 {

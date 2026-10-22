@@ -28,6 +28,11 @@ RETRO_BEGIN_DECLS
 bool romm_json_get(const char *data, size_t len, const char *path,
       char *s, size_t s_len);
 
+/* As romm_json_get(), or for an array at @path its strings and numbers
+ * joined with @sep, such as "Action, Platform". */
+bool romm_json_get_list(const char *data, size_t len, const char *path,
+      char *s, size_t s_len, const char *sep);
+
 /* A scalar member of an object in the array being walked; @value is ""
  * for true, false and null. */
 typedef void (*romm_json_member_cb_t)(void *ctx, const char *key,

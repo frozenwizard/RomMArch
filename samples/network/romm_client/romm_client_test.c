@@ -194,6 +194,31 @@ static void test_json(void)
          "null read as a value");
 }
 
+static void test_json_list(void)
+{
+   static const char *doc =
+      "{\"metadatum\": {\"genres\": [\"Action\", \"Platform\"],"
+      " \"ids\": [3, 7], \"mixed\": [\"a\", {\"x\": \"skip\"},"
+      " [\"skip\"], \"b\"], \"none\": [], \"name\": \"n\"},"
+      " \"genres\": [\"top\"]}";
+   char s[64];
+
+   CHECK(romm_json_get_list(doc, strlen(doc), "metadatum.genres", s,
+         sizeof(s), ", ") && !strcmp(s, "Action, Platform"), "genres: %s", s);
+   CHECK(romm_json_get_list(doc, strlen(doc), "metadatum.ids", s, sizeof(s),
+         "+") && !strcmp(s, "3+7"), "numbers: %s", s);
+   CHECK(romm_json_get_list(doc, strlen(doc), "metadatum.mixed", s,
+         sizeof(s), ",") && !strcmp(s, "a,b"), "nested skipped: %s", s);
+   CHECK(romm_json_get_list(doc, strlen(doc), "metadatum.none", s, sizeof(s),
+         ",") && !*s, "empty: %s", s);
+   CHECK(romm_json_get_list(doc, strlen(doc), "metadatum.name", s, sizeof(s),
+         ",") && !strcmp(s, "n"), "a string: %s", s);
+   CHECK(romm_json_get_list(doc, strlen(doc), "genres", s, sizeof(s), ",")
+         && !strcmp(s, "top"), "top level: %s", s);
+   CHECK(!romm_json_get(doc, strlen(doc), "metadatum.genres", s, sizeof(s)),
+         "array read as a value without a separator");
+}
+
 /* Records what romm_json_items() reports as "key=value;" per member and
  * "|" per object. */
 typedef struct
@@ -1041,6 +1066,78 @@ static void rom_files(rom_files_result_t *r, unsigned id)
    stub_reset();
    CHECK(romm_client_rom_files("http://romm.local:8090", "rmm_0123abcd", id,
          on_rom_files, r), "game not requested");
+}
+
+typedef struct
+{
+   unsigned calls;
+   enum romm_status status;
+   bool has;
+   romm_rom_details_t d;
+} rom_details_result_t;
+
+static void on_rom_details(void *user_data, enum romm_status status,
+      int http_status, const romm_rom_details_t *details)
+{
+   rom_details_result_t *r = (rom_details_result_t*)user_data;
+   r->calls++;
+   r->status = status;
+   r->has    = details != NULL;
+   if (details)
+      r->d = *details;
+}
+
+static void test_rom_details(void)
+{
+   rom_details_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_rom_details("http://romm.local:8090", "rmm_0123abcd",
+         46, on_rom_details, &r), "details not requested");
+   CHECK(!strcmp(stub_req.url, "http://romm.local:8090/api/roms/46"),
+         "request %s", stub_req.url);
+   answer(200, "{\"id\": 46, \"name\": \"Advance Wars\","
+         " \"summary\": \"Lead the Orange Star army.\","
+         " \"fs_size_bytes\": 8388608,"
+         " \"metadatum\": {\"genres\": [\"Strategy\", \"Turn-based\"],"
+         " \"companies\": [\"Intelligent Systems\", \"Nintendo\"],"
+         " \"first_release_date\": 1000598400000,"
+         " \"average_rating\": 87.5},"
+         " \"regions\": [\"USA\"], \"languages\": [],"
+         " \"files\": [{\"id\": 1}]}");
+   CHECK(r.calls == 1 && r.status == ROMM_OK && r.has && r.d.id == 46
+         && !strcmp(r.d.name, "Advance Wars")
+         && !strcmp(r.d.summary, "Lead the Orange Star army.")
+         && !strcmp(r.d.genres, "Strategy, Turn-based")
+         && !strcmp(r.d.companies, "Intelligent Systems, Nintendo")
+         && !strcmp(r.d.regions, "USA") && !*r.d.languages
+         && r.d.release_date == 1000598400000LL
+         && !strcmp(r.d.rating, "87.5") && r.d.size == 8388608ULL,
+         "details: %d [%s] [%s] [%s] [%s] %lld [%s] %llu", r.status,
+         r.d.name, r.d.genres, r.d.companies, r.d.regions,
+         (long long)r.d.release_date, r.d.rating,
+         (unsigned long long)r.d.size);
+
+   /* No metadata at all, as for a game RomM couldn't match. */
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_details("http://romm.local:8090", "t", 47,
+         on_rom_details, &r);
+   answer(200, "{\"id\": 47, \"name\": \"x\", \"summary\": null,"
+         " \"metadatum\": {\"genres\": [], \"companies\": [],"
+         " \"first_release_date\": null, \"average_rating\": null},"
+         " \"regions\": [], \"languages\": [], \"fs_size_bytes\": 0}");
+   CHECK(r.status == ROMM_OK && r.has && !*r.d.summary && !*r.d.genres
+         && !r.d.release_date && !*r.d.rating, "unmatched: [%s] [%s] %lld",
+         r.d.summary, r.d.genres, (long long)r.d.release_date);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_rom_details("http://romm.local:8090", "t", 48,
+         on_rom_details, &r);
+   answer(404, "{\"detail\": \"Not found\"}");
+   CHECK(r.calls == 1 && r.status != ROMM_OK && !r.has, "404: %d", r.status);
+   CHECK(!romm_client_rom_details("http://h", "t", 0, on_rom_details, &r),
+         "game 0 requested");
 }
 
 static void test_rom_files(void)
@@ -2249,6 +2346,7 @@ int main(void)
 {
    test_url();
    test_json();
+   test_json_list();
    test_json_items();
    test_json_values();
    test_heartbeat();
@@ -2258,6 +2356,7 @@ int main(void)
    test_roms();
    test_rom_ids();
    test_rom_files();
+   test_rom_details();
    test_rom_content();
    test_download();
    test_firmware();

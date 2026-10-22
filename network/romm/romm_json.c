@@ -24,8 +24,10 @@
 
 /* Copies the string or number at @path, object keys joined by '.'
  * such as "SYSTEM.VERSION". */
-bool romm_json_get(const char *data, size_t len, const char *path,
-      char *s, size_t s_len)
+/* As romm_json_get(); with @sep, an array at @path is read too, its
+ * strings and numbers joined with @sep. */
+static bool romm_json_get_at(const char *data, size_t len, const char *path,
+      char *s, size_t s_len, const char *sep)
 {
    const char *keys[ROMM_JSON_MAX_KEYS];
    size_t key_lens[ROMM_JSON_MAX_KEYS];
@@ -79,6 +81,23 @@ bool romm_json_get(const char *data, size_t len, const char *path,
             strlcpy(s, type == RJSON_TRUE ? "true" : "false", s_len);
             found = true;
          }
+         else if (type == RJSON_ARRAY && sep && matched + 1 == num_keys)
+         {
+            *s = '\0';
+            while (     (type = rjson_next(json)) != RJSON_DONE
+                  && type != RJSON_ERROR
+                  && rjson_get_context_depth(json) >= depth)
+               if (     (type == RJSON_STRING || type == RJSON_NUMBER)
+                     && rjson_get_context_depth(json) == depth)
+               {
+                  size_t _len;
+                  const char *str = rjson_get_string(json, &_len);
+                  if (*s)
+                     strlcat(s, sep, s_len);
+                  strlcat(s, str, s_len);
+               }
+            found = true;
+         }
       }
       else if (type == RJSON_STRING
             && depth == matched + 1
@@ -97,6 +116,18 @@ bool romm_json_get(const char *data, size_t len, const char *path,
 
    rjson_free(json);
    return found;
+}
+
+bool romm_json_get(const char *data, size_t len, const char *path,
+      char *s, size_t s_len)
+{
+   return romm_json_get_at(data, len, path, s, s_len, NULL);
+}
+
+bool romm_json_get_list(const char *data, size_t len, const char *path,
+      char *s, size_t s_len, const char *sep)
+{
+   return romm_json_get_at(data, len, path, s, s_len, sep);
 }
 
 /* Walks the objects in the top-level array, or in the array at

@@ -363,6 +363,34 @@ bool romm_client_rom_ids(const char *server, const char *token,
 bool romm_client_rom_files(const char *server, const char *token,
       unsigned rom_id, romm_rom_files_cb_t cb, void *user_data);
 
+/* A game as RomM's page for it describes it. */
+typedef struct
+{
+   unsigned id;
+   char name[256];
+   char summary[4096];
+   /* Joined with ", "; empty when RomM has none. */
+   char genres[256];
+   char companies[256];
+   char regions[128];
+   char languages[128];
+   /* Milliseconds since 1970; 0 when unknown. */
+   int64_t release_date;
+   /* RomM's average rating as it gives it; empty when none. */
+   char rating[16];
+   uint64_t size;
+} romm_rom_details_t;
+
+/* @details is valid only during the call; NULL unless @status is
+ * ROMM_OK. */
+typedef void (*romm_rom_details_cb_t)(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_rom_details_t *details);
+
+/* Fetches game @rom_id's details. @cb runs on the main thread. */
+bool romm_client_rom_details(const char *server, const char *token,
+      unsigned rom_id, romm_rom_details_cb_t cb, void *user_data);
+
 /* Downloads @length bytes from @offset of file @file_id, named
  * @file_name, of game @rom_id into memory; RomM records it as played
  * rather than downloaded. A @length of 0 asks for the whole file.
