@@ -193,9 +193,10 @@ size_t romm_library_cover_path(char *s, size_t len,
       const char *thumbnails_dir, const char *playlist,
       const romm_rom_t *rom);
 
-/* The emulators that load @libretro_slug's games from memory, best
- * first, as core file names without "_libretro" and extension; NULL
- * when there are none for the system. */
+/* The emulators that run @libretro_slug's games from RomM, best first,
+ * as core file names without "_libretro" and extension; NULL when there
+ * are none for the system. They load games from memory, but for a
+ * system whose emulators all need a file. */
 const char *const *romm_library_preferred_cores(const char *libretro_slug);
 
 /* Rommarch's default for core option @key, where it differs from the

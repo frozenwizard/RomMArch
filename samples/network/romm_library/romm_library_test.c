@@ -2063,6 +2063,8 @@ static void test_preferred_cores(void)
          && !c[2], "PlayStation cores");
    c = romm_library_preferred_cores("Sega - Mega-CD - Sega CD");
    CHECK(c && !strcmp(c[0], "genesis_plus_gx") && !c[1], "Sega CD cores");
+   c = romm_library_preferred_cores("NEC - PC-98");
+   CHECK(c && !strcmp(c[0], "np2kai") && !c[1], "PC-98 cores");
    CHECK(!romm_library_preferred_cores("Sony - PlayStation 2")
          && !romm_library_preferred_cores("")
          && !romm_library_preferred_cores(NULL), "cores for a system without");

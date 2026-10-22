@@ -169,7 +169,8 @@ typedef struct
  * Main thread. */
 static retro_task_t *romm_lib_covers_running = NULL;
 
-/* D10: emulators that read games through RetroArch's file layer. */
+/* D10: emulators that read games through RetroArch's file layer.
+ * PC-98's need a file, so a launch gives them a copy on disk. */
 typedef struct
 {
    const char *libretro_slug;
@@ -196,6 +197,7 @@ static const romm_lib_system_cores_t romm_lib_system_cores[] = {
    { "Sony - PlayStation",                       { "mednafen_psx_hw", "swanstation" } },
    { "NEC - PC Engine - TurboGrafx 16",          { "mednafen_pce_fast" } },
    { "NEC - PC Engine CD - TurboGrafx-CD",       { "mednafen_pce_fast" } },
+   { "NEC - PC-98",                              { "np2kai" } },
    { "SNK - Neo Geo CD",                         { "neocd" } },
    { "SNK - Neo Geo Pocket",                     { "mednafen_ngp" } },
    { "SNK - Neo Geo Pocket Color",               { "mednafen_ngp" } },
