@@ -1708,30 +1708,37 @@ unsigned romm_menu_game_info(file_list_t *list, const char *content_path)
       romm_menu_size(value, sizeof(value), romm_info.size);
       count += romm_menu_info_line(list, MSG_ROMM_GAME_SIZE, value);
    }
-   if (*romm_info.summary)
+   /* One row, its start; OK shows it all. */
+   if (     *romm_info.summary
+         && menu_entries_append(list, content_path, "",
+               MENU_ENUM_LABEL_ROMM_GAME_SUMMARY, MENU_ROMM_SYSTEM, 0, 0,
+               NULL))
    {
-      /* A row a line: a row shows one line. */
-      char *wrapped = (char*)malloc(sizeof(romm_info.summary) * 2);
-      if (wrapped)
+      char start[40];
+      char line[128];
+      size_t _len = strlcpy(start, romm_info.summary, sizeof(start) - 4);
+      /* Its first words, short enough for the row not to scroll */
+      if (_len >= sizeof(start) - 4)
       {
-         char *line = wrapped;
-         char *next;
-         word_wrap(wrapped, sizeof(romm_info.summary) * 2,
-               romm_info.summary, strlen(romm_info.summary), 50, 0, 0);
-         count += romm_menu_status_line(list,
-               msg_hash_to_str(MSG_ROMM_GAME_SUMMARY)) ? 1 : 0;
-         while (line && *line)
-         {
-            if ((next = strchr(line, '\n')))
-               *next++ = '\0';
-            if (*line && romm_menu_status_line(list, line))
-               count++;
-            line = next;
-         }
-         free(wrapped);
+         char *space = strrchr(start, ' ');
+         if (space && space > start + 16)
+            *space = '\0';
+         strlcat(start, "...", sizeof(start));
       }
+      snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_GAME_SUMMARY),
+            start);
+      file_list_set_alt_at_offset(list, list->size - 1, line);
+      count++;
    }
    return count;
+}
+
+bool romm_menu_game_summary(char *s, size_t len)
+{
+   if (!romm_info_loaded || !*romm_info.summary)
+      return false;
+   strlcpy(s, romm_info.summary, len);
+   return true;
 }
 
 unsigned romm_menu_game_open_row(file_list_t *list, const char *content_path)

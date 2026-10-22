@@ -29143,6 +29143,7 @@ enum msg_hash_enums
    MENU_LABEL(ROMM_SYSTEM_SYNC),
    MENU_LABEL(ROMM_SYSTEM_OPTIONS),
    MENU_LABEL(ROMM_OPEN_GAME),
+   MENU_LABEL(ROMM_GAME_SUMMARY),
    /* GENERATED REGION: second main menu list actions enum rows (see settings/settings_def_menu_main_lists_2.h). */
 #define SETTINGS_DEF_ENUM_PASS
 #define SETTINGS_DEF_STRINGS_PASS

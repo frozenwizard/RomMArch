@@ -149,6 +149,10 @@ unsigned romm_menu_playlist_systems(file_list_t *list,
  * not from RomM. */
 unsigned romm_menu_game_info(file_list_t *list, const char *content_path);
 
+/* The summary of the game the Information page shows, for its pop-up;
+ * false when there is none. */
+bool romm_menu_game_summary(char *s, size_t len);
+
 /* Lists in @list an Open in RomM row for the game at @content_path.
  * Returns how many rows. */
 unsigned romm_menu_game_open_row(file_list_t *list,

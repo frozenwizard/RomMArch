@@ -34066,7 +34066,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MSG_ROMM_GAME_SUMMARY,
-   "Summary:"
+   "Summary: %s"
    )
 MSG_HASH(
    MSG_ROMM_GAME_OPEN,
@@ -34075,6 +34075,10 @@ MSG_HASH(
 MSG_HASH(
    MENU_ENUM_SUBLABEL_ROMM_OPEN_GAME,
    "Open this game's page in RomM in your browser."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_GAME_SUMMARY,
+   "Press OK to read it all."
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_ROMM_SYSTEM_OPTIONS,

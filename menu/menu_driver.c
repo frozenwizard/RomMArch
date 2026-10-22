@@ -60,6 +60,9 @@
 #include "../tasks/task_powerstate.h"
 #include "../tasks/tasks_internal.h"
 #include "../verbosity.h"
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../network/romm/romm.h"
+#endif
 
 #include "../frontend/frontend_driver.h"
 
@@ -3836,6 +3839,13 @@ MENU_NOINLINE static int menu_dialog_iterate(
 #ifdef HAVE_CHEEVOS
       case MENU_DIALOG_HELP_CHEEVOS_DESCRIPTION:
          if (!rcheevos_menu_get_help_text(p_dialog->current_id, s, len))
+            return 1;
+         break;
+#endif
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      case MENU_DIALOG_HELP_ROMM_SUMMARY:
+         if (!romm_menu_game_summary(s, len))
             return 1;
          break;
 #endif

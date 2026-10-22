@@ -1578,6 +1578,7 @@
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC_STR "romm_system_sync"
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS_STR "romm_system_options"
 #define MENU_ENUM_LABEL_ROMM_OPEN_GAME_STR "romm_open_game"
+#define MENU_ENUM_LABEL_ROMM_GAME_SUMMARY_STR "romm_game_summary"
 #define MENU_ENUM_LABEL_ROMM_SYNC_ON_START_STR "romm_sync_on_start"
 #define MENU_ENUM_LABEL_ROMM_SYNC_START_LIMIT_STR "romm_sync_start_limit"
 #define MENU_ENUM_LABEL_ROMM_WEB_URL_STR "romm_web_url"

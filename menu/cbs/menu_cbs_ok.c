@@ -7215,6 +7215,14 @@ static int action_ok_romm_open_game(const char *path,
    return 0;
 }
 
+static int action_ok_romm_game_summary(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   /* Shown as help, which the "help" list label asks for */
+   return generic_action_ok_help(NULL, label, 0, 0, 0,
+         MENU_ENUM_LABEL_HELP, MENU_DIALOG_HELP_ROMM_SUMMARY);
+}
+
 static int action_ok_romm_system_refresh(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9954,6 +9962,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY,                   action_ok_push_romm_system},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS,                 action_ok_push_romm_system},
          {MENU_ENUM_LABEL_ROMM_OPEN_GAME,                      action_ok_romm_open_game},
+         {MENU_ENUM_LABEL_ROMM_GAME_SUMMARY,                   action_ok_romm_game_summary},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH, action_ok_romm_system_refresh},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH, action_ok_romm_system_refetch},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD, action_ok_romm_system_rebuild},
