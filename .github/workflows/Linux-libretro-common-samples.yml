@@ -180,6 +180,7 @@ jobs:
             cdfs_pure_api_test
             chd_meta_overflow_test
             strlcpy_append_test
+            string_list_find_test
             http_parse_test
             rjson_test
             rm3u_test

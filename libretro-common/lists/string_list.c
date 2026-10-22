@@ -435,7 +435,9 @@ int string_list_find_elem(const struct string_list *list, const char *elem)
       {
          const unsigned char *p1 = (const unsigned char*)list->elems[i].data;
          const unsigned char *p2 = (const unsigned char*)elem;
-         while ((*p1 | 32) == (*p2 | 32) || (*p1 == *p2))
+         /* Not "| 32": that folds '\0' into ' ', so "Game Boy" would
+          * match "Game Boy Advance". */
+         while (tolower(*p1) == tolower(*p2))
          {
             if (*p1 == '\0')
                return (int)(i + 1);
