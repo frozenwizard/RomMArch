@@ -7208,6 +7208,13 @@ DEFAULT_ACTION_OK_FUNC(action_ok_push_core_information_list, ACTION_OK_DL_CORE_I
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
 STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_romm_system, ACTION_OK_DL_ROMM_SYSTEM)
 
+static int action_ok_romm_open_game(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_open_game(path);
+   return 0;
+}
+
 static int action_ok_romm_system_refresh(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9946,6 +9953,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
          {MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY,                   action_ok_push_romm_system},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS,                 action_ok_push_romm_system},
+         {MENU_ENUM_LABEL_ROMM_OPEN_GAME,                      action_ok_romm_open_game},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH, action_ok_romm_system_refresh},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH, action_ok_romm_system_refetch},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD, action_ok_romm_system_rebuild},

@@ -1608,6 +1608,161 @@ void romm_menu_system_action(const char *fs_slug,
    }
    romm_menu_refresh();
 }
+
+/* The game the Information page last asked RomM about, and its
+ * details; a failure is asked again a few seconds on. */
+static unsigned romm_info_id          = 0;
+static bool romm_info_loaded          = false;
+static bool romm_info_loading         = false;
+static retro_time_t romm_info_failed  = 0;
+static romm_rom_details_t romm_info;
+
+static void romm_on_game_details(void *user_data, enum romm_status status,
+      int http_status, const romm_rom_details_t *details)
+{
+   if ((unsigned)(uintptr_t)user_data != romm_info_id)
+      return;
+   romm_info_loading = false;
+   if (status == ROMM_OK && details)
+   {
+      romm_info        = *details;
+      romm_info_loaded = true;
+   }
+   else
+      romm_info_failed = cpu_features_get_time_usec();
+   romm_menu_refresh();
+}
+
+/* "12.3 MB" */
+static void romm_menu_size(char *s, size_t len, uint64_t bytes)
+{
+   if (bytes >= 1024ULL * 1024 * 1024)
+      snprintf(s, len, "%.1f GB", (double)bytes / (1024.0 * 1024 * 1024));
+   else if (bytes >= 1024 * 1024)
+      snprintf(s, len, "%.1f MB", (double)bytes / (1024.0 * 1024));
+   else
+      snprintf(s, len, "%u KB", (unsigned)((bytes + 1023) / 1024));
+}
+
+static unsigned romm_menu_info_line(file_list_t *list, enum msg_hash_enums fmt,
+      const char *value)
+{
+   char line[512];
+   if (!*value)
+      return 0;
+   snprintf(line, sizeof(line), msg_hash_to_str(fmt), value);
+   return romm_menu_status_line(list, line) ? 1 : 0;
+}
+
+unsigned romm_menu_game_info(file_list_t *list, const char *content_path)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned id          = romm_library_path_id(content_path);
+   unsigned count       = 0;
+   char value[64];
+
+   if (!id)
+      return 0;
+   if (id != romm_info_id)
+   {
+      romm_info_id      = id;
+      romm_info_loaded  = false;
+      romm_info_loading = false;
+      romm_info_failed  = 0;
+   }
+   if (     !romm_info_loaded && !romm_info_loading
+         && (   !romm_info_failed
+             || cpu_features_get_time_usec() - romm_info_failed > 5000000)
+         && romm_client_rom_details(settings->arrays.romm_server_url,
+               settings->arrays.romm_token, id, romm_on_game_details,
+               (void*)(uintptr_t)id))
+      romm_info_loading = true;
+
+   if (!romm_info_loaded)
+      return romm_menu_status_line(list, msg_hash_to_str(romm_info_loading
+            ? MSG_ROMM_GAME_LOADING : MSG_ROMM_GAME_UNAVAILABLE)) ? 1 : 0;
+
+   if (romm_info.release_date > 0)
+   {
+      time_t t      = (time_t)(romm_info.release_date / 1000);
+      struct tm *tm = gmtime(&t);
+      if (!tm || !strftime(value, sizeof(value), "%Y-%m-%d", tm))
+         *value = '\0';
+      count += romm_menu_info_line(list, MSG_ROMM_GAME_RELEASED, value);
+   }
+   count += romm_menu_info_line(list, MSG_ROMM_GAME_GENRES, romm_info.genres);
+   count += romm_menu_info_line(list, MSG_ROMM_GAME_COMPANIES,
+         romm_info.companies);
+   count += romm_menu_info_line(list, MSG_ROMM_GAME_REGIONS,
+         romm_info.regions);
+   count += romm_menu_info_line(list, MSG_ROMM_GAME_LANGUAGES,
+         romm_info.languages);
+   if (*romm_info.rating)
+   {
+      snprintf(value, sizeof(value), "%.0f",
+            strtod(romm_info.rating, NULL));
+      count += romm_menu_info_line(list, MSG_ROMM_GAME_RATING, value);
+   }
+   if (romm_info.size)
+   {
+      romm_menu_size(value, sizeof(value), romm_info.size);
+      count += romm_menu_info_line(list, MSG_ROMM_GAME_SIZE, value);
+   }
+   if (*romm_info.summary)
+   {
+      /* A row a line: a row shows one line. */
+      char *wrapped = (char*)malloc(sizeof(romm_info.summary) * 2);
+      if (wrapped)
+      {
+         char *line = wrapped;
+         char *next;
+         word_wrap(wrapped, sizeof(romm_info.summary) * 2,
+               romm_info.summary, strlen(romm_info.summary), 50, 0, 0);
+         count += romm_menu_status_line(list,
+               msg_hash_to_str(MSG_ROMM_GAME_SUMMARY)) ? 1 : 0;
+         while (line && *line)
+         {
+            if ((next = strchr(line, '\n')))
+               *next++ = '\0';
+            if (*line && romm_menu_status_line(list, line))
+               count++;
+            line = next;
+         }
+         free(wrapped);
+      }
+   }
+   return count;
+}
+
+unsigned romm_menu_game_open_row(file_list_t *list, const char *content_path)
+{
+   if (     !romm_library_path_id(content_path)
+         || !menu_entries_append(list, content_path, "",
+               MENU_ENUM_LABEL_ROMM_OPEN_GAME, MENU_ROMM_SYSTEM, 0, 0, NULL))
+      return 0;
+   file_list_set_alt_at_offset(list, list->size - 1,
+         msg_hash_to_str(MSG_ROMM_GAME_OPEN));
+   return 1;
+}
+
+void romm_menu_open_game(const char *content_path)
+{
+   settings_t *settings = config_get_ptr();
+   const char *base     = *settings->arrays.romm_web_url
+      ? settings->arrays.romm_web_url : settings->arrays.romm_server_url;
+   unsigned id          = romm_library_path_id(content_path);
+   char url[1024];
+   size_t _len;
+
+   if (!id || !*base)
+      return;
+   _len = strlcpy(url, base, sizeof(url));
+   while (_len && url[_len - 1] == '/')
+      url[--_len] = '\0';
+   snprintf(url + _len, sizeof(url) - _len, "/rom/%u", id);
+   if (!romm_platform_open_url(url))
+      romm_notify(url, MESSAGE_QUEUE_CATEGORY_INFO);
+}
 #endif
 
 /* The name of the system with RomM folder @fs_slug in @lib. */

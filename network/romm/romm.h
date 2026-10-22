@@ -143,6 +143,21 @@ unsigned romm_menu_system_page(file_list_t *list, const char *fs_slug);
 unsigned romm_menu_playlist_systems(file_list_t *list,
       const char *playlist_file);
 
+/* Lists in @list the details RomM has for the game at @content_path,
+ * asking RomM for them the first time; while they come, and when RomM
+ * doesn't answer, a line says so. Returns how many rows; 0 for a game
+ * not from RomM. */
+unsigned romm_menu_game_info(file_list_t *list, const char *content_path);
+
+/* Lists in @list an Open in RomM row for the game at @content_path.
+ * Returns how many rows. */
+unsigned romm_menu_game_open_row(file_list_t *list,
+      const char *content_path);
+
+/* Opens the RomM page of the game at @content_path in the browser, at
+ * the sign-in address, or else the server address. */
+void romm_menu_open_game(const char *content_path);
+
 /* What a system's page can do. */
 enum romm_system_action
 {

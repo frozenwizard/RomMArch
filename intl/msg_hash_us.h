@@ -34029,6 +34029,54 @@ MSG_HASH(
    "RomM System: %s"
    )
 MSG_HASH(
+   MSG_ROMM_GAME_LOADING,
+   "Asking RomM for this game's details..."
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_UNAVAILABLE,
+   "RomM's details need RomM, which didn't answer."
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_RELEASED,
+   "Released: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_GENRES,
+   "Genres: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_COMPANIES,
+   "Companies: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_REGIONS,
+   "Regions: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_LANGUAGES,
+   "Languages: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_RATING,
+   "Rating: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_SIZE,
+   "Size: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_SUMMARY,
+   "Summary:"
+   )
+MSG_HASH(
+   MSG_ROMM_GAME_OPEN,
+   "Open in RomM"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_OPEN_GAME,
+   "Open this game's page in RomM in your browser."
+   )
+MSG_HASH(
    MENU_ENUM_SUBLABEL_ROMM_SYSTEM_OPTIONS,
    "Sync, refresh, refetch or rebuild this system, or stop syncing it, as Settings > RomM > Systems does."
    )

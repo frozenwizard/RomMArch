@@ -6358,6 +6358,7 @@ static unsigned menu_displaylist_parse_content_information(
       && (loaded_content_path && *loaded_content_path)
       &&  string_is_equal(menu->deferred_path, loaded_content_path);
    bool core_supports_no_game          = false;
+   bool romm_game                      = false;
 
    core_name[0]                        = '\0';
    content_label[0]                    = '\0';
@@ -6475,9 +6476,19 @@ static unsigned menu_displaylist_parse_content_information(
          count++;
    }
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* A RomM game: RomM's details instead of libretro's database entry */
+   if (content_path && string_starts_with(content_path, "romm://"))
+   {
+      romm_game = true;
+      count    += romm_menu_game_info(info_list, content_path);
+      count    += romm_menu_game_open_row(info_list, content_path);
+   }
+#endif
 #ifdef HAVE_LIBRETRODB
    /* Database entry */
    if (     *content_label
+         && !romm_game
          && (db_name && *db_name))
    {
       char *last;
