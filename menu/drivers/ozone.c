@@ -4373,6 +4373,11 @@ static bool ozone_is_playlist(ozone_handle_t *ozone, bool depth)
    if (ozone->categories_selection_ptr > ozone->system_tab_end)
    {
       unsigned type = ozone_get_horizontal_selection_type(ozone);
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      /* A playlist opened from a RomM group's list, as from Main Menu */
+      if (type == MENU_ROMM_GROUP)
+         return ozone_is_main_menu_playlist();
+#endif
       is_playlist   = type == FILE_TYPE_PLAYLIST_COLLECTION;
    }
    else
