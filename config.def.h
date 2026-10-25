@@ -1856,7 +1856,12 @@
 #endif
 
 /* Show Menu start-up screen on boot. */
+#ifdef HAVE_ROMM
+/* Rommarch's Main Menu starts with Connect to RomM instead. */
+#define DEFAULT_MENU_SHOW_START_SCREEN false
+#else
 #define DEFAULT_MENU_SHOW_START_SCREEN true
+#endif
 
 /* Default scale factor for non-framebuffer-based display
  * drivers and display widgets */

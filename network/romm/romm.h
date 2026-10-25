@@ -121,6 +121,16 @@ unsigned romm_menu_sidebar_list(file_list_t *list, const char *key);
  * it. Read from what's stored, without asking RomM. Returns how many. */
 unsigned romm_menu_status_list(file_list_t *list);
 
+/* Lists in @list the Connect to RomM page: the server address and,
+ * until the device is paired, whether RomM answers there and, once it
+ * does, Pair This Device. Asks RomM the first time it lists an address.
+ * Returns how many rows. */
+unsigned romm_menu_connect_list(file_list_t *list);
+
+/* OK on Connect to RomM's address: opens the keyboard on the address,
+ * or "https://" when none is set. */
+void romm_menu_connect_address(void);
+
 /* Lists in @list Unpair This Device, when the device is paired, as its
  * second OK would read once the first armed it. Returns how many rows. */
 unsigned romm_menu_unpair_row(file_list_t *list);

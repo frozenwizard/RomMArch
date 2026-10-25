@@ -34033,6 +34033,26 @@ MSG_HASH(
    "This device is unpaired. To finish, revoke its token on RomM's API tokens page."
    )
 MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_CONNECT_ADDRESS,
+   "Where your RomM server is, such as https://romm.example.com. Pairing comes once RomM answers there."
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_CONNECT_PAIR,
+   "Approve this device in RomM, signed in as the user whose games and saves it should use."
+   )
+MSG_HASH(
+   MSG_ROMM_CONNECT_NO_ADDRESS,
+   "Not set"
+   )
+MSG_HASH(
+   MSG_ROMM_CONNECT_CHECKING,
+   "Looking for RomM at this address..."
+   )
+MSG_HASH(
+   MSG_ROMM_CONNECT_ANSWERS,
+   "RomM %s answers at this address."
+   )
+MSG_HASH(
    MSG_ROMM_UNPAIRED_DEVICE_KEPT,
    "This device is unpaired, but RomM didn't remove it (HTTP %d). Revoke its token on RomM's API tokens page."
    )

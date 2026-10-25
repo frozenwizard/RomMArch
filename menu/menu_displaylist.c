@@ -16140,6 +16140,12 @@ static bool menu_displaylist_ctl_internal(
             }
             break;
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         case DISPLAYLIST_ROMM_CONNECT:
+            menu_entries_clear(info->list);
+            count        = romm_menu_connect_list(info->list);
+            info->flags |= MD_FLAG_NEED_REFRESH
+                         | MD_FLAG_NEED_PUSH;
+            break;
          case DISPLAYLIST_ROMM_SYSTEMS_LIST:
             menu_entries_clear(info->list);
             count        = romm_menu_systems_list(info->list);
@@ -17356,6 +17362,16 @@ static bool menu_displaylist_ctl_internal(
                      && settings->bools.menu_materialui_show_nav_bar
                      && settings->bools.menu_content_show_playlist_tabs)
                   show_playlists = false;
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+               /* First until this device is paired. */
+               if (     string_is_empty(settings->arrays.romm_token)
+                     && !settings->bools.kiosk_mode_enable
+                     && MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(info->list,
+                        MENU_ENUM_LABEL_ROMM_CONNECT, PARSE_ACTION,
+                        false) == 0)
+                  count++;
+#endif
 
                if (flags & RUNLOOP_FLAG_CORE_RUNNING)
                {

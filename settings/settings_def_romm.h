@@ -37,6 +37,10 @@ S_ACTION(ROMM_SYSTEMS,
       "romm_systems",
       "Systems",
       "Which of RomM's systems this device syncs. Open one to sync it, refresh, refetch or rebuild it, or stop syncing it.")
+S_ACTION(ROMM_CONNECT,
+      "romm_connect",
+      "Connect to RomM",
+      "Set where your RomM server is and pair this device with it, to play your RomM games here.")
 S_ACTION_EX(ROMM_REFRESH_PLAYLIST,
       "romm_refresh_playlist", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_REFRESH_PLAYLIST,
       "Refresh Playlist",

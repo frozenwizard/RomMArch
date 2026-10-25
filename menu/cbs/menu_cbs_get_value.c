@@ -499,6 +499,24 @@ static size_t menu_action_setting_disp_set_label_romm_system(
    return _len;
 }
 
+/* Connect to RomM's address row: its name, and the address as its
+ * value. */
+static size_t menu_action_setting_disp_set_label_romm_connect_address(
+      file_list_t* list,
+      unsigned *w, unsigned type, unsigned i,
+      const char *label,
+      char *s, size_t len,
+      const char *path,
+      char *s2, size_t len2)
+{
+   size_t _len;
+   if (list->list[i].alt)
+      strlcpy(s2, list->list[i].alt, len2);
+   _len = strlcpy(s, path, len);
+   *w   = (unsigned)_len;
+   return _len;
+}
+
 /* An action of a system's page: its text, with no value. */
 static size_t menu_action_setting_disp_set_label_romm_system_action(
       file_list_t* list,
@@ -2230,11 +2248,16 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
             BIND_ACTION_GET_VALUE(cbs,
                   menu_action_setting_disp_set_label_romm_system);
             break;
+         case MENU_ENUM_LABEL_ROMM_CONNECT_ADDRESS:
+            BIND_ACTION_GET_VALUE(cbs,
+                  menu_action_setting_disp_set_label_romm_connect_address);
+            break;
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_STOP:
          case MENU_ENUM_LABEL_ROMM_UNPAIR:
+         case MENU_ENUM_LABEL_ROMM_CONNECT_PAIR:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC:
          case MENU_ENUM_LABEL_ROMM_OPEN_GAME:
          case MENU_ENUM_LABEL_ROMM_GAME_SUMMARY:

@@ -9021,6 +9021,7 @@ static bool ozone_is_current_entry_settings(size_t current_selection)
    /* Its value is the system's state */
    case MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY:
    case MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS:
+   case MENU_ENUM_LABEL_ROMM_CONNECT_ADDRESS:
       return false;
 #endif
 

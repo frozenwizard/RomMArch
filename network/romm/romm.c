@@ -103,44 +103,50 @@ static void romm_notify(const char *msg,
          MESSAGE_QUEUE_ICON_DEFAULT, category);
 }
 
-/* Reports why a request to the configured server failed. */
-static void romm_notify_failure(enum romm_status status, int http_status)
+/* Why a request to the configured server failed, in words, into @msg. */
+static void romm_failure_text(enum romm_status status, int http_status,
+      char *msg, size_t len)
 {
    settings_t *settings = config_get_ptr();
    const char *server   = settings->arrays.romm_server_url;
-   char msg[512];
 
    switch (status)
    {
       case ROMM_ERR_UNREACHABLE:
-         snprintf(msg, sizeof(msg),
+         snprintf(msg, len,
                msg_hash_to_str(MSG_ROMM_UNREACHABLE), server);
          break;
       case ROMM_ERR_HTTP:
-         snprintf(msg, sizeof(msg),
+         snprintf(msg, len,
                msg_hash_to_str(MSG_ROMM_HTTP_ERROR), http_status);
          break;
       case ROMM_ERR_DENIED:
-         strlcpy(msg, msg_hash_to_str(MSG_ROMM_PAIR_DENIED), sizeof(msg));
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_PAIR_DENIED), len);
          break;
       case ROMM_ERR_EXPIRED:
-         strlcpy(msg, msg_hash_to_str(MSG_ROMM_PAIR_EXPIRED), sizeof(msg));
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_PAIR_EXPIRED), len);
          break;
       case ROMM_ERR_UNAUTHORIZED:
-         strlcpy(msg, msg_hash_to_str(MSG_ROMM_UNAUTHORIZED), sizeof(msg));
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_UNAUTHORIZED), len);
          break;
       case ROMM_ERR_FORBIDDEN:
-         strlcpy(msg, msg_hash_to_str(MSG_ROMM_FORBIDDEN), sizeof(msg));
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_FORBIDDEN), len);
          break;
       case ROMM_ERR_WRITE:
-         strlcpy(msg, msg_hash_to_str(MSG_ROMM_WRITE_FAILED), sizeof(msg));
+         strlcpy(msg, msg_hash_to_str(MSG_ROMM_WRITE_FAILED), len);
          break;
       default:
-         snprintf(msg, sizeof(msg),
+         snprintf(msg, len,
                msg_hash_to_str(MSG_ROMM_NOT_ROMM), server);
          break;
    }
+}
 
+/* Reports why a request to the configured server failed. */
+static void romm_notify_failure(enum romm_status status, int http_status)
+{
+   char msg[512];
+   romm_failure_text(status, http_status, msg, sizeof(msg));
    romm_notify(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
 }
 
@@ -564,6 +570,10 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
    romm_ask_username();
+#ifdef HAVE_MENU
+   /* Connect to RomM goes, and its page says paired. */
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+#endif
 #ifdef HAVE_CLOUDSYNC
    if (     cloud_sync_now
          && settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
@@ -3140,6 +3150,153 @@ void romm_content_unloaded(const char *next_content)
 }
 
 #ifdef HAVE_MENU
+/* Connect to RomM: whether RomM answers at the address it last checked,
+ * and the version, or why not, in words. */
+enum romm_connect_state
+{
+   ROMM_CONNECT_UNCHECKED = 0,
+   ROMM_CONNECT_CHECKING,
+   ROMM_CONNECT_ANSWERS,
+   ROMM_CONNECT_FAILED
+};
+static enum romm_connect_state romm_connect_state = ROMM_CONNECT_UNCHECKED;
+static char romm_connect_checked[NAME_MAX_LENGTH];
+static char romm_connect_text[512];
+static unsigned romm_connect_gen = 0;
+
+static void romm_on_connect_checked(void *user_data, enum romm_status status,
+      int http_status, const char *version)
+{
+   if ((uintptr_t)user_data != romm_connect_gen)
+      return;
+   if (status == ROMM_OK)
+   {
+      romm_connect_state = ROMM_CONNECT_ANSWERS;
+      snprintf(romm_connect_text, sizeof(romm_connect_text),
+            msg_hash_to_str(MSG_ROMM_CONNECT_ANSWERS), version);
+   }
+   else
+   {
+      romm_connect_state = ROMM_CONNECT_FAILED;
+      romm_failure_text(status, http_status, romm_connect_text,
+            sizeof(romm_connect_text));
+   }
+   romm_menu_refresh();
+}
+
+/* Asks whether RomM answers at the server address. */
+static void romm_connect_check(void)
+{
+   settings_t *settings = config_get_ptr();
+
+   romm_connect_gen++;
+   strlcpy(romm_connect_checked, settings->arrays.romm_server_url,
+         sizeof(romm_connect_checked));
+   if (romm_client_heartbeat(settings->arrays.romm_server_url,
+         romm_on_connect_checked, (void*)(uintptr_t)romm_connect_gen))
+      romm_connect_state = ROMM_CONNECT_CHECKING;
+   else
+   {
+      romm_connect_state = ROMM_CONNECT_FAILED;
+      romm_failure_text(ROMM_ERR_UNREACHABLE, 0, romm_connect_text,
+            sizeof(romm_connect_text));
+   }
+}
+
+unsigned romm_menu_connect_list(file_list_t *list)
+{
+   settings_t *settings = config_get_ptr();
+   const char *server   = settings->arrays.romm_server_url;
+   unsigned count       = 0;
+
+   if (menu_entries_append(list, *server ? server
+         : msg_hash_to_str(MSG_ROMM_CONNECT_NO_ADDRESS), "",
+         MENU_ENUM_LABEL_ROMM_CONNECT_ADDRESS, MENU_ROMM_SYSTEM, 0, 0, NULL))
+   {
+      file_list_set_alt_at_offset(list, list->size - 1,
+            msg_hash_to_str(MENU_ENUM_LABEL_VALUE_ROMM_SERVER_URL));
+      count++;
+   }
+   if (!string_is_empty(settings->arrays.romm_token))
+      return count + (romm_menu_status_line(list,
+            msg_hash_to_str(MSG_ROMM_PAIRED)) ? 1 : 0);
+   if (!*server)
+      return count;
+
+   /* Checked once per address the page shows. */
+   if (     romm_connect_state == ROMM_CONNECT_UNCHECKED
+         || !string_is_equal(romm_connect_checked, server))
+      romm_connect_check();
+   if (romm_menu_status_line(list,
+         romm_connect_state == ROMM_CONNECT_CHECKING
+         ? msg_hash_to_str(MSG_ROMM_CONNECT_CHECKING)
+         : romm_connect_text))
+      count++;
+   if (     romm_connect_state == ROMM_CONNECT_ANSWERS
+         && menu_entries_append(list, "", "",
+               MENU_ENUM_LABEL_ROMM_CONNECT_PAIR, MENU_ROMM_SYSTEM,
+               0, 0, NULL))
+   {
+      file_list_set_alt_at_offset(list, list->size - 1,
+            msg_hash_to_str(MENU_ENUM_LABEL_VALUE_ROMM_PAIR));
+      count++;
+   }
+   return count;
+}
+
+static void romm_connect_address_entered(void *userdata, const char *line)
+{
+   settings_t *settings = config_get_ptr();
+   char address[sizeof(settings->arrays.romm_server_url)];
+
+   menu_input_dialog_end();
+   if (!line)
+      return;
+   strlcpy(address, line, sizeof(address));
+   string_trim_whitespace_left(address);
+   string_trim_whitespace_right(address);
+   /* Only the prefill left, or nothing: no change. */
+   if (     !*address || string_is_equal(address, "https://")
+         || string_is_equal(address, "http://"))
+      return;
+   /* "romm.example.com" means https:// */
+   if (!strstr(address, "://"))
+   {
+      char typed[sizeof(address)];
+      size_t _len;
+      strlcpy(typed, address, sizeof(typed));
+      _len = strlcpy(address, "https://", sizeof(address));
+      strlcpy(address + _len, typed, sizeof(address) - _len);
+   }
+   configuration_set_string(settings, settings->arrays.romm_server_url,
+         address);
+   romm_pair_follow_address();
+   if (!romm_overrides_active())
+      command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   romm_connect_state = ROMM_CONNECT_UNCHECKED;
+   romm_menu_refresh();
+}
+
+void romm_menu_connect_address(void)
+{
+   settings_t *settings = config_get_ptr();
+   const char *server   = settings->arrays.romm_server_url;
+   const char *text     = *server ? server : "https://";
+   menu_input_ctx_line_t line;
+
+   line.label         = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_ROMM_SERVER_URL);
+   line.label_setting = NULL;
+   line.type          = 0;
+   line.idx           = 0;
+   line.text_type     = MENU_INPUT_DIALOG_KB_TYPE_TEXT;
+   line.cb            = romm_connect_address_entered;
+   if (!menu_input_dialog_start(&line))
+      return;
+   /* Starts with the address, or the start of one. */
+   input_keyboard_line_append(&input_state_get_ptr()->keyboard_line,
+         text, strlen(text));
+}
+
 /* Unpair This Device asks for a second OK: the first arms it, which the
  * rebuild of Settings > RomM it causes keeps. */
 static bool romm_unpair_armed  = false;
