@@ -2344,6 +2344,56 @@ static void romm_lib_sync_purge(romm_lib_sync_t *sync)
    }
 }
 
+static void romm_lib_remove_playlist(const char *playlist_dir,
+      const char *name, romm_library_playlist_cb_t playlist_changed)
+{
+   char path[PATH_MAX_LENGTH];
+
+   if (!*name)
+      return;
+   fill_pathname_join(path, playlist_dir, name, sizeof(path));
+   if (path_is_valid(path) && !filestream_delete(path)
+         && playlist_changed)
+      playlist_changed(path);
+}
+
+void romm_library_remove_all(const char *playlist_dir,
+      const char *thumbnails_dir,
+      romm_library_playlist_cb_t playlist_changed)
+{
+   romm_library_t lib;
+   char manifest[PATH_MAX_LENGTH];
+   size_t i, j;
+
+   romm_library_manifest_path(manifest, sizeof(manifest), playlist_dir);
+   if (romm_library_load(&lib, manifest))
+   {
+      for (i = 0; i < RBUF_LEN(lib.platforms); i++)
+      {
+         const romm_library_platform_t *p = &lib.platforms[i];
+         romm_lib_remove_playlist(playlist_dir, p->playlist,
+               playlist_changed);
+         if (!*p->playlist || string_is_empty(thumbnails_dir))
+            continue;
+         for (j = 0; j < RBUF_LEN(p->roms); j++)
+         {
+            char dest[PATH_MAX_LENGTH];
+            if (     *p->roms[j].cover
+                  && romm_library_cover_path(dest, sizeof(dest),
+                        thumbnails_dir, p->playlist, &p->roms[j]))
+               romm_lib_cover_delete(dest, NULL);
+         }
+      }
+      for (i = 0; i < RBUF_LEN(lib.collections); i++)
+         romm_lib_remove_playlist(playlist_dir,
+               lib.collections[i].playlist, playlist_changed);
+      romm_library_free(&lib);
+   }
+   if (path_is_valid(manifest))
+      filestream_delete(manifest);
+   RARCH_LOG(ROMM_LIB_PFX "Removed the library.\n");
+}
+
 /* Is @p, which an emulator runs and isn't switched off, new since the
  * last sync, to start off? A platform keeps its folder name when
  * RomM's database is rebuilt and the ids change. */

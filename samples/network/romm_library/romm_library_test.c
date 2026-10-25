@@ -3156,6 +3156,81 @@ static void test_sync_rebuild(void)
    filestream_delete(TEST_DIR);
 }
 
+static unsigned removed_count;
+
+static void on_removed(const char *path)
+{
+   removed_count++;
+}
+
+static void test_remove_all(void)
+{
+   const char *segacd  = TEST_DIR "/Sega - Mega-CD - Sega CD.lpl";
+   const char *genesis = TEST_DIR "/Sega - Mega Drive - Genesis.lpl";
+   const char *other   = TEST_DIR "/Not RomM.lpl";
+   const char *mine    = TEST_DIR "/thumbs/Not RomM.png";
+   const char *cover1  = "/assets/romm/resources/roms/15/1/cover/big.png?ts=2026-10-03 00:23:20";
+   sync_result_t r;
+   char manifest[256];
+   char *page;
+   unsigned fetched;
+
+   path_mkdir(TEST_DIR "/thumbs");
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   filestream_delete(manifest);
+   stub_reset();
+
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", TEST_DIR, TEST_DIR "/thumbs", NULL, NULL,
+         on_sync, &r);
+   sync_answer(200, exclude_platforms);
+   page = covers_page(cover1, NULL, NULL);
+   sync_answer(200, page);
+   free(page);
+   page = roms_page(8, 100, 2);
+   sync_answer(200, page);
+   free(page);
+   CHECK(sync_run_out() && r.status == ROMM_OK, "first sync: status %d",
+         r.status);
+   fetched = covers_run();
+   CHECK(fetched == 3 && path_is_valid(segacd) && path_is_valid(genesis),
+         "first sync: %u covers", fetched);
+   CHECK(path_is_valid(COVER_DIR "Game 1 _ Co (USA).png")
+         && path_is_valid(GENESIS_COVERS "Game 100 (USA).png")
+         && path_is_valid(GENESIS_COVERS "Game 101 (USA).png"),
+         "first sync: covers missing");
+   filestream_write_file(other, "{}", 2);
+   filestream_write_file(mine, PNG_DATA, sizeof(PNG_DATA) - 1);
+
+   removed_count = 0;
+   romm_library_remove_all(TEST_DIR, TEST_DIR "/thumbs", on_removed);
+   CHECK(!path_is_valid(segacd) && !path_is_valid(genesis)
+         && !path_is_valid(manifest) && removed_count == 2,
+         "playlists left, or %u reported", removed_count);
+   CHECK(!path_is_valid(COVER_DIR "Game 1 _ Co (USA).png")
+         && !path_is_valid(GENESIS_COVERS "Game 100 (USA).png")
+         && !path_is_valid(GENESIS_COVERS "Game 101 (USA).png"),
+         "covers left");
+   CHECK(path_is_valid(other) && path_is_valid(mine),
+         "removed what isn't RomM's");
+
+   /* Nothing synced: nothing to do. */
+   removed_count = 0;
+   romm_library_remove_all(TEST_DIR, TEST_DIR "/thumbs", on_removed);
+   CHECK(removed_count == 0 && path_is_valid(other),
+         "second run: %u", removed_count);
+
+   filestream_delete(other);
+   filestream_delete(mine);
+   filestream_delete(COVER_DIR);
+   filestream_delete(GENESIS_COVERS);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega Drive - Genesis");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -3193,6 +3268,7 @@ int main(void)
    test_sync_new_off();
    test_sync_only();
    test_sync_rebuild();
+   test_remove_all();
 
    if (failures)
    {

@@ -254,6 +254,14 @@ bool romm_library_save(const romm_library_t *lib, const char *path);
 
 void romm_library_free(romm_library_t *lib);
 
+/* Deletes what the syncs wrote in @playlist_dir: each playlist its
+ * manifest records, their games' covers in @thumbnails_dir (when not
+ * empty), and the manifest. @playlist_changed, when given, runs for
+ * each playlist deleted. */
+void romm_library_remove_all(const char *playlist_dir,
+      const char *thumbnails_dir,
+      romm_library_playlist_cb_t playlist_changed);
+
 /* Brings the playlists in the playlist folder in line with the server:
  * one per RomM platform with games the token's user can see that an
  * emulator runs, and the manifest recording them. Runs as a task showing its progress; @cb
