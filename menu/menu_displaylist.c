@@ -13274,6 +13274,7 @@ unsigned menu_displaylist_build_list(
                         false) == 0)
                   count++;
             }
+            count += romm_menu_unpair_row(list);
          }
          break;
 #endif

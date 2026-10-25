@@ -2234,6 +2234,7 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_STOP:
+         case MENU_ENUM_LABEL_ROMM_UNPAIR:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC:
          case MENU_ENUM_LABEL_ROMM_OPEN_GAME:
          case MENU_ENUM_LABEL_ROMM_GAME_SUMMARY:

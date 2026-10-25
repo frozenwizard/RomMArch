@@ -1575,6 +1575,7 @@
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH_STR "romm_system_refetch"
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD_STR "romm_system_rebuild"
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_STOP_STR "romm_system_stop"
+#define MENU_ENUM_LABEL_ROMM_UNPAIR_STR "romm_unpair"
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC_STR "romm_system_sync"
 #define MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS_STR "romm_system_options"
 #define MENU_ENUM_LABEL_ROMM_OPEN_GAME_STR "romm_open_game"

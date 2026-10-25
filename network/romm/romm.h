@@ -121,6 +121,16 @@ unsigned romm_menu_sidebar_list(file_list_t *list, const char *key);
  * it. Read from what's stored, without asking RomM. Returns how many. */
 unsigned romm_menu_status_list(file_list_t *list);
 
+/* Lists in @list Unpair This Device, when the device is paired, as its
+ * second OK would read once the first armed it. Returns how many rows. */
+unsigned romm_menu_unpair_row(file_list_t *list);
+
+/* OK on Unpair This Device: the first arms it; the second, unless a
+ * sync, game or Cloud Sync is under way, deletes the device in RomM,
+ * then clears the pairing, Cloud Sync's use of RomM and RomM's library
+ * here. While RomM can't be reached it leaves the pairing as it is. */
+void romm_menu_unpair(void);
+
 /* Lists in @list the Systems page: every system in the library, under
  * its maker, each row's path its RomM folder name. Returns how many
  * rows. */

@@ -7251,6 +7251,13 @@ static int action_ok_romm_system_stop(const char *path,
    return 0;
 }
 
+static int action_ok_romm_unpair(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_unpair();
+   return 0;
+}
+
 static int action_ok_romm_system_sync(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9967,6 +9974,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH, action_ok_romm_system_refetch},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD, action_ok_romm_system_rebuild},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_STOP,    action_ok_romm_system_stop},
+         {MENU_ENUM_LABEL_ROMM_UNPAIR,         action_ok_romm_unpair},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC,    action_ok_romm_system_sync},
 #endif
 #ifdef HAVE_MIST

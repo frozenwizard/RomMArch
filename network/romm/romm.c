@@ -27,6 +27,7 @@
 #include <lists/dir_list.h>
 #include <lists/string_list.h>
 #include <queues/task_queue.h>
+#include <streams/file_stream.h>
 #include <string/stdstring.h>
 
 #include "romm.h"
@@ -66,6 +67,8 @@ static void *romm_pair_wait = NULL;
 static char romm_pair_server[NAME_MAX_LENGTH];
 static char romm_pair_web[NAME_MAX_LENGTH];
 static bool romm_syncing = false;
+/* Unpair This Device is waiting on RomM; no sync starts meanwhile. */
+static bool romm_unpairing = false;
 /* Check Connection is waiting on RomM. */
 static bool romm_checking = false;
 /* The running sync was started at startup rather than by the user. */
@@ -1962,6 +1965,8 @@ static bool romm_can_sync(void)
 {
    settings_t *settings = config_get_ptr();
 
+   if (romm_unpairing)
+      return false;
    if (string_is_empty(settings->arrays.romm_server_url))
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
@@ -3133,3 +3138,175 @@ void romm_content_unloaded(const char *next_content)
    }
    romm_launch_release(next_content);
 }
+
+#ifdef HAVE_MENU
+/* Unpair This Device asks for a second OK: the first arms it, which the
+ * rebuild of Settings > RomM it causes keeps. */
+static bool romm_unpair_armed  = false;
+static bool romm_unpair_arming = false;
+
+unsigned romm_menu_unpair_row(file_list_t *list)
+{
+   settings_t *settings = config_get_ptr();
+
+   if (!romm_unpair_arming)
+      romm_unpair_armed = false;
+   romm_unpair_arming = false;
+   if (     string_is_empty(settings->arrays.romm_token)
+         || !menu_entries_append(list, "", "", MENU_ENUM_LABEL_ROMM_UNPAIR,
+               MENU_ROMM_SYSTEM, 0, 0, NULL))
+      return 0;
+   file_list_set_alt_at_offset(list, list->size - 1, msg_hash_to_str(
+         romm_unpair_armed ? MSG_ROMM_UNPAIR_CONFIRM : MSG_ROMM_UNPAIR));
+   return 1;
+}
+
+/* Whatever uses the pairing, or would write the library or the
+ * configuration after it is gone. */
+static bool romm_unpair_busy(void)
+{
+   return romm_syncing || romm_checking || romm_launching || romm_fetching
+      || romm_running.rom_id || romm_closing.rom_id || romm_conflict_pending
+      || RBUF_LEN(romm_owed) || romm_favorites_creating
+      || romm_overrides_active()
+#ifdef HAVE_CLOUDSYNC
+      || task_cloud_sync_in_progress()
+#endif
+      ;
+}
+
+/* RomM's games leave @playlist, History or Favorites. */
+static void romm_drop_games(playlist_t *playlist)
+{
+   bool changed = false;
+   size_t i     = playlist_size(playlist);
+
+   while (i--)
+   {
+      const struct playlist_entry *entry = NULL;
+      playlist_get_index(playlist, i, &entry);
+      if (entry && entry->path && string_starts_with(entry->path, ROMM_SCHEME))
+      {
+         playlist_delete_index(playlist, i);
+         changed = true;
+      }
+   }
+   if (changed)
+   {
+      playlist_write_file(playlist);
+      romm_playlist_changed(playlist_get_conf_path(playlist));
+   }
+}
+
+/* Leaves this device as a fresh install would be: not paired, Cloud
+ * Sync off if it pointed at RomM, and no RomM library. Save and state
+ * files, BIOS and cores stay. */
+static void romm_unpair_here(void)
+{
+   settings_t *settings = config_get_ptr();
+   char record[PATH_MAX_LENGTH];
+
+   *settings->arrays.romm_token             = '\0';
+   *settings->arrays.romm_device_id         = '\0';
+   *settings->arrays.romm_device_identifier = '\0';
+   *settings->arrays.romm_missing_scopes    = '\0';
+   *settings->arrays.romm_username          = '\0';
+   *settings->arrays.romm_sync_exclude      = '\0';
+   *settings->arrays.romm_sync_new          = '\0';
+   romm_username_asked = false;
+#ifdef HAVE_CLOUDSYNC
+   if (romm_cloud_sync_is_romms(settings))
+      configuration_set_bool(settings,
+            settings->bools.cloud_sync_enable, false);
+#endif
+
+   romm_saves_record_path(record, sizeof(record),
+         dir_get_ptr(RARCH_DIR_SAVEFILE));
+   if (path_is_valid(record))
+      filestream_delete(record);
+   romm_library_remove_all(settings->paths.directory_playlist,
+         settings->paths.directory_thumbnails, romm_playlist_changed);
+   if (g_defaults.content_history)
+      romm_drop_games(g_defaults.content_history);
+   if (g_defaults.content_favorites)
+      romm_drop_games(g_defaults.content_favorites);
+
+   romm_library_synced_at  = 0;
+   romm_library_games      = 0;
+   romm_library_systems    = 0;
+   *romm_library_waiting   = '\0';
+   *romm_library_new       = '\0';
+   RBUF_FREE(romm_library_waiting_list);
+   RBUF_FREE(romm_favorites_waiting);
+   romm_saves_need_pairing_told = false;
+
+   command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   romm_reload_playlists();
+   RARCH_LOG("[RomM] Unpaired: the pairing and RomM's library are gone "
+         "from this device.\n");
+}
+
+static void romm_on_device_deleted(void *user_data, enum romm_status status,
+      int http_status)
+{
+   char msg[256];
+
+   romm_unpairing = false;
+   if (status == ROMM_ERR_UNREACHABLE)
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_UNPAIR_UNREACHABLE),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   romm_unpair_here();
+   /* 404: RomM no longer had the device. */
+   if (status == ROMM_OK || http_status == 404)
+      romm_notify(msg_hash_to_str(MSG_ROMM_UNPAIRED),
+            MESSAGE_QUEUE_CATEGORY_SUCCESS);
+   else
+   {
+      snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_ROMM_UNPAIRED_DEVICE_KEPT), http_status);
+      romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
+   }
+   romm_menu_refresh();
+}
+
+void romm_menu_unpair(void)
+{
+   settings_t *settings = config_get_ptr();
+
+   if (romm_unpairing || string_is_empty(settings->arrays.romm_token))
+      return;
+   if (!romm_unpair_armed)
+   {
+      romm_unpair_armed  = true;
+      romm_unpair_arming = true;
+      romm_menu_refresh();
+      return;
+   }
+   romm_menu_refresh();
+   if (romm_unpair_busy())
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_UNPAIR_BUSY),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   romm_pair_stop();
+   /* Paired before RomM's device id was kept: none to delete. */
+   if (string_is_empty(settings->arrays.romm_device_id))
+   {
+      romm_on_device_deleted(NULL, ROMM_OK, 204);
+      return;
+   }
+   if (!romm_client_device_delete(settings->arrays.romm_server_url,
+         settings->arrays.romm_token, settings->arrays.romm_device_id,
+         romm_on_device_deleted, NULL))
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_UNPAIR_UNREACHABLE),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   romm_unpairing = true;
+}
+#endif

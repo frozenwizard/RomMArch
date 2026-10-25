@@ -34009,6 +34009,34 @@ MSG_HASH(
    "Press OK Again to Stop Syncing %s"
    )
 MSG_HASH(
+   MSG_ROMM_UNPAIR,
+   "Unpair This Device"
+   )
+MSG_HASH(
+   MSG_ROMM_UNPAIR_CONFIRM,
+   "Press OK Again to Unpair This Device"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_UNPAIR,
+   "Remove this device from RomM, and RomM's library from this device: its playlists, covers and save-sync record. Saves, states, BIOS and emulators stay."
+   )
+MSG_HASH(
+   MSG_ROMM_UNPAIR_BUSY,
+   "Close the game and let RomM's syncs finish, then unpair."
+   )
+MSG_HASH(
+   MSG_ROMM_UNPAIR_UNREACHABLE,
+   "RomM can't be reached, so this device is still paired. Unpair once RomM can be reached."
+   )
+MSG_HASH(
+   MSG_ROMM_UNPAIRED,
+   "This device is unpaired. To finish, revoke its token on RomM's API tokens page."
+   )
+MSG_HASH(
+   MSG_ROMM_UNPAIRED_DEVICE_KEPT,
+   "This device is unpaired, but RomM didn't remove it (HTTP %d). Revoke its token on RomM's API tokens page."
+   )
+MSG_HASH(
    MSG_ROMM_SYSTEM_DO_SYNC,
    "Sync %s"
    )
