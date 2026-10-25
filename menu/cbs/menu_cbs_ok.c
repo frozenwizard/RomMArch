@@ -411,6 +411,8 @@ static enum msg_hash_enums action_ok_dl_to_enum(unsigned lbl)
          return MENU_ENUM_LABEL_DEFERRED_ROMM_CONNECT;
       case ACTION_OK_DL_ROMM_PAIRING:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_PAIRING;
+      case ACTION_OK_DL_ROMM_WIZARD:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_WIZARD;
       case ACTION_OK_DL_ROMM_SYSTEM:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM;
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
@@ -1838,6 +1840,7 @@ int generic_action_ok_displaylist_push(
       case ACTION_OK_DL_ROMM_SYSTEMS_LIST:
       case ACTION_OK_DL_ROMM_CONNECT:
       case ACTION_OK_DL_ROMM_PAIRING:
+      case ACTION_OK_DL_ROMM_WIZARD:
       case ACTION_OK_DL_ROMM_SYSTEM:
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
       case ACTION_OK_DL_FRAME_THROTTLE_SETTINGS_LIST:
@@ -7273,6 +7276,35 @@ static int action_ok_romm_pairing_start(const char *path,
    return 0;
 }
 
+static int action_ok_romm_wizard_choose(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_wizard_open();
+   return generic_action_ok_displaylist_push(path, NULL, label, type,
+         idx, entry_idx, ACTION_OK_DL_ROMM_WIZARD);
+}
+
+static int action_ok_romm_wizard_sync_all(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_wizard_sync_all();
+   return 0;
+}
+
+static int action_ok_romm_wizard_start(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_wizard_start();
+   return 0;
+}
+
+static int action_ok_romm_wizard_system(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_wizard_toggle(path);
+   return 0;
+}
+
 static int action_ok_romm_pairing_cancel(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -10008,6 +10040,10 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_ROMM_CONNECT_PAIR,   action_ok_push_romm_pairing},
          {MENU_ENUM_LABEL_ROMM_PAIRING_START,  action_ok_romm_pairing_start},
          {MENU_ENUM_LABEL_ROMM_PAIRING_CANCEL, action_ok_romm_pairing_cancel},
+         {MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL, action_ok_romm_wizard_sync_all},
+         {MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE,  action_ok_romm_wizard_choose},
+         {MENU_ENUM_LABEL_ROMM_WIZARD_START,   action_ok_romm_wizard_start},
+         {MENU_ENUM_LABEL_ROMM_WIZARD_SYSTEM,  action_ok_romm_wizard_system},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC,    action_ok_romm_system_sync},
 #endif
 #ifdef HAVE_MIST

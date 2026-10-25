@@ -517,6 +517,24 @@ static size_t menu_action_setting_disp_set_label_romm_connect_address(
    return _len;
 }
 
+/* A system of the setup wizard's Choose Systems: its name, and whether
+ * it is ticked. */
+static size_t menu_action_setting_disp_set_label_romm_wizard_system(
+      file_list_t* list,
+      unsigned *w, unsigned type, unsigned i,
+      const char *label,
+      char *s, size_t len,
+      const char *path,
+      char *s2, size_t len2)
+{
+   size_t _len;
+   if (list->list[i].alt)
+      strlcpy(s2, list->list[i].alt, len2);
+   _len = romm_menu_wizard_value(path, s, len);
+   *w   = (unsigned)_len;
+   return _len;
+}
+
 /* An action of a system's page: its text, with no value. */
 static size_t menu_action_setting_disp_set_label_romm_system_action(
       file_list_t* list,
@@ -2252,6 +2270,10 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
             BIND_ACTION_GET_VALUE(cbs,
                   menu_action_setting_disp_set_label_romm_connect_address);
             break;
+         case MENU_ENUM_LABEL_ROMM_WIZARD_SYSTEM:
+            BIND_ACTION_GET_VALUE(cbs,
+                  menu_action_setting_disp_set_label_romm_wizard_system);
+            break;
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REFRESH:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REFETCH:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD:
@@ -2260,6 +2282,9 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
          case MENU_ENUM_LABEL_ROMM_CONNECT_PAIR:
          case MENU_ENUM_LABEL_ROMM_PAIRING_START:
          case MENU_ENUM_LABEL_ROMM_PAIRING_CANCEL:
+         case MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL:
+         case MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE:
+         case MENU_ENUM_LABEL_ROMM_WIZARD_START:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC:
          case MENU_ENUM_LABEL_ROMM_OPEN_GAME:
          case MENU_ENUM_LABEL_ROMM_GAME_SUMMARY:

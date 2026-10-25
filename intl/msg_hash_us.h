@@ -34085,6 +34085,38 @@ MSG_HASH(
    "Cancel"
    )
 MSG_HASH(
+   MSG_ROMM_WIZARD_SYNC_ALL,
+   "Sync All Systems"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_WIZARD_SYNC_ALL,
+   "Bring every system RomM has to this device now. Settings > RomM > Systems turns one off later."
+   )
+MSG_HASH(
+   MSG_ROMM_WIZARD_CHOOSE,
+   "Choose Systems"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_WIZARD_CHOOSE,
+   "Pick the systems to bring to this device. The others stay off until Settings > RomM > Systems turns them on."
+   )
+MSG_HASH(
+   MSG_ROMM_WIZARD_ASKING,
+   "Asking RomM for its systems..."
+   )
+MSG_HASH(
+   MSG_ROMM_WIZARD_START,
+   "Start Sync: %u Chosen"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_WIZARD_START,
+   "Sync the systems switched on now; the rest stay off."
+   )
+MSG_HASH(
+   MSG_ROMM_WIZARD_NONE_CHOSEN,
+   "Switch on at least one system first."
+   )
+MSG_HASH(
    MSG_ROMM_UNPAIRED_DEVICE_KEPT,
    "This device is unpaired, but RomM didn't remove it (HTTP %d). Revoke its token on RomM's API tokens page."
    )

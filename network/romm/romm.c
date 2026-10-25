@@ -3329,6 +3329,16 @@ static bool romm_menu_pairing_line(file_list_t *list, const char *line)
          MENU_ENUM_LABEL_ROMM_STATUS_ENTRY, MENU_ROMM_PAIRING, 0, 0, NULL);
 }
 
+/* A row whose text is @text and whose OK @label binds. */
+static bool romm_menu_action(file_list_t *list, enum msg_hash_enums label,
+      enum msg_hash_enums text, unsigned type)
+{
+   if (!menu_entries_append(list, "", "", label, type, 0, 0, NULL))
+      return false;
+   file_list_set_alt_at_offset(list, list->size - 1, msg_hash_to_str(text));
+   return true;
+}
+
 unsigned romm_menu_pairing_list(file_list_t *list)
 {
    settings_t *settings = config_get_ptr();
@@ -3340,8 +3350,23 @@ unsigned romm_menu_pairing_list(file_list_t *list)
    if (romm_menu_pairing_line(list, line))
       count++;
    if (!romm_pairing && !string_is_empty(settings->arrays.romm_token))
-      return count + (romm_menu_pairing_line(list,
-            msg_hash_to_str(MSG_ROMM_PAIRED)) ? 1 : 0);
+   {
+      char manifest[PATH_MAX_LENGTH];
+      if (romm_menu_pairing_line(list, msg_hash_to_str(MSG_ROMM_PAIRED)))
+         count++;
+      /* Paired with no library yet: what to sync first. */
+      romm_library_manifest_path(manifest, sizeof(manifest),
+            settings->paths.directory_playlist);
+      if (path_is_valid(manifest))
+         return count;
+      if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL,
+            MSG_ROMM_WIZARD_SYNC_ALL, MENU_ROMM_PAIRING))
+         count++;
+      if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE,
+            MSG_ROMM_WIZARD_CHOOSE, MENU_ROMM_PAIRING))
+         count++;
+      return count;
+   }
 
    if (romm_pairing)
    {
@@ -3392,6 +3417,221 @@ void romm_menu_pairing_cancel(void)
 {
    romm_pair_stop();
    *romm_pair_failure = '\0';
+}
+
+/* The setup wizard's Choose Systems: RomM's systems as it listed them
+ * once asked, and the folder names of those ticked. */
+enum romm_wizard_state
+{
+   ROMM_WIZARD_UNASKED = 0,
+   ROMM_WIZARD_ASKING,
+   ROMM_WIZARD_LISTED,
+   ROMM_WIZARD_FAILED
+};
+static enum romm_wizard_state romm_wizard_state = ROMM_WIZARD_UNASKED;
+static romm_system_row_t *romm_wizard_rows      = NULL;
+static char romm_wizard_ticked[PATH_MAX_LENGTH];
+static char romm_wizard_failure[512];
+
+static void romm_on_wizard_platforms(void *user_data,
+      enum romm_status status, int http_status,
+      const romm_platform_t *platforms, size_t count)
+{
+   romm_library_t lib;
+   size_t i;
+
+   if (status != ROMM_OK)
+   {
+      romm_wizard_state = ROMM_WIZARD_FAILED;
+      romm_failure_text(status, http_status, romm_wizard_failure,
+            sizeof(romm_wizard_failure));
+      romm_menu_refresh();
+      return;
+   }
+   /* As systems not synced yet, which the Systems page also lists. */
+   memset(&lib, 0, sizeof(lib));
+   for (i = 0; i < count; i++)
+      if (platforms[i].rom_count)
+         RBUF_PUSH(lib.unsynced, platforms[i]);
+   romm_sidebar_system_rows(&romm_wizard_rows, &lib, "", "", NULL, 0);
+   romm_library_free(&lib);
+   romm_wizard_state = ROMM_WIZARD_LISTED;
+   romm_menu_refresh();
+}
+
+static const romm_system_row_t *romm_wizard_find(const char *fs_slug)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(romm_wizard_rows); i++)
+      if (string_is_equal(romm_wizard_rows[i].platform.fs_slug, fs_slug))
+         return &romm_wizard_rows[i];
+   return NULL;
+}
+
+static unsigned romm_wizard_ticked_count(void)
+{
+   unsigned count = 0;
+   size_t i;
+   for (i = 0; i < RBUF_LEN(romm_wizard_rows); i++)
+      if (romm_library_listed(romm_wizard_ticked,
+            romm_wizard_rows[i].platform.fs_slug))
+         count++;
+   return count;
+}
+
+unsigned romm_menu_wizard_list(file_list_t *list)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned count       = 0;
+   size_t i;
+   char line[256];
+
+   if (romm_wizard_state == ROMM_WIZARD_UNASKED)
+   {
+      *romm_wizard_ticked = '\0';
+      if (romm_client_platforms(settings->arrays.romm_server_url,
+            settings->arrays.romm_token, romm_on_wizard_platforms, NULL))
+         romm_wizard_state = ROMM_WIZARD_ASKING;
+      else
+      {
+         romm_wizard_state = ROMM_WIZARD_FAILED;
+         romm_failure_text(ROMM_ERR_UNREACHABLE, 0, romm_wizard_failure,
+               sizeof(romm_wizard_failure));
+      }
+   }
+   if (romm_wizard_state != ROMM_WIZARD_LISTED)
+      return romm_menu_status_line(list,
+            romm_wizard_state == ROMM_WIZARD_ASKING
+            ? msg_hash_to_str(MSG_ROMM_WIZARD_ASKING)
+            : romm_wizard_failure) ? 1 : 0;
+
+   snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_WIZARD_START),
+         romm_wizard_ticked_count());
+   if (menu_entries_append(list, "", "", MENU_ENUM_LABEL_ROMM_WIZARD_START,
+         MENU_ROMM_SYSTEM, 0, 0, NULL))
+   {
+      file_list_set_alt_at_offset(list, list->size - 1, line);
+      count++;
+   }
+   for (i = 0; i < RBUF_LEN(romm_wizard_rows); i++)
+   {
+      const romm_system_row_t *row  = &romm_wizard_rows[i];
+      const romm_system_row_t *prev = i ? &romm_wizard_rows[i - 1] : NULL;
+      bool no_emulator = row->state == ROMM_SYSTEM_NO_EMULATOR;
+      const char *group = NULL;
+
+      if (no_emulator)
+      {
+         if (!prev || prev->state != ROMM_SYSTEM_NO_EMULATOR)
+            group = msg_hash_to_str(MSG_ROMM_SYSTEMS_NO_EMULATOR);
+      }
+      else if (!prev || !string_is_equal_noncase(prev->maker, row->maker))
+         group = *row->maker ? row->maker
+               : msg_hash_to_str(MSG_ROMM_SIDEBAR_OTHER);
+      if (group && menu_entries_append(list, group, "",
+            MENU_ENUM_LABEL_ROMM_SYSTEM_GROUP, MENU_SETTINGS_CORE_INFO_NONE,
+            0, 0, NULL))
+         count++;
+      if (menu_entries_append(list, row->platform.fs_slug, "",
+            MENU_ENUM_LABEL_ROMM_WIZARD_SYSTEM,
+            no_emulator ? MENU_ROMM_SYSTEM_NO_EMULATOR : MENU_ROMM_SYSTEM,
+            0, 0, NULL))
+      {
+         snprintf(line, sizeof(line), "%s (%u)", row->platform.name,
+               row->games);
+         file_list_set_alt_at_offset(list, list->size - 1, line);
+         count++;
+      }
+   }
+   return count;
+}
+
+void romm_menu_wizard_open(void)
+{
+   if (romm_wizard_state == ROMM_WIZARD_FAILED)
+      romm_wizard_state = ROMM_WIZARD_UNASKED;
+}
+
+size_t romm_menu_wizard_value(const char *fs_slug, char *s, size_t len)
+{
+   const romm_system_row_t *row = romm_wizard_find(fs_slug);
+   if (!row)
+   {
+      *s = '\0';
+      return 0;
+   }
+   return strlcpy(s, msg_hash_to_str(
+           row->state == ROMM_SYSTEM_NO_EMULATOR
+         ? MSG_ROMM_SYSTEM_VALUE_NO_EMULATOR
+         : romm_library_listed(romm_wizard_ticked, fs_slug)
+         ? MENU_ENUM_LABEL_VALUE_ON : MENU_ENUM_LABEL_VALUE_OFF), len);
+}
+
+void romm_menu_wizard_toggle(const char *fs_slug)
+{
+   const romm_system_row_t *row = romm_wizard_find(fs_slug);
+
+   if (!row || row->state == ROMM_SYSTEM_NO_EMULATOR)
+      return;
+   if (romm_library_listed(romm_wizard_ticked, fs_slug))
+      romm_library_list_remove(romm_wizard_ticked, fs_slug);
+   else
+      romm_library_list_add(romm_wizard_ticked, sizeof(romm_wizard_ticked),
+            fs_slug);
+   romm_menu_refresh();
+}
+
+/* The first sync, of every system but those in @exclude, with no
+ * Partial limit; then back to the top, where the library comes in. */
+static void romm_wizard_sync(const char *exclude)
+{
+   settings_t *settings = config_get_ptr();
+
+   if (romm_syncing)
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_SYNC_IN_PROGRESS),
+            MESSAGE_QUEUE_CATEGORY_INFO);
+      return;
+   }
+   strlcpy(settings->arrays.romm_sync_exclude, exclude,
+         sizeof(settings->arrays.romm_sync_exclude));
+   *settings->arrays.romm_sync_new = '\0';
+   if (!romm_overrides_active())
+      command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+   if (!romm_start_library_sync(false, NULL, 0, NULL))
+      return;
+   romm_wizard_state = ROMM_WIZARD_UNASKED;
+   RBUF_FREE(romm_wizard_rows);
+   menu_entries_flush_stack(NULL, 0);
+   romm_menu_refresh();
+}
+
+void romm_menu_wizard_sync_all(void)
+{
+   romm_wizard_sync("");
+}
+
+void romm_menu_wizard_start(void)
+{
+   char exclude[PATH_MAX_LENGTH];
+   size_t i;
+
+   if (!romm_wizard_ticked_count())
+   {
+      romm_notify(msg_hash_to_str(MSG_ROMM_WIZARD_NONE_CHOSEN),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   /* The systems left unticked start off. */
+   *exclude = '\0';
+   for (i = 0; i < RBUF_LEN(romm_wizard_rows); i++)
+   {
+      const char *fs_slug = romm_wizard_rows[i].platform.fs_slug;
+      if (     romm_wizard_rows[i].state != ROMM_SYSTEM_NO_EMULATOR
+            && !romm_library_listed(romm_wizard_ticked, fs_slug))
+         romm_library_list_add(exclude, sizeof(exclude), fs_slug);
+   }
+   romm_wizard_sync(exclude);
 }
 
 /* Unpair This Device asks for a second OK: the first arms it, which the

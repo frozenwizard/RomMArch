@@ -9022,6 +9022,7 @@ static bool ozone_is_current_entry_settings(size_t current_selection)
    case MENU_ENUM_LABEL_ROMM_SYSTEM_ENTRY:
    case MENU_ENUM_LABEL_ROMM_SYSTEM_OPTIONS:
    case MENU_ENUM_LABEL_ROMM_CONNECT_ADDRESS:
+   case MENU_ENUM_LABEL_ROMM_WIZARD_SYSTEM:
       return false;
 #endif
 

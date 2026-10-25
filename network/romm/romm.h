@@ -136,6 +136,27 @@ void romm_menu_connect_address(void);
  * Cancel; paired, it says so. Returns how many rows. */
 unsigned romm_menu_pairing_list(file_list_t *list);
 
+/* Lists in @list Choose Systems, the setup wizard's checklist of RomM's
+ * systems by maker, asking RomM for them the first time: Start Sync,
+ * then a row per system, path its folder name. Returns how many rows. */
+unsigned romm_menu_wizard_list(file_list_t *list);
+
+/* Choose Systems is opening: after a failed request, it asks again. */
+void romm_menu_wizard_open(void);
+
+/* What Choose Systems shows beside the system @fs_slug: on, off, or
+ * that no emulator runs it. */
+size_t romm_menu_wizard_value(const char *fs_slug, char *s, size_t len);
+
+/* OK on a system of Choose Systems: ticks or unticks it. */
+void romm_menu_wizard_toggle(const char *fs_slug);
+
+/* The setup wizard's Sync All Systems, and Choose Systems' Start Sync,
+ * which leaves the systems not ticked off: each starts the first sync,
+ * with no Partial limit, and returns to the top of the menu. */
+void romm_menu_wizard_sync_all(void);
+void romm_menu_wizard_start(void);
+
 /* Cancel on the pairing page, or leaving it: ends the pairing running. */
 void romm_menu_pairing_cancel(void);
 
