@@ -124,11 +124,11 @@ void *task_push_http_transfer_with_headers(const char *url, bool mute,
       const char *type, const char *headers,
       retro_task_callback_t cb, void *user_data)
 {
-   (void)mute; (void)type;
+   (void)mute;
    if (stub_req.refuse)
       return NULL;
    stub_req.count++;
-   strlcpy(stub_req.method, "GET", sizeof(stub_req.method));
+   strlcpy(stub_req.method, type ? type : "GET", sizeof(stub_req.method));
    strlcpy(stub_req.url, url, sizeof(stub_req.url));
    strlcpy(stub_req.headers, headers ? headers : "",
          sizeof(stub_req.headers));

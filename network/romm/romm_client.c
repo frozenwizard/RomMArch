@@ -1945,6 +1945,51 @@ bool romm_client_states_delete(const char *server, const char *token,
          "states", ids, count, romm_states_delete_cb, cb, user_data);
 }
 
+static void romm_device_delete_cb(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   romm_done_ctx_t *ctx       = (romm_done_ctx_t*)user_data;
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   enum romm_status status    = romm_response_status(data, 204);
+   int http_status            = status == ROMM_ERR_UNREACHABLE
+         ? 0 : data->status;
+
+   if (status != ROMM_OK)
+      RARCH_WARN(ROMM_PFX "Couldn't delete the device (status %d, HTTP "
+            "%d).\n", status, http_status);
+   ctx->cb(ctx->user_data, status, http_status);
+   free(ctx);
+}
+
+bool romm_client_device_delete(const char *server, const char *token,
+      const char *device_id, romm_done_cb_t cb, void *user_data)
+{
+   char url[2048];
+   char headers[512];
+   char path[256];
+   char id[192];
+   romm_done_ctx_t *ctx;
+
+   if (     string_is_empty(device_id) || string_is_empty(token)
+         || !romm_url_escape(id, sizeof(id), device_id))
+      return false;
+   snprintf(path, sizeof(path), "/api/devices/%s", id);
+   if (     !romm_client_url(url, sizeof(url), server, path)
+         || (size_t)snprintf(headers, sizeof(headers),
+               "Authorization: Bearer %s\r\n", token) >= sizeof(headers)
+         || !(ctx = (romm_done_ctx_t*)malloc(sizeof(*ctx))))
+      return false;
+   ctx->cb        = cb;
+   ctx->user_data = user_data;
+   if (!task_push_http_transfer_with_headers(url, true, "DELETE", headers,
+         romm_device_delete_cb, ctx))
+   {
+      free(ctx);
+      return false;
+   }
+   return true;
+}
+
 static void romm_collection_roms_cb(retro_task_t *task, void *task_data,
       void *user_data, const char *err)
 {

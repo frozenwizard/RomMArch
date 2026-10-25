@@ -462,6 +462,12 @@ bool romm_client_states_delete(const char *server, const char *token,
       const unsigned *ids, size_t count, romm_done_cb_t cb,
       void *user_data);
 
+/* Deletes device @device_id, with its save-sync records, from RomM.
+ * @cb runs on the main thread; RomM answering 404 means it has no such
+ * device for the token's user. */
+bool romm_client_device_delete(const char *server, const char *token,
+      const char *device_id, romm_done_cb_t cb, void *user_data);
+
 /* Adds the @count games in @ids to the user's collection
  * @collection_id, or with @remove takes them out. @cb runs on the main
  * thread. */

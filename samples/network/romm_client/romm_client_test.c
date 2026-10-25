@@ -2130,6 +2130,45 @@ static void on_done(void *user_data, enum romm_status status,
    r->http_status = http_status;
 }
 
+static void test_device_delete(void)
+{
+   done_result_t r;
+
+   memset(&r, 0, sizeof(r));
+   stub_reset();
+   CHECK(romm_client_device_delete("http://romm.local:8090/", "rmm_0123abcd",
+         "6f1c-dev ice", on_done, &r), "delete not started");
+   CHECK(!strcmp(stub_req.method, "DELETE")
+         && !strcmp(stub_req.url,
+            "http://romm.local:8090/api/devices/6f1c-dev%20ice")
+         && strstr(stub_req.headers, "Authorization: Bearer rmm_0123abcd\r\n"),
+         "request %s %s [%s]", stub_req.method, stub_req.url,
+         stub_req.headers);
+   answer(204, "");
+   CHECK(r.calls == 1 && r.status == ROMM_OK, "204: status %d", r.status);
+
+   memset(&r, 0, sizeof(r));
+   romm_client_device_delete("http://h", "t", "d", on_done, &r);
+   answer(404, "{\"detail\": \"Device with ID d not found\"}");
+   CHECK(r.status == ROMM_ERR_HTTP && r.http_status == 404,
+         "404: status %d", r.status);
+   memset(&r, 0, sizeof(r));
+   romm_client_device_delete("http://h", "t", "d", on_done, &r);
+   answer(403, "{}");
+   CHECK(r.status == ROMM_ERR_FORBIDDEN, "403: status %d", r.status);
+   memset(&r, 0, sizeof(r));
+   romm_client_device_delete("http://h", "t", "d", on_done, &r);
+   answer(-1, NULL);
+   CHECK(r.status == ROMM_ERR_UNREACHABLE && r.http_status == 0,
+         "no response: status %d", r.status);
+
+   stub_reset();
+   CHECK(!romm_client_device_delete("http://h", "t", "", on_done, &r)
+         && !romm_client_device_delete("http://h", "", "d", on_done, &r)
+         && !romm_client_device_delete("", "t", "d", on_done, &r)
+         && stub_req.count == 0, "delete started without device or token");
+}
+
 static void test_states_delete(void)
 {
    static const unsigned ids[] = { 101, 4294967295u, 7 };
@@ -2364,6 +2403,7 @@ int main(void)
    test_upload();
    test_save_downloaded();
    test_states_delete();
+   test_device_delete();
    test_collection_roms();
    test_token_scopes();
    test_pair_start();
