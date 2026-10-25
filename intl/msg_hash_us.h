@@ -34038,7 +34038,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_ROMM_CONNECT_PAIR,
-   "Approve this device in RomM, signed in as the user whose games and saves it should use."
+   "Open the pairing page, which gives a code to approve in RomM."
    )
 MSG_HASH(
    MSG_ROMM_CONNECT_NO_ADDRESS,
@@ -34051,6 +34051,38 @@ MSG_HASH(
 MSG_HASH(
    MSG_ROMM_CONNECT_ANSWERS,
    "RomM %s answers at this address."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_SERVER,
+   "RomM at %s"
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_ASKING,
+   "Asking RomM for a code..."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_CODE,
+   "Code: %s"
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_LINK,
+   "Approve it at %s"
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_WAITING,
+   "Waiting for you to approve this device in RomM..."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_DO_PAIR,
+   "Pair"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_PAIRING_START,
+   "Get a code from RomM. Then, on any phone or computer, sign in to RomM as the user whose games and saves this device should use, and approve the code."
+   )
+MSG_HASH(
+   MSG_ROMM_PAIRING_DO_CANCEL,
+   "Cancel"
    )
 MSG_HASH(
    MSG_ROMM_UNPAIRED_DEVICE_KEPT,

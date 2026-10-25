@@ -183,6 +183,7 @@ GENERIC_DEFERRED_PUSH(deferred_push_cloud_sync_settings_list,       DISPLAYLIST_
 GENERIC_DEFERRED_PUSH(deferred_push_romm_settings_list,             DISPLAYLIST_ROMM_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_romm_systems_list,              DISPLAYLIST_ROMM_SYSTEMS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_romm_connect,                   DISPLAYLIST_ROMM_CONNECT)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_pairing,                   DISPLAYLIST_ROMM_PAIRING)
 GENERIC_DEFERRED_PUSH(deferred_push_romm_system,                    DISPLAYLIST_ROMM_SYSTEM)
 #endif
 GENERIC_DEFERRED_PUSH(deferred_push_mixer_stream_settings_list,     DISPLAYLIST_MIXER_STREAM_SETTINGS_LIST)
@@ -661,6 +662,7 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
       {MENU_ENUM_LABEL_DEFERRED_ROMM_SETTINGS_LIST, deferred_push_romm_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEMS_LIST, deferred_push_romm_systems_list},
       {MENU_ENUM_LABEL_DEFERRED_ROMM_CONNECT, deferred_push_romm_connect},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_PAIRING, deferred_push_romm_pairing},
       {MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM, deferred_push_romm_system},
 #endif
       {MENU_ENUM_LABEL_DEFERRED_MIXER_STREAM_SETTINGS_LIST, deferred_push_mixer_stream_settings_list},
@@ -974,6 +976,7 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
          { MENU_ENUM_LABEL_DEFERRED_ROMM_SETTINGS_LIST, deferred_push_romm_settings_list },
          { MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEMS_LIST, deferred_push_romm_systems_list },
          { MENU_ENUM_LABEL_DEFERRED_ROMM_CONNECT, deferred_push_romm_connect },
+         { MENU_ENUM_LABEL_DEFERRED_ROMM_PAIRING, deferred_push_romm_pairing },
          { MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM, deferred_push_romm_system },
 #endif
          { MENU_ENUM_LABEL_DEFERRED_LOGGING_SETTINGS_LIST, deferred_push_logging_settings_list },

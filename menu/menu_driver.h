@@ -333,6 +333,8 @@ enum menu_settings_type
     * one no emulator runs is drawn dimmed. */
    MENU_ROMM_SYSTEM,
    MENU_ROMM_SYSTEM_NO_EMULATOR,
+   /* A row of the pairing page: leaving by it cancels the pairing. */
+   MENU_ROMM_PAIRING,
 #endif
 
    MENU_SETTINGS_LAST

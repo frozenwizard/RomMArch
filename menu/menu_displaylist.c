@@ -16146,6 +16146,20 @@ static bool menu_displaylist_ctl_internal(
             info->flags |= MD_FLAG_NEED_REFRESH
                          | MD_FLAG_NEED_PUSH;
             break;
+         case DISPLAYLIST_ROMM_PAIRING:
+            {
+               /* Its rows change as pairing goes on. */
+               size_t selection = menu_st->selection_ptr;
+
+               menu_entries_clear(info->list);
+               count = romm_menu_pairing_list(info->list);
+
+               if (selection >= count)
+                  info->flags  |= MD_FLAG_NEED_REFRESH
+                                | MD_FLAG_NEED_NAVIGATION_CLEAR;
+               info->flags     |= MD_FLAG_NEED_PUSH;
+            }
+            break;
          case DISPLAYLIST_ROMM_SYSTEMS_LIST:
             menu_entries_clear(info->list);
             count        = romm_menu_systems_list(info->list);

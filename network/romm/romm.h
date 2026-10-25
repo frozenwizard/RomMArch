@@ -131,6 +131,14 @@ unsigned romm_menu_connect_list(file_list_t *list);
  * or "https://" when none is set. */
 void romm_menu_connect_address(void);
 
+/* Lists in @list the pairing page: the server, then either Pair or,
+ * once pressed, RomM's code, where to approve it, what it waits for and
+ * Cancel; paired, it says so. Returns how many rows. */
+unsigned romm_menu_pairing_list(file_list_t *list);
+
+/* Cancel on the pairing page, or leaving it: ends the pairing running. */
+void romm_menu_pairing_cancel(void);
+
 /* Lists in @list Unpair This Device, when the device is paired, as its
  * second OK would read once the first armed it. Returns how many rows. */
 unsigned romm_menu_unpair_row(file_list_t *list);

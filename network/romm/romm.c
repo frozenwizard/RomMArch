@@ -66,6 +66,11 @@ static unsigned romm_pair_gen = 0;
 static void *romm_pair_wait = NULL;
 static char romm_pair_server[NAME_MAX_LENGTH];
 static char romm_pair_web[NAME_MAX_LENGTH];
+/* For the pairing page: the code and approval address RomM gave, and
+ * why the last pairing failed, in words. */
+static char romm_pair_code[32];
+static char romm_pair_link[1024];
+static char romm_pair_failure[512];
 static bool romm_syncing = false;
 /* Unpair This Device is waiting on RomM; no sync starts meanwhile. */
 static bool romm_unpairing = false;
@@ -140,6 +145,14 @@ static void romm_failure_text(enum romm_status status, int http_status,
                msg_hash_to_str(MSG_ROMM_NOT_ROMM), server);
          break;
    }
+}
+
+/* The open menu page shows pairing or library state that changed. */
+static void romm_menu_changed(void)
+{
+#ifdef HAVE_MENU
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+#endif
 }
 
 /* Reports why a request to the configured server failed. */
@@ -518,11 +531,15 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
       return;
    romm_pairing   = false;
    romm_pair_wait = NULL;
+   *romm_pair_code = '\0';
+   romm_menu_changed();
 
    if (status == ROMM_ERR_CANCELLED)
       return;
    if (status != ROMM_OK)
    {
+      romm_failure_text(status, http_status, romm_pair_failure,
+            sizeof(romm_pair_failure));
       romm_notify_failure(status, http_status);
       return;
    }
@@ -570,10 +587,6 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
    /* Keep the pairing even if RetroArch doesn't save on exit. */
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
    romm_ask_username();
-#ifdef HAVE_MENU
-   /* Connect to RomM goes, and its page says paired. */
-   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
-#endif
 #ifdef HAVE_CLOUDSYNC
    if (     cloud_sync_now
          && settings->uints.cloud_sync_sync_mode == CLOUD_SYNC_MODE_AUTOMATIC)
@@ -604,12 +617,17 @@ static void romm_on_pair_started(void *user_data, enum romm_status status,
 
    if ((uintptr_t)user_data != romm_pair_gen)
       return;
+   romm_menu_changed();
    if (status != ROMM_OK)
    {
       romm_pairing = false;
+      romm_failure_text(status, http_status, romm_pair_failure,
+            sizeof(romm_pair_failure));
       romm_notify_failure(status, http_status);
       return;
    }
+   strlcpy(romm_pair_code, pairing->user_code, sizeof(romm_pair_code));
+   strlcpy(romm_pair_link, pairing->approve_url, sizeof(romm_pair_link));
 
    snprintf(title, sizeof(title),
          msg_hash_to_str(MSG_ROMM_PAIR_APPROVE), pairing->user_code);
@@ -617,6 +635,9 @@ static void romm_on_pair_started(void *user_data, enum romm_status status,
          title, romm_on_pair_approved, user_data)))
    {
       romm_pairing = false;
+      *romm_pair_code = '\0';
+      romm_failure_text(ROMM_ERR_UNREACHABLE, 0, romm_pair_failure,
+            sizeof(romm_pair_failure));
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
       return;
    }
@@ -633,7 +654,9 @@ static void romm_pair_stop(void)
    romm_pair_gen++;
    if (romm_pair_wait)
       romm_client_pair_cancel(romm_pair_wait);
-   romm_pair_wait = NULL;
+   romm_pair_wait  = NULL;
+   *romm_pair_code = '\0';
+   romm_menu_changed();
 }
 
 void romm_pair(void)
@@ -651,6 +674,7 @@ void romm_pair(void)
    }
    /* Pressed again, say after fixing an address: start over. */
    romm_pair_stop();
+   *romm_pair_failure = '\0';
    if (string_is_empty(settings->arrays.romm_server_url))
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
@@ -3295,6 +3319,79 @@ void romm_menu_connect_address(void)
    /* Starts with the address, or the start of one. */
    input_keyboard_line_append(&input_state_get_ptr()->keyboard_line,
          text, strlen(text));
+}
+
+/* A line of the pairing page: its rows share a type, so leaving the
+ * page by any of them cancels the pairing. */
+static bool romm_menu_pairing_line(file_list_t *list, const char *line)
+{
+   return menu_entries_append(list, line, "",
+         MENU_ENUM_LABEL_ROMM_STATUS_ENTRY, MENU_ROMM_PAIRING, 0, 0, NULL);
+}
+
+unsigned romm_menu_pairing_list(file_list_t *list)
+{
+   settings_t *settings = config_get_ptr();
+   unsigned count       = 0;
+   char line[1200];
+
+   snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_PAIRING_SERVER),
+         settings->arrays.romm_server_url);
+   if (romm_menu_pairing_line(list, line))
+      count++;
+   if (!romm_pairing && !string_is_empty(settings->arrays.romm_token))
+      return count + (romm_menu_pairing_line(list,
+            msg_hash_to_str(MSG_ROMM_PAIRED)) ? 1 : 0);
+
+   if (romm_pairing)
+   {
+      if (!*romm_pair_code)
+         count += romm_menu_pairing_line(list,
+               msg_hash_to_str(MSG_ROMM_PAIRING_ASKING)) ? 1 : 0;
+      else
+      {
+         char link[sizeof(romm_pair_link)];
+         char *query;
+         /* The code goes on its own line, to type it in. */
+         strlcpy(link, romm_pair_link, sizeof(link));
+         if ((query = strchr(link, '?')))
+            *query = '\0';
+         snprintf(line, sizeof(line),
+               msg_hash_to_str(MSG_ROMM_PAIRING_CODE), romm_pair_code);
+         count += romm_menu_pairing_line(list, line) ? 1 : 0;
+         snprintf(line, sizeof(line),
+               msg_hash_to_str(MSG_ROMM_PAIRING_LINK), link);
+         count += romm_menu_pairing_line(list, line) ? 1 : 0;
+         count += romm_menu_pairing_line(list,
+               msg_hash_to_str(MSG_ROMM_PAIRING_WAITING)) ? 1 : 0;
+      }
+      if (menu_entries_append(list, "", "",
+            MENU_ENUM_LABEL_ROMM_PAIRING_CANCEL, MENU_ROMM_PAIRING,
+            0, 0, NULL))
+      {
+         file_list_set_alt_at_offset(list, list->size - 1,
+               msg_hash_to_str(MSG_ROMM_PAIRING_DO_CANCEL));
+         count++;
+      }
+      return count;
+   }
+
+   if (*romm_pair_failure && romm_menu_pairing_line(list, romm_pair_failure))
+      count++;
+   if (menu_entries_append(list, "", "",
+         MENU_ENUM_LABEL_ROMM_PAIRING_START, MENU_ROMM_PAIRING, 0, 0, NULL))
+   {
+      file_list_set_alt_at_offset(list, list->size - 1,
+            msg_hash_to_str(MSG_ROMM_PAIRING_DO_PAIR));
+      count++;
+   }
+   return count;
+}
+
+void romm_menu_pairing_cancel(void)
+{
+   romm_pair_stop();
+   *romm_pair_failure = '\0';
 }
 
 /* Unpair This Device asks for a second OK: the first arms it, which the

@@ -27,6 +27,9 @@
 #include "../../cheat_manager.h"
 #endif
 #include "../../msg_hash_lbl_str.h"
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+#include "../../network/romm/romm.h"
+#endif
 
 #ifndef BIND_ACTION_CANCEL
 #define BIND_ACTION_CANCEL(cbs, name) (cbs)->action_cancel = (name)
@@ -172,6 +175,15 @@ static int action_cancel_core_content(const char *path,
    return 0;
 }
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+static int action_cancel_romm_pairing(const char *path,
+      const char *label, unsigned type, size_t idx)
+{
+   romm_menu_pairing_cancel();
+   return action_cancel_pop_default(path, label, type, idx);
+}
+#endif
+
 static int menu_cbs_init_bind_cancel_compare_label(menu_file_list_cbs_t *cbs,
       const char *label)
 {
@@ -195,6 +207,11 @@ static int menu_cbs_init_bind_cancel_compare_type(menu_file_list_cbs_t *cbs,
       case MENU_SETTING_ACTION_STATE_SLOT_RUN:
          BIND_ACTION_CANCEL(cbs, action_cancel_state_slot_run);
          return 0;
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      case MENU_ROMM_PAIRING:
+         BIND_ACTION_CANCEL(cbs, action_cancel_romm_pairing);
+         return 0;
+#endif
       default:
          break;
    }

@@ -409,6 +409,8 @@ static enum msg_hash_enums action_ok_dl_to_enum(unsigned lbl)
          return MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEMS_LIST;
       case ACTION_OK_DL_ROMM_CONNECT:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_CONNECT;
+      case ACTION_OK_DL_ROMM_PAIRING:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_PAIRING;
       case ACTION_OK_DL_ROMM_SYSTEM:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM;
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
@@ -1835,6 +1837,7 @@ int generic_action_ok_displaylist_push(
       case ACTION_OK_DL_ROMM_SETTINGS_LIST:
       case ACTION_OK_DL_ROMM_SYSTEMS_LIST:
       case ACTION_OK_DL_ROMM_CONNECT:
+      case ACTION_OK_DL_ROMM_PAIRING:
       case ACTION_OK_DL_ROMM_SYSTEM:
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
       case ACTION_OK_DL_FRAME_THROTTLE_SETTINGS_LIST:
@@ -7211,6 +7214,7 @@ DEFAULT_ACTION_OK_FUNC(action_ok_push_achievements_submenu, ACTION_OK_DL_ACHIEVE
 DEFAULT_ACTION_OK_FUNC(action_ok_push_core_information_list, ACTION_OK_DL_CORE_INFORMATION_LIST)
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
 STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_romm_system, ACTION_OK_DL_ROMM_SYSTEM)
+STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_romm_pairing, ACTION_OK_DL_ROMM_PAIRING)
 
 static int action_ok_romm_open_game(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
@@ -7262,10 +7266,17 @@ static int action_ok_romm_connect_address(const char *path,
    return 0;
 }
 
-static int action_ok_romm_connect_pair(const char *path,
+static int action_ok_romm_pairing_start(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
    romm_pair();
+   return 0;
+}
+
+static int action_ok_romm_pairing_cancel(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_pairing_cancel();
    return 0;
 }
 
@@ -9994,7 +10005,9 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_ROMM_SYSTEM_STOP,    action_ok_romm_system_stop},
          {MENU_ENUM_LABEL_ROMM_UNPAIR,         action_ok_romm_unpair},
          {MENU_ENUM_LABEL_ROMM_CONNECT_ADDRESS, action_ok_romm_connect_address},
-         {MENU_ENUM_LABEL_ROMM_CONNECT_PAIR,   action_ok_romm_connect_pair},
+         {MENU_ENUM_LABEL_ROMM_CONNECT_PAIR,   action_ok_push_romm_pairing},
+         {MENU_ENUM_LABEL_ROMM_PAIRING_START,  action_ok_romm_pairing_start},
+         {MENU_ENUM_LABEL_ROMM_PAIRING_CANCEL, action_ok_romm_pairing_cancel},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC,    action_ok_romm_system_sync},
 #endif
 #ifdef HAVE_MIST
