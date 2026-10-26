@@ -3357,8 +3357,11 @@ unsigned romm_menu_pairing_list(file_list_t *list)
       /* Paired with no library yet: what to sync first. */
       romm_library_manifest_path(manifest, sizeof(manifest),
             settings->paths.directory_playlist);
+      /* With a library, pairing again: for the permissions left out. */
       if (path_is_valid(manifest))
-         return count;
+         return count + (romm_menu_action(list,
+               MENU_ENUM_LABEL_ROMM_PAIRING_START,
+               MSG_ROMM_PAIRING_DO_PAIR_AGAIN, MENU_ROMM_PAIRING) ? 1 : 0);
       if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL,
             MSG_ROMM_WIZARD_SYNC_ALL, MENU_ROMM_PAIRING))
          count++;

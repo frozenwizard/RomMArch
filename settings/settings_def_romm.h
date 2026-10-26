@@ -24,7 +24,7 @@ S_STRING(romm_web_url, ROMM_WEB_URL,
 S_ACTION_EX(ROMM_PAIR,
       "romm_pair", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_PAIR,
       "Pair This Device",
-      "Opens RomM in your browser: sign in and approve this device. RomM then gives it its own access, which you can revoke there.")
+      "Open the pairing page, which gives a code to approve in RomM. RomM then gives this device its own access, which you can revoke there.")
 S_ACTION_EX(ROMM_CHECK_CONNECTION,
       "romm_check_connection", SD_FLAG_NONE, NULL, NULL, CMD_EVENT_ROMM_CHECK_CONNECTION,
       "Check Connection",

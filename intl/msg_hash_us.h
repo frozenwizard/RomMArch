@@ -34085,6 +34085,10 @@ MSG_HASH(
    "Cancel"
    )
 MSG_HASH(
+   MSG_ROMM_PAIRING_DO_PAIR_AGAIN,
+   "Pair Again"
+   )
+MSG_HASH(
    MSG_ROMM_WIZARD_SYNC_ALL,
    "Sync All Systems"
    )
