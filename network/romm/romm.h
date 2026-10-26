@@ -137,11 +137,11 @@ void romm_menu_connect_address(void);
 unsigned romm_menu_pairing_list(file_list_t *list);
 
 /* Lists in @list Choose Systems, the setup wizard's checklist of RomM's
- * systems by maker, asking RomM for them the first time: Start Sync,
+ * systems by maker, asked of RomM each time it opens: Start Sync,
  * then a row per system, path its folder name. Returns how many rows. */
 unsigned romm_menu_wizard_list(file_list_t *list);
 
-/* Choose Systems is opening: after a failed request, it asks again. */
+/* Choose Systems is opening: it asks RomM for its systems again. */
 void romm_menu_wizard_open(void);
 
 /* What Choose Systems shows beside the system @fs_slug: on, off, or

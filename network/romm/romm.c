@@ -3491,7 +3491,6 @@ unsigned romm_menu_wizard_list(file_list_t *list)
 
    if (romm_wizard_state == ROMM_WIZARD_UNASKED)
    {
-      *romm_wizard_ticked = '\0';
       if (romm_client_platforms(settings->arrays.romm_server_url,
             settings->arrays.romm_token, romm_on_wizard_platforms, NULL))
          romm_wizard_state = ROMM_WIZARD_ASKING;
@@ -3551,7 +3550,8 @@ unsigned romm_menu_wizard_list(file_list_t *list)
 
 void romm_menu_wizard_open(void)
 {
-   if (romm_wizard_state == ROMM_WIZARD_FAILED)
+   /* RomM's systems as they are now, the ones switched on kept. */
+   if (romm_wizard_state != ROMM_WIZARD_ASKING)
       romm_wizard_state = ROMM_WIZARD_UNASKED;
 }
 
@@ -3590,21 +3590,38 @@ static void romm_wizard_sync(const char *exclude)
 {
    settings_t *settings = config_get_ptr();
 
+   char was_exclude[sizeof(settings->arrays.romm_sync_exclude)];
+   char was_new[sizeof(settings->arrays.romm_sync_new)];
+
    if (romm_syncing)
    {
       romm_notify(msg_hash_to_str(MSG_ROMM_SYNC_IN_PROGRESS),
             MESSAGE_QUEUE_CATEGORY_INFO);
       return;
    }
+   if (!romm_can_sync())
+      return;
+   strlcpy(was_exclude, settings->arrays.romm_sync_exclude,
+         sizeof(was_exclude));
+   strlcpy(was_new, settings->arrays.romm_sync_new, sizeof(was_new));
    strlcpy(settings->arrays.romm_sync_exclude, exclude,
          sizeof(settings->arrays.romm_sync_exclude));
    *settings->arrays.romm_sync_new = '\0';
+   /* The choice stands only once its sync has started. */
+   if (!romm_start_library_sync(false, NULL, 0, NULL))
+   {
+      strlcpy(settings->arrays.romm_sync_exclude, was_exclude,
+            sizeof(settings->arrays.romm_sync_exclude));
+      strlcpy(settings->arrays.romm_sync_new, was_new,
+            sizeof(settings->arrays.romm_sync_new));
+      romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+      return;
+   }
    if (!romm_overrides_active())
       command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
-   if (!romm_start_library_sync(false, NULL, 0, NULL))
-      return;
-   romm_wizard_state = ROMM_WIZARD_UNASKED;
+   romm_wizard_state   = ROMM_WIZARD_UNASKED;
    RBUF_FREE(romm_wizard_rows);
+   *romm_wizard_ticked = '\0';
    menu_entries_flush_stack(NULL, 0);
    romm_menu_refresh();
 }
