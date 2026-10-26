@@ -165,6 +165,15 @@ static void romm_notify_failure(enum romm_status status, int http_status)
 
 static bool romm_overrides_active(void);
 
+/* A pairing that didn't start or wasn't kept: says why, and keeps it
+ * for the pairing page. */
+static void romm_pair_failed(const char *msg)
+{
+   strlcpy(romm_pair_failure, msg, sizeof(romm_pair_failure));
+   romm_notify(msg, MESSAGE_QUEUE_CATEGORY_WARNING);
+   romm_menu_changed();
+}
+
 static void romm_note_username(const char *username)
 {
    settings_t *settings = config_get_ptr();
@@ -548,16 +557,14 @@ static void romm_on_pair_approved(void *user_data, enum romm_status status,
    {
       RARCH_WARN("[RomM] Pairing approved by %s, but the server address is now %s; not kept.\n",
             romm_pair_server, settings->arrays.romm_server_url);
-      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_SERVER_CHANGED),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
+      romm_pair_failed(msg_hash_to_str(MSG_ROMM_PAIR_SERVER_CHANGED));
       return;
    }
    /* A game with overrides started while the pairing waited. */
    if (romm_overrides_active())
    {
       RARCH_WARN("[RomM] Pairing approved while a game's overrides are on, which keep the configuration from being saved; not kept.\n");
-      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_OVERRIDES),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
+      romm_pair_failed(msg_hash_to_str(MSG_ROMM_PAIR_OVERRIDES));
       return;
    }
 
@@ -668,8 +675,7 @@ void romm_pair(void)
    if (romm_overrides_active())
    {
       RARCH_WARN("[RomM] Not pairing while a game's overrides are on, which keep the configuration from being saved.\n");
-      romm_notify(msg_hash_to_str(MSG_ROMM_PAIR_OVERRIDES),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
+      romm_pair_failed(msg_hash_to_str(MSG_ROMM_PAIR_OVERRIDES));
       return;
    }
    /* Pressed again, say after fixing an address: start over. */
@@ -677,8 +683,7 @@ void romm_pair(void)
    *romm_pair_failure = '\0';
    if (string_is_empty(settings->arrays.romm_server_url))
    {
-      romm_notify(msg_hash_to_str(MSG_ROMM_NO_SERVER),
-            MESSAGE_QUEUE_CATEGORY_WARNING);
+      romm_pair_failed(msg_hash_to_str(MSG_ROMM_NO_SERVER));
       return;
    }
 
@@ -692,7 +697,10 @@ void romm_pair(void)
          PACKAGE_VERSION, romm_on_pair_started,
          (void*)(uintptr_t)romm_pair_gen))
    {
+      romm_failure_text(ROMM_ERR_UNREACHABLE, 0, romm_pair_failure,
+            sizeof(romm_pair_failure));
       romm_notify_failure(ROMM_ERR_UNREACHABLE, 0);
+      romm_menu_changed();
       return;
    }
    romm_pairing = true;
@@ -3345,6 +3353,9 @@ unsigned romm_menu_pairing_list(file_list_t *list)
    unsigned count       = 0;
    char line[1200];
 
+   if (string_is_empty(settings->arrays.romm_server_url))
+      return romm_menu_pairing_line(list,
+            msg_hash_to_str(MSG_ROMM_NO_SERVER)) ? 1 : 0;
    snprintf(line, sizeof(line), msg_hash_to_str(MSG_ROMM_PAIRING_SERVER),
          settings->arrays.romm_server_url);
    if (romm_menu_pairing_line(list, line))
@@ -3354,19 +3365,24 @@ unsigned romm_menu_pairing_list(file_list_t *list)
       char manifest[PATH_MAX_LENGTH];
       if (romm_menu_pairing_line(list, msg_hash_to_str(MSG_ROMM_PAIRED)))
          count++;
+      if (*romm_pair_failure && romm_menu_pairing_line(list,
+            romm_pair_failure))
+         count++;
       /* Paired with no library yet: what to sync first. */
       romm_library_manifest_path(manifest, sizeof(manifest),
             settings->paths.directory_playlist);
-      /* With a library, pairing again: for the permissions left out. */
-      if (path_is_valid(manifest))
-         return count + (romm_menu_action(list,
-               MENU_ENUM_LABEL_ROMM_PAIRING_START,
-               MSG_ROMM_PAIRING_DO_PAIR_AGAIN, MENU_ROMM_PAIRING) ? 1 : 0);
-      if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL,
-            MSG_ROMM_WIZARD_SYNC_ALL, MENU_ROMM_PAIRING))
-         count++;
-      if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE,
-            MSG_ROMM_WIZARD_CHOOSE, MENU_ROMM_PAIRING))
+      if (!path_is_valid(manifest))
+      {
+         if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL,
+               MSG_ROMM_WIZARD_SYNC_ALL, MENU_ROMM_PAIRING))
+            count++;
+         if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE,
+               MSG_ROMM_WIZARD_CHOOSE, MENU_ROMM_PAIRING))
+            count++;
+      }
+      /* Pairing again: for the permissions a pairing left out. */
+      if (romm_menu_action(list, MENU_ENUM_LABEL_ROMM_PAIRING_START,
+            MSG_ROMM_PAIRING_DO_PAIR_AGAIN, MENU_ROMM_PAIRING))
          count++;
       return count;
    }
