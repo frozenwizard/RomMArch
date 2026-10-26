@@ -817,6 +817,33 @@ static void romm_follow_games(playlist_t *playlist,
    }
 }
 
+/* In @groups, as romm_library_groups() lists them, the first game of
+ * @id's group and, in @ids when given, an RBUF it empties first, the ids
+ * of all its games; NULL when @id isn't in one. */
+static const romm_rom_t *romm_group_first(const romm_rom_t *groups,
+      unsigned id, unsigned **ids)
+{
+   const romm_rom_t *game  = NULL;
+   const romm_rom_t *first = NULL;
+   size_t i;
+
+   if (ids)
+      RBUF_CLEAR(*ids);
+   for (i = 0; id && i < RBUF_LEN(groups); i++)
+      if (groups[i].id == id)
+         game = &groups[i];
+   for (i = 0; game && i < RBUF_LEN(groups); i++)
+      if (     groups[i].platform_id == game->platform_id
+            && string_is_equal(groups[i].name, game->name))
+      {
+         if (!first)
+            first = &groups[i];
+         if (ids)
+            RBUF_PUSH(*ids, groups[i].id);
+      }
+   return first;
+}
+
 static int romm_cmp_rom_title_desc(const void *a, const void *b)
 {
    const romm_rom_t *x = *(const romm_rom_t *const*)a;
@@ -827,31 +854,52 @@ static int romm_cmp_rom_title_desc(const void *a, const void *b)
 /* Favorites follow RomM's favorites collection: RomM games it doesn't
  * hold leave, and those it holds join, at the top in title order, as a
  * favorite added here would. Other content stays as it is. */
+static bool romm_favorite_listed(const romm_library_t *lib, unsigned id)
+{
+   size_t i;
+   for (i = 0; i < RBUF_LEN(lib->favorite_ids); i++)
+      if (lib->favorite_ids[i] == id)
+         return true;
+   return false;
+}
+
 static void romm_follow_favorites(playlist_t *favorites,
       const romm_library_t *lib, const romm_rom_t *const *index)
 {
    const romm_rom_t **add = NULL;
+   romm_rom_t *groups     = NULL;
    unsigned *have         = NULL;
+   unsigned *members      = NULL;
    bool changed           = false;
    size_t i               = playlist_size(favorites);
    size_t j;
 
+   romm_library_groups(&groups, lib);
    while (i--)
    {
       const struct playlist_entry *entry = NULL;
+      const romm_rom_t *first;
+      bool keep = false;
       unsigned id;
 
       playlist_get_index(favorites, i, &entry);
       if (!entry || !(id = romm_library_path_id(entry->path)))
          continue;
-      for (j = 0; j < RBUF_LEN(lib->favorite_ids); j++)
-         if (lib->favorite_ids[j] == id)
-            break;
-      if (j < RBUF_LEN(lib->favorite_ids))
+      /* A group's entry stays while any of its games is a favorite. */
+      if (     (first = romm_group_first(groups, id, &members))
+            && entry->label && string_is_equal(entry->label, first->name))
       {
-         RBUF_PUSH(have, id);
-         continue;
+         for (j = 0; j < RBUF_LEN(members); j++)
+            if (romm_favorite_listed(lib, members[j]))
+               keep = true;
+         if (keep)
+            for (j = 0; j < RBUF_LEN(members); j++)
+               RBUF_PUSH(have, members[j]);
       }
+      else if ((keep = romm_favorite_listed(lib, id)))
+         RBUF_PUSH(have, id);
+      if (keep)
+         continue;
       RARCH_LOG("[RomM] %s is no longer a favorite in RomM.\n", entry->path);
       playlist_delete_index(favorites, i);
       changed = true;
@@ -860,11 +908,21 @@ static void romm_follow_favorites(playlist_t *favorites,
    for (i = 0; i < RBUF_LEN(lib->favorite_ids); i++)
    {
       const romm_rom_t *rom = romm_library_find(index, lib->favorite_ids[i]);
+      const romm_rom_t *first;
       for (j = 0; j < RBUF_LEN(have); j++)
          if (have[j] == lib->favorite_ids[i])
             break;
-      if (rom && j == RBUF_LEN(have))
-         RBUF_PUSH(add, rom);
+      if (!rom || j < RBUF_LEN(have))
+         continue;
+      /* A game of a group comes as the group's entry, once. */
+      if ((first = romm_group_first(groups, rom->id, &members)))
+      {
+         for (j = 0; j < RBUF_LEN(members); j++)
+            RBUF_PUSH(have, members[j]);
+         if (!(rom = romm_library_find(index, first->id)))
+            continue;
+      }
+      RBUF_PUSH(add, rom);
    }
    if (RBUF_LEN(add))
       qsort(add, RBUF_LEN(add), sizeof(*add), romm_cmp_rom_title_desc);
@@ -888,6 +946,8 @@ static void romm_follow_favorites(playlist_t *favorites,
    }
    RBUF_FREE(add);
    RBUF_FREE(have);
+   RBUF_FREE(members);
+   RBUF_FREE(groups);
 
    if (changed)
    {
@@ -936,9 +996,10 @@ static bool romm_find_core(const char *const *cores, char *path,
 static unsigned romm_favorites_collection        = 0;
 #ifdef HAVE_MENU
 static romm_sidebar_system_t *romm_sidebar_cache = NULL;
-/* The games in a group, which Choose Game lists (an RBUF). */
-static romm_rom_t *romm_groups                   = NULL;
 #endif
+/* The games in a group, which Choose Game and Favorites go by (an
+ * RBUF). */
+static romm_rom_t *romm_groups                   = NULL;
 static bool romm_manifest_read                   = false;
 /* Favorites changed here, counted, and that count when the running
  * library sync started: a sync that overlaps a change leaves Favorites
@@ -1052,8 +1113,8 @@ static void romm_manifest_load(void)
       romm_favorites_collection = lib.favorites_id;
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, &lib);
-      romm_library_groups(&romm_groups, &lib);
 #endif
+      romm_library_groups(&romm_groups, &lib);
    }
    romm_library_free(&lib);
 }
@@ -1094,21 +1155,34 @@ static void romm_on_favorites_created(void *user_data,
    RBUF_FREE(romm_favorites_waiting);
 }
 
-void romm_favorite_changed(const char *content_path, bool added)
+void romm_favorite_changed(const char *content_path, const char *label,
+      bool added)
 {
-   settings_t *settings = config_get_ptr();
-   unsigned id          = romm_library_path_id(content_path);
+   settings_t *settings    = config_get_ptr();
+   unsigned id             = romm_library_path_id(content_path);
+   unsigned *ids           = NULL;
+   const romm_rom_t *first;
+   size_t i;
 
    if (!id || !*settings->arrays.romm_token)
       return;
    romm_favorites_changes++;
    romm_manifest_load();
+   /* A group's entry stands for all its games. */
+   if (     !(first = romm_group_first(romm_groups, id, &ids))
+         || !label || !string_is_equal(label, first->name))
+   {
+      RBUF_CLEAR(ids);
+      RBUF_PUSH(ids, id);
+   }
    if (romm_favorites_collection)
-      romm_send_favorites(&id, 1, !added);
+      romm_send_favorites(ids, RBUF_LEN(ids), !added);
    /* RomM makes the collection with the first favorite. */
    else if (added)
    {
-      RBUF_PUSH(romm_favorites_waiting, id);
+      for (i = 0; i < RBUF_LEN(ids); i++)
+         RBUF_PUSH(romm_favorites_waiting, ids[i]);
+      RBUF_FREE(ids);
       if (romm_favorites_creating)
          return;
       if (romm_client_create_favorites(settings->arrays.romm_server_url,
@@ -1120,6 +1194,7 @@ void romm_favorite_changed(const char *content_path, bool added)
          romm_on_favorites_sent(NULL, ROMM_ERR_UNREACHABLE, 0);
       }
    }
+   RBUF_FREE(ids);
 }
 
 #ifdef HAVE_MENU
@@ -1889,8 +1964,8 @@ static void romm_library_synced(enum romm_status status, int http_status,
 #endif
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
-      romm_library_groups(&romm_groups, lib);
 #endif
+      romm_library_groups(&romm_groups, lib);
       romm_manifest_read = true;
       romm_ask_username();
    }
@@ -3693,24 +3768,14 @@ static char romm_group_pick_label[NAME_MAX_LENGTH];
 static const romm_rom_t *romm_group_of(const char *content_path,
       unsigned *count)
 {
-   unsigned id               = romm_library_path_id(content_path);
-   const romm_rom_t *game    = NULL;
-   const romm_rom_t *first   = NULL;
-   size_t i;
+   unsigned *ids = NULL;
+   const romm_rom_t *first;
 
-   *count = 0;
    romm_manifest_load();
-   for (i = 0; id && i < RBUF_LEN(romm_groups); i++)
-      if (romm_groups[i].id == id)
-         game = &romm_groups[i];
-   for (i = 0; game && i < RBUF_LEN(romm_groups); i++)
-      if (     romm_groups[i].platform_id == game->platform_id
-            && string_is_equal(romm_groups[i].name, game->name))
-      {
-         if (!first)
-            first = &romm_groups[i];
-         (*count)++;
-      }
+   first  = romm_group_first(romm_groups,
+         romm_library_path_id(content_path), &ids);
+   *count = (unsigned)RBUF_LEN(ids);
+   RBUF_FREE(ids);
    return first;
 }
 

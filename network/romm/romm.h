@@ -93,9 +93,11 @@ void romm_refresh_playlist(void);
  * library writes? */
 bool romm_menu_owns_playlist(const char *playlist_file);
 
-/* Content at @content_path was added to Favorites or, without @added,
- * taken out: for a RomM game, the same goes to RomM's favorites. */
-void romm_favorite_changed(const char *content_path, bool added);
+/* Content at @content_path, named @label, was added to Favorites or,
+ * without @added, taken out: for a RomM game, the same goes to RomM's
+ * favorites, for all of a group's games when it's the group's entry. */
+void romm_favorite_changed(const char *content_path, const char *label,
+      bool added);
 
 /* Groups a sidebar's playlist rows, @list, as romm_sidebar_group()
  * does, with the groups the user left open. */

@@ -7117,7 +7117,7 @@ static int action_ok_delete_entry(const char *path,
          const struct playlist_entry *entry = NULL;
          playlist_get_index(playlist, menu->rpl_entry_selection_ptr, &entry);
          if (entry && entry->path)
-            romm_favorite_changed(entry->path, false);
+            romm_favorite_changed(entry->path, entry->label, false);
       }
 #endif
       playlist_delete_index(playlist, menu->rpl_entry_selection_ptr);

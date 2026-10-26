@@ -5205,7 +5205,7 @@ bool command_event(enum event_command cmd, void *data)
 
                      playlist_write_file(g_defaults.content_favorites);
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
-                     romm_favorite_changed(entry.path, true);
+                     romm_favorite_changed(entry.path, entry.label, true);
 #endif
                      _msg = msg_hash_to_str(MSG_ADDED_TO_FAVORITES);
                      runloop_msg_queue_push(_msg, strlen(_msg), 1, 180, true, NULL,
