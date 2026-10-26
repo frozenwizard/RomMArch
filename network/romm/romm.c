@@ -3302,11 +3302,20 @@ static void romm_connect_address_entered(void *userdata, const char *line)
    }
    configuration_set_string(settings, settings->arrays.romm_server_url,
          address);
+   /* As the Server Address setting does when changed. */
+   romm_cloud_sync_follow_server();
    romm_pair_follow_address();
    if (!romm_overrides_active())
       command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
    romm_connect_state = ROMM_CONNECT_UNCHECKED;
    romm_menu_refresh();
+}
+
+void romm_menu_connect_open(void)
+{
+   /* RomM may answer now where it didn't, or no longer. */
+   if (romm_connect_state != ROMM_CONNECT_CHECKING)
+      romm_connect_state = ROMM_CONNECT_UNCHECKED;
 }
 
 void romm_menu_connect_address(void)

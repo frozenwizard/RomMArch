@@ -2058,7 +2058,6 @@ static const ok_dl_map_t ok_dl_map[] = {
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
    { MENU_ENUM_LABEL_ROMM_SETTINGS, ACTION_OK_DL_ROMM_SETTINGS_LIST },
    { MENU_ENUM_LABEL_ROMM_SYSTEMS, ACTION_OK_DL_ROMM_SYSTEMS_LIST },
-   { MENU_ENUM_LABEL_ROMM_CONNECT, ACTION_OK_DL_ROMM_CONNECT },
    { MENU_ENUM_LABEL_ROMM_PAIR, ACTION_OK_DL_ROMM_PAIRING },
 #endif
    { MENU_ENUM_LABEL_LOGGING_SETTINGS, ACTION_OK_DL_LOGGING_SETTINGS_LIST },
@@ -7263,6 +7262,14 @@ static int action_ok_romm_system_stop(const char *path,
    return 0;
 }
 
+static int action_ok_romm_connect(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_menu_connect_open();
+   return generic_action_ok_displaylist_push(path, NULL, label, type,
+         idx, entry_idx, ACTION_OK_DL_ROMM_CONNECT);
+}
+
 static int action_ok_romm_connect_address(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -10037,6 +10044,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_ROMM_SYSTEM_REBUILD, action_ok_romm_system_rebuild},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_STOP,    action_ok_romm_system_stop},
          {MENU_ENUM_LABEL_ROMM_UNPAIR,         action_ok_romm_unpair},
+         {MENU_ENUM_LABEL_ROMM_CONNECT,        action_ok_romm_connect},
          {MENU_ENUM_LABEL_ROMM_CONNECT_ADDRESS, action_ok_romm_connect_address},
          {MENU_ENUM_LABEL_ROMM_CONNECT_PAIR,   action_ok_push_romm_pairing},
          {MENU_ENUM_LABEL_ROMM_PAIRING_START,  action_ok_romm_pairing_start},

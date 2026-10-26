@@ -127,6 +127,9 @@ unsigned romm_menu_status_list(file_list_t *list);
  * Returns how many rows. */
 unsigned romm_menu_connect_list(file_list_t *list);
 
+/* Connect to RomM is opening: it checks the address again. */
+void romm_menu_connect_open(void);
+
 /* OK on Connect to RomM's address: opens the keyboard on the address,
  * or "https://" when none is set. */
 void romm_menu_connect_address(void);
