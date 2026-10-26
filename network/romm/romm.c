@@ -3728,6 +3728,7 @@ static void romm_unpair_here(void)
    if (g_defaults.content_favorites)
       romm_drop_games(g_defaults.content_favorites);
 
+   /* Forget what was read from RomM and the manifest. */
    romm_library_synced_at  = 0;
    romm_library_games      = 0;
    romm_library_systems    = 0;
@@ -3735,6 +3736,15 @@ static void romm_unpair_here(void)
    *romm_library_new       = '\0';
    RBUF_FREE(romm_library_waiting_list);
    RBUF_FREE(romm_favorites_waiting);
+   romm_favorites_collection = 0;
+   RBUF_FREE(romm_sidebar_cache);
+   romm_manifest_read        = false;
+   *romm_menu_armed          = '\0';
+   romm_wizard_state         = ROMM_WIZARD_UNASKED;
+   RBUF_FREE(romm_wizard_rows);
+   *romm_wizard_ticked       = '\0';
+   romm_connect_state        = ROMM_CONNECT_UNCHECKED;
+   *romm_pair_failure        = '\0';
    romm_saves_need_pairing_told = false;
 
    command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);

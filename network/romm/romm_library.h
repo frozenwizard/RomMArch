@@ -256,7 +256,7 @@ void romm_library_free(romm_library_t *lib);
 
 /* Deletes what the syncs wrote in @playlist_dir: each playlist its
  * manifest records, their games' covers in @thumbnails_dir (when not
- * empty), and the manifest. @playlist_changed, when given, runs for
+ * empty), and the manifest, stopping covers still being fetched. @playlist_changed, when given, runs for
  * each playlist deleted. */
 void romm_library_remove_all(const char *playlist_dir,
       const char *thumbnails_dir,

@@ -1484,6 +1484,10 @@ static void romm_lib_covers_download_cb(void *user_data,
    char dir[PATH_MAX_LENGTH];
    bool ok                   = false;
 
+   /* Cancelled: by a sync fetching them again, or by removing the
+    * library, which a late cover would outlive. */
+   if (task_get_flags(covers->task) & RETRO_TASK_FLG_CANCELLED)
+      ext = NULL;
    if (ext)
    {
       fill_pathname(path, dest, ext, sizeof(path));
@@ -2365,6 +2369,11 @@ void romm_library_remove_all(const char *playlist_dir,
    char manifest[PATH_MAX_LENGTH];
    size_t i, j;
 
+   if (romm_lib_covers_running)
+   {
+      RARCH_LOG(ROMM_LIB_PFX "Stopping the covers still being fetched.\n");
+      task_queue_cancel_task(romm_lib_covers_running);
+   }
    romm_library_manifest_path(manifest, sizeof(manifest), playlist_dir);
    if (romm_library_load(&lib, manifest))
    {

@@ -3231,6 +3231,51 @@ static void test_remove_all(void)
    filestream_delete(TEST_DIR);
 }
 
+/* Removing the library stops the covers still being fetched: those
+ * that land after aren't written. */
+static void test_remove_all_covers(void)
+{
+   sync_result_t r;
+   retro_task_t *task;
+   char manifest[256];
+   char *page;
+   unsigned n;
+
+   path_mkdir(TEST_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), TEST_DIR);
+   stub_reset();
+   page = covers_page("/assets/1/big.png?ts=1", "/assets/2/big.png?ts=1",
+         NULL);
+   covers_sync(&r, NULL, page);
+   free(page);
+   task = stub_task;
+   CHECK(task != NULL, "no covers task");
+   if (!task)
+      return;
+   n = stub_log_count + 1;
+   sync_step();
+   CHECK(stub_log_count == n + 1, "%u downloads", stub_log_count - n + 1);
+
+   romm_library_remove_all(TEST_DIR, TEST_DIR "/thumbs", NULL);
+   CHECK(task->flags & RETRO_TASK_FLG_CANCELLED, "covers left running");
+   answer_download(n, 200, PNG_DATA);
+   answer_download(n + 1, 200, PNG_DATA);
+   task_run_out(task);
+   CHECK(   !path_is_valid(COVER_DIR "Game 1 _ Co (USA).png")
+         && !path_is_valid(COVER_DIR "Game 2 _ Co (USA).png"),
+         "a cover landed after the library went");
+   CHECK(!romm_lib_covers_running, "covers task still recorded");
+   CHECK(!path_is_valid(manifest)
+         && !path_is_valid(TEST_DIR "/Sega - Mega-CD - Sega CD.lpl"),
+         "library left");
+
+   filestream_delete(COVER_DIR);
+   filestream_delete(TEST_DIR "/thumbs/Sega - Mega-CD - Sega CD");
+   filestream_delete(TEST_DIR "/thumbs");
+   filestream_delete(TEST_DIR "/romm");
+   filestream_delete(TEST_DIR);
+}
+
 int main(void)
 {
    test_content_path();
@@ -3269,6 +3314,7 @@ int main(void)
    test_sync_only();
    test_sync_rebuild();
    test_remove_all();
+   test_remove_all_covers();
 
    if (failures)
    {
