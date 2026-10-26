@@ -5058,6 +5058,9 @@ static int menu_displaylist_parse_horizontal_content_actions(
        * a removal outside History and Favorites. */
       bool romm_entry           = entry && entry->path
             && string_starts_with(entry->path, "romm://");
+      /* Games RomM names alike are one entry, whose Run picks one. */
+      bool romm_group           = romm_entry
+            && romm_menu_group_size(entry->path, entry->label) > 1;
 #endif
 #ifdef HAVE_AUDIOMIXER
       const char *ext           = NULL;
@@ -5085,13 +5088,29 @@ static int menu_displaylist_parse_horizontal_content_actions(
       if (playlist_path && *playlist_path)
          playlist_file = path_basename_nocompression(playlist_path);
 
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+      if (romm_group)
+      {
+         if (menu_entries_append(list, entry->path, "",
+               MENU_ENUM_LABEL_ROMM_CHOOSE_GAME, MENU_ROMM_SYSTEM,
+               0, idx, NULL))
+            file_list_set_alt_at_offset(list, list->size - 1,
+                  msg_hash_to_str(MSG_ROMM_CHOOSE_GAME));
+      }
+      else
+#endif
       menu_entries_append(list,
             msg_hash_to_str(MENU_ENUM_LABEL_VALUE_RUN),
             MENU_ENUM_LABEL_RUN_STR,
             MENU_ENUM_LABEL_RUN,
             FILE_TYPE_PLAYLIST_ENTRY, 0, idx, NULL);
 
-      if (settings->bools.quick_menu_show_save_load_state)
+      if (     settings->bools.quick_menu_show_save_load_state
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+            /* Each game of a group has its own states. */
+            && !romm_group
+#endif
+         )
       {
          bool savestates_enabled     = core_info_current_supports_savestate();
          playlist_t *playlist        = playlist_get_cached();
@@ -16140,6 +16159,14 @@ static bool menu_displaylist_ctl_internal(
             }
             break;
 #if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+         case DISPLAYLIST_ROMM_GROUP:
+            menu_entries_clear(info->list);
+            count        = romm_menu_group_list(info->list, info->path,
+                  menu_st->driver_data
+                  ? menu_st->driver_data->rpl_entry_selection_ptr : 0);
+            info->flags |= MD_FLAG_NEED_REFRESH
+                         | MD_FLAG_NEED_PUSH;
+            break;
          case DISPLAYLIST_ROMM_CONNECT:
             menu_entries_clear(info->list);
             count        = romm_menu_connect_list(info->list);

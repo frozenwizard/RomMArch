@@ -936,6 +936,8 @@ static bool romm_find_core(const char *const *cores, char *path,
 static unsigned romm_favorites_collection        = 0;
 #ifdef HAVE_MENU
 static romm_sidebar_system_t *romm_sidebar_cache = NULL;
+/* The games in a group, which Choose Game lists (an RBUF). */
+static romm_rom_t *romm_groups                   = NULL;
 #endif
 static bool romm_manifest_read                   = false;
 /* Favorites changed here, counted, and that count when the running
@@ -1050,6 +1052,7 @@ static void romm_manifest_load(void)
       romm_favorites_collection = lib.favorites_id;
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, &lib);
+      romm_library_groups(&romm_groups, &lib);
 #endif
    }
    romm_library_free(&lib);
@@ -1886,6 +1889,7 @@ static void romm_library_synced(enum romm_status status, int http_status,
 #endif
 #ifdef HAVE_MENU
       romm_sidebar_systems(&romm_sidebar_cache, lib);
+      romm_library_groups(&romm_groups, lib);
 #endif
       romm_manifest_read = true;
       romm_ask_username();
@@ -3679,6 +3683,103 @@ void romm_menu_wizard_start(void)
    romm_wizard_sync(exclude);
 }
 
+/* The game Choose Game picked, which Run of its group's entry launches
+ * in place of the entry's own. */
+static char romm_group_pick_path[PATH_MAX_LENGTH];
+static char romm_group_pick_label[NAME_MAX_LENGTH];
+
+/* The first of the games in @content_path's group, and how many there
+ * are; NULL when it isn't in one. */
+static const romm_rom_t *romm_group_of(const char *content_path,
+      unsigned *count)
+{
+   unsigned id               = romm_library_path_id(content_path);
+   const romm_rom_t *game    = NULL;
+   const romm_rom_t *first   = NULL;
+   size_t i;
+
+   *count = 0;
+   romm_manifest_load();
+   for (i = 0; id && i < RBUF_LEN(romm_groups); i++)
+      if (romm_groups[i].id == id)
+         game = &romm_groups[i];
+   for (i = 0; game && i < RBUF_LEN(romm_groups); i++)
+      if (     romm_groups[i].platform_id == game->platform_id
+            && string_is_equal(romm_groups[i].name, game->name))
+      {
+         if (!first)
+            first = &romm_groups[i];
+         (*count)++;
+      }
+   return first;
+}
+
+unsigned romm_menu_group_size(const char *content_path, const char *label)
+{
+   unsigned count          = 0;
+   const romm_rom_t *first = romm_group_of(content_path, &count);
+   /* History's entry of one of the games is named after its file. */
+   return first && label && string_is_equal(label, first->name) ? count : 0;
+}
+
+unsigned romm_menu_group_list(file_list_t *list, const char *content_path,
+      size_t entry_idx)
+{
+   unsigned members;
+   unsigned count          = 0;
+   const romm_rom_t *first = romm_group_of(content_path, &members);
+   size_t i;
+
+   for (i = first ? (size_t)(first - romm_groups) : 0;
+         first && i < RBUF_LEN(romm_groups); i++)
+   {
+      const romm_rom_t *game = &romm_groups[i];
+      char path[PATH_MAX_LENGTH];
+
+      if (     game->platform_id != first->platform_id
+            || !string_is_equal(game->name, first->name)
+            || !romm_library_content_path(path, sizeof(path), game)
+            || !menu_entries_append(list, path, "",
+                  MENU_ENUM_LABEL_ROMM_GROUP_GAME, MENU_ROMM_SYSTEM,
+                  0, entry_idx, NULL))
+         continue;
+      /* By its file name, as the names are all the same. */
+      file_list_set_alt_at_offset(list, list->size - 1,
+            *game->fs_name_no_ext ? game->fs_name_no_ext : game->fs_name);
+      count++;
+   }
+   return count;
+}
+
+void romm_menu_group_pick(const char *content_path)
+{
+   unsigned id = content_path ? romm_library_path_id(content_path) : 0;
+   size_t i;
+
+   *romm_group_pick_path  = '\0';
+   *romm_group_pick_label = '\0';
+   for (i = 0; id && i < RBUF_LEN(romm_groups); i++)
+      if (romm_groups[i].id == id)
+      {
+         const romm_rom_t *game = &romm_groups[i];
+         strlcpy(romm_group_pick_path, content_path,
+               sizeof(romm_group_pick_path));
+         strlcpy(romm_group_pick_label, *game->fs_name_no_ext
+               ? game->fs_name_no_ext : game->fs_name,
+               sizeof(romm_group_pick_label));
+         break;
+      }
+}
+
+void romm_menu_group_take(char *content_path, size_t path_len,
+      char *label, size_t label_len)
+{
+   if (!*romm_group_pick_path)
+      return;
+   strlcpy(content_path, romm_group_pick_path, path_len);
+   strlcpy(label, romm_group_pick_label, label_len);
+}
+
 /* Unpair This Device asks for a second OK: the first arms it, which the
  * rebuild of Settings > RomM it causes keeps. */
 static bool romm_unpair_armed  = false;
@@ -3780,6 +3881,7 @@ static void romm_unpair_here(void)
    RBUF_FREE(romm_favorites_waiting);
    romm_favorites_collection = 0;
    RBUF_FREE(romm_sidebar_cache);
+   RBUF_FREE(romm_groups);
    romm_manifest_read        = false;
    *romm_menu_armed          = '\0';
    romm_wizard_state         = ROMM_WIZARD_UNASKED;

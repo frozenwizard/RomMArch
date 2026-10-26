@@ -12,6 +12,7 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -450,6 +451,66 @@ static void romm_lib_free_game_cores(romm_lib_game_core_t *list)
 /* As romm_library_write_playlist(); a game's db_name is @db_names[i]
  * when @db_names is given. With @changed, the file is written only when
  * it would come out different, and @changed says whether it was. */
+static int romm_lib_cmp_group(const void *a, const void *b)
+{
+   const romm_rom_t *x = *(const romm_rom_t *const*)a;
+   const romm_rom_t *y = *(const romm_rom_t *const*)b;
+   int c;
+   if (x->platform_id != y->platform_id)
+      return x->platform_id < y->platform_id ? -1 : 1;
+   if ((c = strcmp(x->name, y->name)))
+      return c;
+   return (x > y) - (x < y);
+}
+
+/* Marks each of the @count @roms sharing its platform and name with
+ * another: 1 for the first of its group in @roms' order, 2 for the
+ * rest. */
+static void romm_lib_mark_groups(const romm_rom_t *roms, size_t count,
+      uint8_t *mark)
+{
+   const romm_rom_t **sorted;
+   size_t i, j;
+
+   memset(mark, 0, count);
+   if (count < 2
+         || !(sorted = (const romm_rom_t**)malloc(count * sizeof(*sorted))))
+      return;
+   for (i = 0; i < count; i++)
+      sorted[i] = &roms[i];
+   qsort(sorted, count, sizeof(*sorted), romm_lib_cmp_group);
+   for (i = 0; i < count; i = j)
+   {
+      for (j = i + 1; j < count
+            && sorted[j]->platform_id == sorted[i]->platform_id
+            && string_is_equal(sorted[j]->name, sorted[i]->name); j++)
+         mark[sorted[j] - roms] = 2;
+      if (j - i > 1)
+         mark[sorted[i] - roms] = 1;
+   }
+   free(sorted);
+}
+
+void romm_library_groups(romm_rom_t **groups, const romm_library_t *lib)
+{
+   size_t i, j;
+
+   RBUF_CLEAR(*groups);
+   for (i = 0; i < RBUF_LEN(lib->platforms); i++)
+   {
+      const romm_library_platform_t *p = &lib->platforms[i];
+      size_t count  = RBUF_LEN(p->roms);
+      uint8_t *mark = count ? (uint8_t*)malloc(count) : NULL;
+      if (!mark)
+         continue;
+      romm_lib_mark_groups(p->roms, count, mark);
+      for (j = 0; j < count; j++)
+         if (mark[j])
+            RBUF_PUSH(*groups, p->roms[j]);
+      free(mark);
+   }
+}
+
 static bool romm_lib_write_playlist(const char *path, const char *db_name,
       const char *const *db_names,
       const char *default_core_path, const char *default_core_name,
@@ -459,6 +520,7 @@ static bool romm_lib_write_playlist(const char *path, const char *db_name,
    romm_lib_display_t display;
    rjsonwriter_t *writer;
    const char *buf;
+   uint8_t *mark  = NULL;
    int buf_len    = 0;
    bool ok        = false;
    size_t written = 0;
@@ -498,6 +560,9 @@ static bool romm_lib_write_playlist(const char *path, const char *db_name,
    rjsonwriter_add_string(writer, "items");
    rjsonwriter_raw(writer, ": [\n", 4);
 
+   /* A group is one entry, its first game; Choose Game lists the rest. */
+   if (count && (mark = (uint8_t*)malloc(count)))
+      romm_lib_mark_groups(roms, count, mark);
    for (i = 0; i < count; i++)
    {
       char content_path[PATH_MAX_LENGTH];
@@ -505,8 +570,9 @@ static bool romm_lib_write_playlist(const char *path, const char *db_name,
       romm_lib_game_core_t key;
       const romm_lib_game_core_t *core = NULL;
 
-      if (!romm_library_content_path(content_path, sizeof(content_path),
-            &roms[i]))
+      if (     (mark && mark[i] == 2)
+            || !romm_library_content_path(content_path,
+                  sizeof(content_path), &roms[i]))
          continue;
       key.id = roms[i].id;
       if (game_cores)
@@ -556,6 +622,7 @@ static bool romm_lib_write_playlist(const char *path, const char *db_name,
    }
    rjsonwriter_free(writer);
    romm_lib_free_game_cores(game_cores);
+   free(mark);
    return ok;
 }
 

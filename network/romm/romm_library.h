@@ -254,6 +254,12 @@ bool romm_library_save(const romm_library_t *lib, const char *path);
 
 void romm_library_free(romm_library_t *lib);
 
+/* Games of one platform with the same name are a group, which a
+ * playlist lists as one entry: the first in its order. Fills @groups,
+ * an RBUF it empties first, with @lib's games that are in a group, in
+ * their platforms' order. */
+void romm_library_groups(romm_rom_t **groups, const romm_library_t *lib);
+
 /* Deletes what the syncs wrote in @playlist_dir: each playlist its
  * manifest records, their games' covers in @thumbnails_dir (when not
  * empty), and the manifest, stopping covers still being fetched. @playlist_changed, when given, runs for

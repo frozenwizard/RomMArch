@@ -1591,6 +1591,8 @@ static void test_sync_collections(void)
    filestream_delete(COLL_DIR);
 }
 
+static bool file_has(const char *path, const char *text);
+
 /* A collection's games are in the order RomM's sort keys give, as a
  * platform's are; a game without one goes by its name. */
 static void test_sync_collection_sort_key(void)
@@ -1634,7 +1636,7 @@ static void test_sync_collection_sort_key(void)
       const char *a = strstr(doc, "romm://100/");
       const char *b = strstr(doc, "romm://101/");
       const char *c = strstr(doc, "romm://102/");
-      CHECK(a && b && c && a < b && b < c, "not in sort key order:\n%s",
+      CHECK(a && b && (!c || b < c) && a < b, "not in sort key order:\n%s",
             doc);
       free(doc);
    }
@@ -1645,6 +1647,22 @@ static void test_sync_collection_sort_key(void)
          && !strcmp(lib.platforms[0].roms[0].sort_key, "zeta 5")
          && !*lib.platforms[0].roms[2].sort_key,
          "sort keys not kept in the manifest");
+   /* The two named alike are a group: one entry in each playlist. */
+   {
+      const char *genesis = COLL_DIR "/Sega - Mega Drive - Genesis.lpl";
+      romm_rom_t *groups  = NULL;
+      CHECK(count_entries(genesis) == 2 && file_has(genesis, "romm://100/")
+            && !file_has(genesis, "romm://102/"),
+            "platform: %u entries", count_entries(genesis));
+      CHECK(count_entries(series) == 2 && file_has(series, "romm://100/")
+            && !file_has(series, "romm://102/"),
+            "collection: %u entries", count_entries(series));
+      romm_library_groups(&groups, &lib);
+      CHECK(RBUF_LEN(groups) == 2 && groups[0].id == 100
+            && groups[1].id == 102, "groups: %u games",
+            (unsigned)RBUF_LEN(groups));
+      RBUF_FREE(groups);
+   }
    romm_library_free(&lib);
 
    sync_collections = false;

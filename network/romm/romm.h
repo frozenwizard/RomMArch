@@ -163,6 +163,29 @@ void romm_menu_wizard_start(void);
 /* Cancel on the pairing page, or leaving it: ends the pairing running. */
 void romm_menu_pairing_cancel(void);
 
+/* Games of one system with the same name are one playlist entry, a
+ * group, named alike. How many games the group of the RomM game at
+ * @content_path holds when the entry is the group's, named @label; 0
+ * when it isn't in one, or the entry is of one game, such as History's
+ * after playing it. */
+unsigned romm_menu_group_size(const char *content_path, const char *label);
+
+/* Lists in @list Choose Game for the group of the game at
+ * @content_path, whose entry is @entry_idx of its playlist: a row per
+ * game, by file name, its path the game's. Returns how many rows. */
+unsigned romm_menu_group_list(file_list_t *list, const char *content_path,
+      size_t entry_idx);
+
+/* Choose Game picked the game at @content_path, for the entry's Run to
+ * launch, named by its file name, in place of the entry's own game;
+ * NULL clears it once Run has. */
+void romm_menu_group_pick(const char *content_path);
+
+/* For Run: the game Choose Game picked, if any, in @content_path and
+ * @label in place of the entry's. */
+void romm_menu_group_take(char *content_path, size_t path_len,
+      char *label, size_t label_len);
+
 /* Lists in @list Unpair This Device, when the device is paired, as its
  * second OK would read once the first armed it. Returns how many rows. */
 unsigned romm_menu_unpair_row(file_list_t *list);

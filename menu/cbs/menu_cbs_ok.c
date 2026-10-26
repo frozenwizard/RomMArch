@@ -413,6 +413,8 @@ static enum msg_hash_enums action_ok_dl_to_enum(unsigned lbl)
          return MENU_ENUM_LABEL_DEFERRED_ROMM_PAIRING;
       case ACTION_OK_DL_ROMM_WIZARD:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_WIZARD;
+      case ACTION_OK_DL_ROMM_GROUP:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_GROUP;
       case ACTION_OK_DL_ROMM_SYSTEM:
          return MENU_ENUM_LABEL_DEFERRED_ROMM_SYSTEM;
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
@@ -1841,6 +1843,7 @@ int generic_action_ok_displaylist_push(
       case ACTION_OK_DL_ROMM_CONNECT:
       case ACTION_OK_DL_ROMM_PAIRING:
       case ACTION_OK_DL_ROMM_WIZARD:
+      case ACTION_OK_DL_ROMM_GROUP:
       case ACTION_OK_DL_ROMM_SYSTEM:
       case ACTION_OK_DL_LOGGING_SETTINGS_LIST:
       case ACTION_OK_DL_FRAME_THROTTLE_SETTINGS_LIST:
@@ -3089,6 +3092,12 @@ static int action_ok_playlist_entry_collection(const char *path,
    /* Cache entry label */
    if (entry->label && *entry->label)
       strlcpy(content_label, entry->label, sizeof(content_label));
+
+#if defined(HAVE_ROMM) && defined(HAVE_NETWORKING)
+   /* Choose Game: one game of a group entry, with the entry's core. */
+   romm_menu_group_take(content_path, sizeof(content_path),
+         content_label, sizeof(content_label));
+#endif
 
    /* Get core path */
    if (!playlist_entry_has_core(entry))
@@ -7284,6 +7293,26 @@ static int action_ok_romm_pairing_start(const char *path,
    return 0;
 }
 
+static int action_ok_romm_choose_game(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   return generic_action_ok_displaylist_push(path, NULL, label, type,
+         idx, entry_idx, ACTION_OK_DL_ROMM_GROUP);
+}
+
+/* Runs the group's entry, @entry_idx of the playlist, as the game at
+ * @path. */
+static int action_ok_romm_group_game(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   int ret;
+   romm_menu_group_pick(path);
+   ret = action_ok_playlist_entry_collection(path, label, type, idx,
+         entry_idx);
+   romm_menu_group_pick(NULL);
+   return ret;
+}
+
 static int action_ok_romm_wizard_choose(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -10053,6 +10082,8 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE,  action_ok_romm_wizard_choose},
          {MENU_ENUM_LABEL_ROMM_WIZARD_START,   action_ok_romm_wizard_start},
          {MENU_ENUM_LABEL_ROMM_WIZARD_SYSTEM,  action_ok_romm_wizard_system},
+         {MENU_ENUM_LABEL_ROMM_CHOOSE_GAME,    action_ok_romm_choose_game},
+         {MENU_ENUM_LABEL_ROMM_GROUP_GAME,     action_ok_romm_group_game},
          {MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC,    action_ok_romm_system_sync},
 #endif
 #ifdef HAVE_MIST

@@ -2285,6 +2285,8 @@ static int menu_cbs_init_bind_get_string_representation_compare_label(
          case MENU_ENUM_LABEL_ROMM_WIZARD_SYNC_ALL:
          case MENU_ENUM_LABEL_ROMM_WIZARD_CHOOSE:
          case MENU_ENUM_LABEL_ROMM_WIZARD_START:
+         case MENU_ENUM_LABEL_ROMM_CHOOSE_GAME:
+         case MENU_ENUM_LABEL_ROMM_GROUP_GAME:
          case MENU_ENUM_LABEL_ROMM_SYSTEM_SYNC:
          case MENU_ENUM_LABEL_ROMM_OPEN_GAME:
          case MENU_ENUM_LABEL_ROMM_GAME_SUMMARY:

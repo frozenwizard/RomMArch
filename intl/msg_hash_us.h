@@ -34121,6 +34121,14 @@ MSG_HASH(
    "Switch on at least one system first."
    )
 MSG_HASH(
+   MSG_ROMM_CHOOSE_GAME,
+   "Choose Game"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_ROMM_CHOOSE_GAME,
+   "RomM has more than one game under this name, such as the games of a collection. Pick the one to play."
+   )
+MSG_HASH(
    MSG_ROMM_UNPAIRED_DEVICE_KEPT,
    "This device is unpaired, but RomM didn't remove it (HTTP %d). Revoke its token on RomM's API tokens page."
    )
