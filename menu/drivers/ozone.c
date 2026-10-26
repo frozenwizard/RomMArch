@@ -14194,6 +14194,13 @@ static int ozone_pointer_up(void *userdata,
             return ozone_menu_entry_action(ozone, entry, selection, MENU_ACTION_CANCEL);
          else if ((int)y > (int)height - ozone->dimensions.footer_height)
             return ozone_tap_footer(ozone, x, width, entry);
+         /* A mouse between rows, or below the last, has none under it:
+          * ptr is only the last row it crossed. */
+         else if (   (ozone->pointer.type == MENU_POINTER_MOUSE)
+                  && (ozone->pointer_entries_selection == OZONE_ENTRY_NONE)
+                  && ((int)x > (int)(ozone->dimensions_sidebar_width + ozone->sidebar_offset))
+                  && ((int)x < (int)((float)width - ozone->animations.thumbnail_bar_position)))
+            break;
          /* Tap/press entries: Activate and/or select item */
          else if ((ptr < entries_end)
                && ((int)x > (int)(ozone->dimensions_sidebar_width + ozone->sidebar_offset))
