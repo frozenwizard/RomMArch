@@ -710,6 +710,8 @@ static void romm_lib_load_rom_member(void *ctx, const char *key,
       strlcpy(r->fs_name_no_ext, value, sizeof(r->fs_name_no_ext));
    else if (string_is_equal(key, "name"))
       strlcpy(r->name, value, sizeof(r->name));
+   else if (string_is_equal(key, "sort_key"))
+      strlcpy(r->sort_key, value, sizeof(r->sort_key));
    else if (string_is_equal(key, "cover"))
       strlcpy(r->cover, value, sizeof(r->cover));
    else if (string_is_equal(key, "updated_at"))
@@ -942,6 +944,10 @@ bool romm_library_save(const romm_library_t *lib, const char *path)
          rjsonwriter_add_string(writer, "name");
          rjsonwriter_raw(writer, ": ", 2);
          rjsonwriter_add_string(writer, r->name);
+         rjsonwriter_raw(writer, ", ", 2);
+         rjsonwriter_add_string(writer, "sort_key");
+         rjsonwriter_raw(writer, ": ", 2);
+         rjsonwriter_add_string(writer, r->sort_key);
          rjsonwriter_raw(writer, ", ", 2);
          rjsonwriter_add_string(writer, "cover");
          rjsonwriter_raw(writer, ": ", 2);
@@ -2188,11 +2194,14 @@ static void romm_lib_sync_collections_cb(void *user_data,
       ? ROMM_LIB_SYNC_WRITE_COLLECTIONS : ROMM_LIB_SYNC_SMART;
 }
 
+/* As RomM orders a platform's games: by the sort key set in RomM, or
+ * by name from a RomM without one. */
 static int romm_lib_cmp_rom_name(const void *a, const void *b)
 {
    const romm_rom_t *x = (const romm_rom_t*)a;
    const romm_rom_t *y = (const romm_rom_t*)b;
-   int c               = strcasecmp(x->name, y->name);
+   int c               = strcasecmp(*x->sort_key ? x->sort_key : x->name,
+         *y->sort_key ? y->sort_key : y->name);
    return c ? c : (x->id > y->id) - (x->id < y->id);
 }
 

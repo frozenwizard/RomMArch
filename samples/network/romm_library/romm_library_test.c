@@ -1591,6 +1591,70 @@ static void test_sync_collections(void)
    filestream_delete(COLL_DIR);
 }
 
+/* A collection's games are in the order RomM's sort keys give, as a
+ * platform's are; a game without one goes by its name. */
+static void test_sync_collection_sort_key(void)
+{
+   const char *plat   = "[{\"id\": 8, \"rom_count\": 3,"
+         " \"libretro_slug\": \"Sega - Mega Drive - Genesis\"}]";
+   const char *series = COLL_DIR "/Collection - Series.lpl";
+   sync_result_t r;
+   romm_library_t lib;
+   char manifest[256];
+   char *doc   = NULL;
+   int64_t len = 0;
+
+   path_mkdir(COLL_DIR);
+   romm_library_manifest_path(manifest, sizeof(manifest), COLL_DIR);
+   stub_reset();
+   sync_collections = true;
+
+   memset(&r, 0, sizeof(r));
+   sync_start("http://h", "t", COLL_DIR, NULL, NULL, NULL, on_sync, &r);
+   sync_answer(200, plat);
+   sync_answer(200, "{\"items\": ["
+         "{\"id\": 100, \"platform_id\": 8, \"fs_name\": \"g100.md\","
+         " \"name\": \"Zeta Anthology\", \"name_sort_key\": \"zeta 5\","
+         " \"has_simple_single_file\": true,"
+         " \"updated_at\": \"2026-10-02T04:00:00+00:00\"},"
+         "{\"id\": 101, \"platform_id\": 8, \"fs_name\": \"g101.md\","
+         " \"name\": \"Zeta VII\", \"name_sort_key\": \"zeta 7\","
+         " \"has_simple_single_file\": true,"
+         " \"updated_at\": \"2026-10-02T04:00:00+00:00\"},"
+         "{\"id\": 102, \"platform_id\": 8, \"fs_name\": \"g102.md\","
+         " \"name\": \"Zeta Anthology\", \"has_simple_single_file\": true,"
+         " \"updated_at\": \"2026-10-02T04:00:00+00:00\"}]}");
+   sync_answer(200, "[{\"id\": 3, \"name\": \"Series\","
+         " \"rom_ids\": [102, 101, 100]}]");
+   sync_answer(200, "[]");
+   CHECK(sync_run_out() && r.status == ROMM_OK, "sync: status %d",
+         r.status);
+   if (filestream_read_file(series, (void**)&doc, &len) && doc)
+   {
+      const char *a = strstr(doc, "romm://100/");
+      const char *b = strstr(doc, "romm://101/");
+      const char *c = strstr(doc, "romm://102/");
+      CHECK(a && b && c && a < b && b < c, "not in sort key order:\n%s",
+            doc);
+      free(doc);
+   }
+   else
+      CHECK(false, "no collection playlist");
+   CHECK(romm_library_load(&lib, manifest) && RBUF_LEN(lib.platforms) == 1
+         && RBUF_LEN(lib.platforms[0].roms) == 3
+         && !strcmp(lib.platforms[0].roms[0].sort_key, "zeta 5")
+         && !*lib.platforms[0].roms[2].sort_key,
+         "sort keys not kept in the manifest");
+   romm_library_free(&lib);
+
+   sync_collections = false;
+   filestream_delete(series);
+   filestream_delete(COLL_DIR "/Sega - Mega Drive - Genesis.lpl");
+   filestream_delete(manifest);
+   filestream_delete(COLL_DIR "/romm");
+   filestream_delete(COLL_DIR);
+}
+
 /* Refetching a playlist fetches its games in full, with no id list or
  * cursor, and writes it though nothing changed; others stay
  * incremental. */
@@ -3290,6 +3354,7 @@ int main(void)
    test_cursor();
    test_sync_incremental();
    test_sync_collections();
+   test_sync_collection_sort_key();
    test_sync_refetch();
    test_sync_shared_playlist();
    test_follow_game();

@@ -1091,6 +1091,8 @@ static void romm_roms_member(void *ctx, const char *key,
       strlcpy(r->fs_name_no_ext, value, sizeof(r->fs_name_no_ext));
    else if (string_is_equal(key, "name"))
       strlcpy(r->name, value, sizeof(r->name));
+   else if (string_is_equal(key, "name_sort_key"))
+      strlcpy(r->sort_key, value, sizeof(r->sort_key));
    else if (string_is_equal(key, "path_cover_large"))
       strlcpy(r->cover, value, sizeof(r->cover));
    else if (string_is_equal(key, "updated_at"))

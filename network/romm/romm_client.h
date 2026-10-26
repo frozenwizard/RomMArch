@@ -103,6 +103,9 @@ typedef struct
    char fs_name_no_ext[256];
    /* RomM's title, or fs_name_no_ext when it has none. */
    char name[256];
+   /* What RomM orders games by name with (name_sort_key), which can be
+    * set in RomM; empty from a RomM without it. */
+   char sort_key[256];
    /* Path of the large cover on the server; empty when there is none. */
    char cover[192];
    char updated_at[32];
